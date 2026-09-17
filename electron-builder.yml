@@ -1,0 +1,43 @@
+appId: com.erwinwee.gitgood
+productName: GitGood
+copyright: Copyright © 2026 Erwin Wee
+directories:
+  buildResources: build
+  output: release/${version}
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+asarUnpack:
+  - resources/**
+extraResources:
+  - from: resources
+    to: resources
+    filter: ["**/*"]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+  artifactName: ${productName}-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: GitGood
+  deleteAppDataOnUninstall: false
+mac:
+  target: [dmg, zip]
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+linux:
+  target: [AppImage]
+  category: Development
+  icon: build/icon.png
+  maintainer: Erwin Wee
+protocols:
+  - name: GitGood
+    schemes: [gitgood, x-github-client]
+publish: null

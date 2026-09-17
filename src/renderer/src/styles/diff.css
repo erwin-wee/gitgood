@@ -1,0 +1,383 @@
+.diff-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  flex: 0 0 auto;
+  min-height: 40px;
+}
+.diff-header .file-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: text;
+  cursor: text;
+}
+.diff-header .file-path .arrow {
+  color: var(--fg-muted);
+}
+.diff-header .controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.diff-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  font-family: var(--font-mono);
+  font-size: var(--diff-font-size, 12px);
+  line-height: 20px;
+  background: var(--bg);
+}
+.diff-body.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+}
+
+table.diff {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+table.diff.unified.nowrap {
+  width: max-content;
+  min-width: 100%;
+}
+table.diff.split {
+  width: 100%;
+}
+table.diff.split .code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+table.diff td {
+  padding: 0;
+  vertical-align: top;
+  border: none;
+}
+table.diff .num {
+  width: 50px;
+  min-width: 50px;
+  text-align: right;
+  padding: 0 8px 0 4px;
+  color: var(--fg-subtle);
+  user-select: none;
+  background: var(--bg-subtle);
+  white-space: nowrap;
+}
+table.diff .num.selectable-num {
+  cursor: pointer;
+}
+table.diff .sel {
+  width: 22px;
+  min-width: 22px;
+  text-align: center;
+  user-select: none;
+  cursor: pointer;
+  color: transparent;
+  background: var(--bg-subtle);
+}
+table.diff tr:hover .sel {
+  color: var(--fg-subtle);
+}
+table.diff .sel.on {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+table.diff .marker {
+  width: 18px;
+  min-width: 18px;
+  text-align: center;
+  user-select: none;
+  color: var(--fg-muted);
+}
+table.diff .code {
+  padding: 0 8px 0 4px;
+  white-space: pre;
+  user-select: text;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+table.diff.wrap .code {
+  white-space: pre-wrap;
+}
+table.diff.unified tr.add .code,
+table.diff.unified tr.add .marker,
+table.diff .code.add-code {
+  background: var(--diff-add-bg);
+}
+table.diff.unified tr.add .num,
+table.diff.unified tr.add .sel,
+table.diff .num.add-num,
+table.diff .sel.add-num {
+  background: var(--diff-add-num-bg);
+  color: var(--fg);
+}
+table.diff.unified tr.delete .code,
+table.diff.unified tr.delete .marker,
+table.diff .code.del-code {
+  background: var(--diff-del-bg);
+}
+table.diff.unified tr.delete .num,
+table.diff.unified tr.delete .sel,
+table.diff .num.del-num,
+table.diff .sel.del-num {
+  background: var(--diff-del-num-bg);
+  color: var(--fg);
+}
+table.diff tr.selected-line .code {
+  box-shadow: inset 3px 0 0 var(--diff-selected-outline);
+}
+table.diff tr.hunk td {
+  background: var(--diff-hunk-bg);
+  color: var(--diff-hunk-fg);
+  height: 26px;
+}
+table.diff tr.hunk .hunk-header {
+  padding: 0 8px;
+  white-space: pre;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: text;
+}
+table.diff tr.hunk .hunk-actions {
+  display: inline-flex;
+  gap: 2px;
+  user-select: none;
+}
+table.diff tr.hunk .hunk-actions button {
+  border: none;
+  background: transparent;
+  color: var(--diff-hunk-fg);
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+}
+table.diff tr.hunk .hunk-actions button:hover {
+  background: var(--bg-hover);
+}
+table.diff .cell-empty {
+  background: var(--diff-empty-bg);
+}
+table.diff .split .cell-empty {
+  background: var(--diff-empty-bg);
+}
+table.diff .word-add {
+  background: var(--diff-add-word);
+  border-radius: 2px;
+}
+table.diff .word-del {
+  background: var(--diff-del-word);
+  border-radius: 2px;
+}
+table.diff .no-newline {
+  color: var(--fg-muted);
+  font-style: italic;
+  font-size: 11px;
+}
+table.diff tr.expander td {
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  height: 22px;
+  text-align: center;
+}
+table.diff tr.expander button {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 8px;
+}
+table.diff tr.expander button:hover {
+  text-decoration: underline;
+}
+.diff-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--accent-subtle);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.diff-message {
+  padding: 40px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+.diff-message strong {
+  color: var(--fg);
+}
+
+/* Images */
+.image-diff {
+  padding: 16px;
+  font-family: var(--font-ui);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+.image-diff .modes {
+  align-self: flex-start;
+}
+.image-diff .two-up {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  width: 100%;
+}
+.image-diff .image-box {
+  flex: 1;
+  max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.image-diff .image-box img {
+  max-width: 100%;
+  max-height: 60vh;
+  border: 1px solid var(--border);
+  background-image: linear-gradient(45deg, var(--bg-hover) 25%, transparent 25%), linear-gradient(-45deg, var(--bg-hover) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, var(--bg-hover) 75%), linear-gradient(-45deg, transparent 75%, var(--bg-hover) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.image-diff .image-box .label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+.image-diff .image-box .label.deleted {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+.image-diff .image-box .label.added {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+.image-diff .overlay {
+  position: relative;
+  display: inline-block;
+  border: 1px solid var(--border);
+}
+.image-diff .overlay img {
+  display: block;
+  max-width: 70vw;
+  max-height: 60vh;
+}
+.image-diff .overlay img.top {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.image-diff input[type='range'] {
+  width: 320px;
+}
+
+/* Conflicts */
+.conflict-view {
+  font-family: var(--font-mono);
+  font-size: var(--diff-font-size, 12px);
+  line-height: 20px;
+}
+.conflict-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--attention-subtle);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-ui);
+  flex-wrap: wrap;
+}
+.conflict-toolbar .spacer {
+  flex: 1;
+}
+.conflict-line {
+  display: flex;
+}
+.conflict-line .num {
+  width: 50px;
+  min-width: 50px;
+  text-align: right;
+  padding: 0 8px 0 4px;
+  color: var(--fg-subtle);
+  user-select: none;
+  background: var(--bg-subtle);
+}
+.conflict-line .code {
+  flex: 1;
+  padding: 0 8px;
+  white-space: pre;
+  user-select: text;
+  cursor: text;
+}
+.conflict-line.ours .code {
+  background: var(--conflict-ours-bg);
+}
+.conflict-line.theirs .code {
+  background: var(--conflict-theirs-bg);
+}
+.conflict-line.base .code {
+  background: var(--conflict-base-bg);
+}
+.conflict-line.marker .code {
+  background: var(--conflict-marker-bg);
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+.conflict-block-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 8px 4px 62px;
+  background: var(--bg-subtle);
+  border-top: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+.conflict-block-actions .label {
+  color: var(--fg-muted);
+  margin-right: 4px;
+}
+.ai-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--done);
+  font-family: var(--font-ui);
+}

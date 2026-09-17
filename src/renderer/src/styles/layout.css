@@ -1,0 +1,355 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+
+.toolbar {
+  display: flex;
+  align-items: stretch;
+  height: 50px;
+  flex: 0 0 50px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+.toolbar.mac {
+  padding-left: 76px;
+}
+.toolbar-button {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  min-width: 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+  color: var(--fg);
+}
+.toolbar-button:hover,
+.toolbar-button.open {
+  background: var(--bg-hover);
+}
+.toolbar-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.toolbar-button .icon {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+}
+.toolbar-button .labels {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.toolbar-button .title {
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-transform: none;
+}
+.toolbar-button .value {
+  font-weight: 600;
+  font-size: 13px;
+}
+.toolbar-button .chevron {
+  margin-left: 4px;
+  color: var(--fg-muted);
+}
+.toolbar-button.repo {
+  width: 300px;
+}
+.toolbar-button.branch {
+  width: 260px;
+}
+.toolbar-button.sync {
+  flex: 0 0 auto;
+  width: 300px;
+}
+.toolbar-button .badges {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+}
+.toolbar-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.toolbar-spacer {
+  flex: 1;
+}
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  -webkit-app-region: no-drag;
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: var(--sidebar-width, 300px);
+  min-width: 220px;
+  max-width: 60%;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  position: relative;
+}
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sidebar-resizer:hover,
+.sidebar-resizer.active {
+  background: var(--accent-muted);
+}
+
+.tabs {
+  display: flex;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+.tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.tab:hover {
+  color: var(--fg);
+}
+.tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+  text-align: center;
+  padding: 40px;
+  gap: 8px;
+}
+.empty-state h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--fg);
+}
+.empty-state p {
+  margin: 0;
+  max-width: 420px;
+}
+
+.welcome {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.welcome-card {
+  width: 640px;
+  max-width: 100%;
+}
+.welcome-card h1 {
+  font-size: 26px;
+  margin: 0 0 6px;
+}
+.welcome-card p.lead {
+  color: var(--fg-muted);
+  margin: 0 0 24px;
+}
+.welcome-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.welcome-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  cursor: pointer;
+  text-align: left;
+}
+.welcome-action:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+.welcome-action strong {
+  font-size: 14px;
+}
+.welcome-action span {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.welcome-recent h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  margin: 0 0 8px;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--attention-subtle);
+  flex: 0 0 auto;
+}
+.banner.info {
+  background: var(--accent-subtle);
+}
+.banner.success {
+  background: var(--success-subtle);
+}
+.banner.danger {
+  background: var(--danger-subtle);
+}
+.banner .banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.banner .banner-text strong {
+  display: block;
+}
+.banner .banner-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.progress-bar {
+  height: 4px;
+  background: var(--bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.progress-bar.indeterminate > div {
+  width: 30%;
+  animation: indeterminate 1.2s infinite ease-in-out;
+}
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+}
+.toast {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow);
+  animation: toast-in 0.15s ease-out;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.toast .toast-body {
+  flex: 1;
+  min-width: 0;
+}
+.toast .toast-body strong {
+  display: block;
+}
+.toast .toast-body span {
+  color: var(--fg-muted);
+  font-size: 12px;
+  display: block;
+  overflow-wrap: anywhere;
+}
+.toast .toast-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.toast.success .toast-icon {
+  color: var(--success);
+}
+.toast.error .toast-icon {
+  color: var(--danger);
+}
+.toast.warning .toast-icon {
+  color: var(--attention);
+}
+.toast.info .toast-icon {
+  color: var(--accent);
+}
