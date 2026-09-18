@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Submodule, SubmoduleState } from '@shared/types';
+import { mapWithConcurrency } from '@shared/util';
 import type { ProgressSink } from './operations';
 import { TransferProgressParser, type GitClient } from './git';
 
@@ -137,19 +138,16 @@ export async function getSubmodules(git: GitClient, repoPath: string, originUrl:
   const entryByPath = new Map(entries.map((e) => [e.path, e]));
   const rootPaths = new Set(configs.map((c) => c.path));
 
+  const work: { entry: SubmoduleStatusEntry; config: SubmoduleConfigEntry | null }[] = [];
   const results: Submodule[] = [];
   for (const config of configs) {
     const entry = entryByPath.get(config.path);
-    if (!entry) {
-      results.push({ path: config.path, name: config.name, url: resolveSubmoduleUrl(config.url, originUrl), recordedSha: null, checkedOutSha: null, state: 'missing', nested: false });
-      continue;
-    }
-    results.push(await buildSubmodule(git, repoPath, entry, config, originUrl, rootPaths));
+    if (!entry) results.push({ path: config.path, name: config.name, url: resolveSubmoduleUrl(config.url, originUrl), recordedSha: null, checkedOutSha: null, state: 'missing', nested: false });
+    else work.push({ entry, config });
   }
-  for (const entry of entries) {
-    if (configByPath.has(entry.path)) continue;
-    results.push(await buildSubmodule(git, repoPath, entry, null, originUrl, rootPaths));
-  }
+  for (const entry of entries) if (!configByPath.has(entry.path)) work.push({ entry, config: null });
+  // Each submodule costs up to two git runs; a monorepo with dozens of them should not walk them one at a time.
+  results.push(...(await mapWithConcurrency(work, 4, ({ entry, config }) => buildSubmodule(git, repoPath, entry, config, originUrl, rootPaths))));
   results.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
   return results;
 }

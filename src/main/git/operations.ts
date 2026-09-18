@@ -15,18 +15,27 @@ function outcomeFromError(err: unknown): OperationOutcome {
 
 // ---------- remotes / transfer ----------
 
-export async function getRemotes(git: GitClient, repoPath: string): Promise<Remote[]> {
-  const out = await git.stdout(repoPath, ['remote', '-v'], { readOnly: true });
-  const map = new Map<string, Remote>();
-  for (const line of out.split('\n')) {
-    const m = /^(\S+)\t(\S+) \((fetch|push)\)$/.exec(line.trim());
-    if (!m) continue;
-    const r = map.get(m[1]) ?? { name: m[1], fetchUrl: '', pushUrl: '' };
-    if (m[3] === 'fetch') r.fetchUrl = m[2];
-    else r.pushUrl = m[2];
-    map.set(m[1], r);
-  }
-  return [...map.values()];
+/** Opening a repository asks for remotes from three places at once (GitHub detection, the remotes list, submodules); one `remote -v` serves them all. */
+const remotesInFlight = new Map<string, Promise<Remote[]>>();
+
+export function getRemotes(git: GitClient, repoPath: string): Promise<Remote[]> {
+  const pending = remotesInFlight.get(repoPath);
+  if (pending) return pending;
+  const run = (async () => {
+    const out = await git.stdout(repoPath, ['remote', '-v'], { readOnly: true });
+    const map = new Map<string, Remote>();
+    for (const line of out.split('\n')) {
+      const m = /^(\S+)\t(\S+) \((fetch|push)\)$/.exec(line.trim());
+      if (!m) continue;
+      const r = map.get(m[1]) ?? { name: m[1], fetchUrl: '', pushUrl: '' };
+      if (m[3] === 'fetch') r.fetchUrl = m[2];
+      else r.pushUrl = m[2];
+      map.set(m[1], r);
+    }
+    return [...map.values()];
+  })().finally(() => remotesInFlight.delete(repoPath));
+  remotesInFlight.set(repoPath, run);
+  return run;
 }
 
 export async function fetch(git: GitClient, repoPath: string, remote: string | null, onProgress: ProgressSink, signal?: AbortSignal): Promise<void> {
@@ -563,12 +572,33 @@ export async function unresolve(git: GitClient, repoPath: string, path: string, 
 
 // ---------- config ----------
 
+/**
+ * Reads every identity/signing key at one scope with a single `git config`
+ * spawn (`--get-regexp -z`: `key\nvalue\0` records). Keys come back with the
+ * section and variable lowercased, as git normalises them; the last value wins
+ * for multi-valued keys, matching `--get`. Missing scope/no matches → {}.
+ */
+const CONFIG_KEYS_RE = '^(user\\.(name|email|signingkey)|gpg\\.(format|program|ssh\\.program|ssh\\.allowedsignersfile)|commit\\.gpgsign|tag\\.gpgsign)$';
+async function readConfigScope(git: GitClient, repoPath: string | null, scopeArgs: string[]): Promise<Record<string, string>> {
+  const out = await git.tryRun(repoPath, ['config', ...scopeArgs, '-z', '--get-regexp', CONFIG_KEYS_RE], { readOnly: true, okExitCodes: [1] });
+  const values: Record<string, string> = {};
+  if (!out) return values;
+  for (const record of out.stdout.split('\0')) {
+    const nl = record.indexOf('\n');
+    if (nl === -1) continue;
+    values[record.slice(0, nl).toLowerCase()] = record.slice(nl + 1);
+  }
+  return values;
+}
+
 export async function getConfigIdentity(git: GitClient, repoPath: string | null): Promise<GitConfigInfo> {
-  const read = async (scope: string[] , key: string) => (await git.tryRun(repoPath, ['config', ...scope, '--get', key], { readOnly: true }))?.stdout.trim() || null;
-  const [gName, gEmail] = await Promise.all([read(['--global'], 'user.name'), read(['--global'], 'user.email')]);
-  const [lName, lEmail] = repoPath ? await Promise.all([read(['--local'], 'user.name'), read(['--local'], 'user.email')]) : [null, null];
-  const [eName, eEmail] = await Promise.all([read([], 'user.name'), read([], 'user.email')]);
-  return { global: { name: gName, email: gEmail }, local: { name: lName, email: lEmail }, effective: { name: eName ?? gName, email: eEmail ?? gEmail } };
+  const [g, l, e] = await Promise.all([readConfigScope(git, null, ['--global']), repoPath ? readConfigScope(git, repoPath, ['--local']) : {}, repoPath ? readConfigScope(git, repoPath, []) : {}]);
+  const pick = (v: Record<string, string>, key: string) => v[key] || null;
+  return {
+    global: { name: pick(g, 'user.name'), email: pick(g, 'user.email') },
+    local: { name: pick(l, 'user.name'), email: pick(l, 'user.email') },
+    effective: { name: pick(e, 'user.name') ?? pick(g, 'user.name'), email: pick(e, 'user.email') ?? pick(g, 'user.email') },
+  };
 }
 
 export async function setConfigIdentity(git: GitClient, repoPath: string | null, scope: 'global' | 'local', name: string, email: string): Promise<void> {
@@ -586,36 +616,38 @@ export async function unsetLocalIdentity(git: GitClient, repoPath: string): Prom
 // Commit signing config
 // ---------------------------------------------------------------------------
 
-async function readSigningConfig(git: GitClient, repoPath: string | null, scopeArgs: string[], scopeLabel: 'local' | 'global'): Promise<SigningConfig> {
-  const read = async (key: string) => (await git.tryRun(repoPath, ['config', ...scopeArgs, '--get', key], { readOnly: true }))?.stdout.trim() || null;
-  const [format, key, signCommits, signTags, gpgProgram, sshProgram, allowedSignersFile] = await Promise.all([
-    read('gpg.format'),
-    read('user.signingkey'),
-    read('commit.gpgsign'),
-    read('tag.gpgsign'),
-    read('gpg.program'),
-    read('gpg.ssh.program'),
-    read('gpg.ssh.allowedSignersFile'),
-  ]);
+function signingFromValues(v: Record<string, string>, scopeLabel: 'local' | 'global'): SigningConfig {
+  const format = v['gpg.format'] || null;
+  const key = v['user.signingkey'] || null;
+  const signCommits = v['commit.gpgsign'] || null;
+  const signTags = v['tag.gpgsign'] || null;
   const fmt: SigningFormat | null = format === 'openpgp' || format === 'ssh' || format === 'x509' ? format : null;
-  const hasAny = [format, key, signCommits, signTags].some((v) => v !== null);
+  const hasAny = [format, key, signCommits, signTags].some((x) => x !== null);
   return {
     format: fmt,
     key,
     signCommits: signCommits?.toLowerCase() === 'true',
     signTags: signTags?.toLowerCase() === 'true',
-    program: fmt === 'ssh' ? sshProgram : gpgProgram,
-    allowedSignersFile,
+    program: (fmt === 'ssh' ? v['gpg.ssh.program'] : v['gpg.program']) || null,
+    allowedSignersFile: v['gpg.ssh.allowedsignersfile'] || null,
     scope: hasAny ? scopeLabel : 'none',
   };
 }
 
+async function readSigningConfig(git: GitClient, repoPath: string | null, scopeArgs: string[], scopeLabel: 'local' | 'global'): Promise<SigningConfig> {
+  return signingFromValues(await readConfigScope(git, repoPath, scopeArgs), scopeLabel);
+}
+
 const EMPTY_SIGNING_CONFIG: SigningConfig = { format: null, key: null, signCommits: false, signTags: false, program: null, allowedSignersFile: null, scope: 'none' };
 
-/** Reads local, global and effective (local overrides global) commit-signing configuration, mirroring getConfigIdentity. */
+/** Reads local, global and effective (local overrides global) commit-signing configuration, mirroring getConfigIdentity. Three spawns total. */
 export async function getSigningConfig(git: GitClient, repoPath: string | null): Promise<SigningConfigInfo> {
-  const [local, global] = await Promise.all([repoPath ? readSigningConfig(git, repoPath, ['--local'], 'local') : Promise.resolve(EMPTY_SIGNING_CONFIG), readSigningConfig(git, null, ['--global'], 'global')]);
-  const effective = repoPath ? await readSigningConfig(git, repoPath, [], local.scope === 'local' ? 'local' : 'global') : global;
+  const [local, global, effectiveValues] = await Promise.all([
+    repoPath ? readSigningConfig(git, repoPath, ['--local'], 'local') : Promise.resolve(EMPTY_SIGNING_CONFIG),
+    readSigningConfig(git, null, ['--global'], 'global'),
+    repoPath ? readConfigScope(git, repoPath, []) : Promise.resolve(null),
+  ]);
+  const effective = effectiveValues ? signingFromValues(effectiveValues, local.scope === 'local' ? 'local' : 'global') : global;
   return { local, global, effective };
 }
 

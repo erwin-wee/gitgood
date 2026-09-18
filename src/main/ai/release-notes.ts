@@ -1,4 +1,5 @@
 import type { ReleaseNotes, ReleaseNotesInput, ReleaseRangeQuery, ReleaseRangeResult, ReleasePr } from '@shared/types';
+import { mapWithConcurrency } from '@shared/util';
 import { getLatestReachableTag } from '../git/operations';
 import { getReleaseDiffStat, getReleaseLog } from '../git/log';
 import type { GitClient } from '../git/git';
@@ -18,20 +19,6 @@ const PR_LOOKUP_CONCURRENCY = 4;
 
 export type ReleaseNotesProgressPhase = 'started' | 'thinking' | 'writing' | 'done' | 'error';
 export type ReleaseNotesReporter = (phase: ReleaseNotesProgressPhase, message: string) => void;
-
-/** Runs `fn` over `items` with at most `concurrency` in flight at once, preserving no particular order in the returned array's population (order of `items` is preserved in the result). */
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let index = 0;
-  const worker = async () => {
-    while (index < items.length) {
-      const i = index++;
-      results[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
-  return results;
-}
 
 /**
  * Gathers, for AI release notes, the commits and pull requests in a range,

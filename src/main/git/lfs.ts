@@ -94,7 +94,8 @@ export async function findLfsPatterns(git: GitClient, repoPath: string): Promise
 export async function lfsTrackedPaths(git: GitClient, repoPath: string, paths: string[]): Promise<Set<string>> {
   const result = new Set<string>();
   if (!paths.length) return result;
-  const out = await git.tryRun(repoPath, ['check-attr', 'filter', '-z', '--', ...paths], { readOnly: true });
+  // Paths go over stdin: thousands of changed files would otherwise overflow the Windows command-line limit and the call would silently fail.
+  const out = await git.tryRun(repoPath, ['check-attr', 'filter', '-z', '--stdin'], { readOnly: true, stdin: paths.join('\0') + '\0' });
   if (!out) return result;
   const tokens = out.stdout.split('\0');
   for (let i = 0; i + 2 < tokens.length; i += 3) {

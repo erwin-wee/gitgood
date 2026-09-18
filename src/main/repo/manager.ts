@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename, join, normalize, resolve } from 'node:path';
 import type { EventPayloads } from '@shared/ipc';
 import { repositoryOrigin, type GitHubRepoRef, type RepositoryInfo, type RepoWork } from '@shared/types';
-import { parseRemoteUrl } from '@shared/util';
+import { mapWithConcurrency, parseRemoteUrl } from '@shared/util';
 import { getBranches } from '../git/branches';
 import type { GitClient } from '../git/git';
 import { getRemotes, getStashes, getTopLevel } from '../git/operations';
@@ -515,19 +515,15 @@ export class RepositoryManager {
 
   async refreshIndicators(): Promise<RepositoryInfo[]> {
     const repos = this.store.getRepositories();
-    const updated: RepositoryInfo[] = [];
-    for (const repo of repos) {
-      if (!existsSync(repo.path)) {
-        updated.push({ ...repo, indicator: null });
-        continue;
-      }
+    const updated = await mapWithConcurrency(repos, 3, async (repo): Promise<RepositoryInfo> => {
+      if (!existsSync(repo.path)) return { ...repo, indicator: null };
       try {
         const status = await getStatus(this.git, repo.path);
-        updated.push({ ...repo, indicator: { ahead: status.branch.ahead, behind: status.branch.behind, hasChanges: status.files.length > 0 } });
+        return { ...repo, indicator: { ahead: status.branch.ahead, behind: status.branch.behind, hasChanges: status.files.length > 0 } };
       } catch {
-        updated.push({ ...repo, indicator: null });
+        return { ...repo, indicator: null };
       }
-    }
+    });
     this.store.saveRepositories(updated);
     // Derived (unregistered) worktrees are not persisted, so their indicators
     // are computed fresh here rather than cached across refreshes.

@@ -592,6 +592,20 @@ export function debounce<T extends (...args: never[]) => void>(fn: T, ms: number
   return wrapped;
 }
 
+/** Runs `fn` over `items` with at most `concurrency` in flight at once; the result preserves the order of `items`. */
+export async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+  const worker = async () => {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
 /** Next-patch suggestion for a semver(-looking) tag (e.g. "v1.2.3" -> "v1.2.4"), or null when the tag is not semver. */
 export function suggestNextPatchVersion(tag: string): string | null {
   const m = /^(v)?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(tag.trim());
