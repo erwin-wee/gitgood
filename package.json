@@ -1,6 +1,6 @@
 {
   "name": "gitgood",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A GitHub Desktop-style Git client for Windows, macOS and Linux that drives the git and gh CLIs",
   "main": "./out/main/index.js",
   "author": "Erwin Wee",
@@ -22,7 +22,9 @@
     "dist:win": "electron-vite build && electron-builder --win --x64",
     "dist:linux": "electron-vite build && electron-builder --linux",
     "dist:mac": "electron-vite build && electron-builder --mac",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "release:prepare": "node scripts/release.mjs prepare",
+    "release:tag": "node scripts/release.mjs tag"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",

@@ -16,7 +16,22 @@ Packaging notes:
 
 ## Cutting a release
 
-Bump `version` in `package.json`, merge to `main`, then push a tag matching it:
+`scripts/release.mjs` runs the sequence and enforces the checks below:
+
+```bash
+npm run release:prepare -- 0.2.0   # on main: bump package.json + lockfile on a
+                                   # release/v0.2.0 branch, push it, open the PR
+# review and merge that PR, then back on an up-to-date main:
+npm run release:tag                # tag main at package.json's version and push
+```
+
+`prepare` refuses a version that does not move forward, a tag that already
+exists, or a dirty or diverged `main`; `tag` additionally refuses to run while the
+Test workflow on `main` is failing or unfinished (`--no-verify` skips that).
+Both ask before doing anything; `--yes` answers for you.
+
+By hand it is a bump of `version` in `package.json`, merged to `main`, then a
+tag matching it:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
