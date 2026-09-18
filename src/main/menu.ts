@@ -43,6 +43,7 @@ export function buildMenu(getWindow: () => BrowserWindow | null): Menu {
       { type: 'separator' },
       action('Add Local Repository…', 'add-local-repository', 'CmdOrCtrl+O'),
       action('Clone Repository…', 'clone-repository', 'CmdOrCtrl+Shift+O'),
+      action('Rescan Watched Folders', 'scan-watched-folders'),
       { type: 'separator' },
       action('Export Settings…', 'export-settings'),
       action('Import Settings…', 'import-settings'),

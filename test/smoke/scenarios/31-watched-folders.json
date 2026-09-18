@@ -1,0 +1,66 @@
+{
+  "name": "watched-folders",
+  "repoKind": "watchedFolders",
+  "steps": [
+    { "wait": 1200 },
+    {
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const add = await inv('repos.watchedFolders.add', projects); await new Promise((r) => setTimeout(r, 1500)); const result = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 400)); const repos = await inv('repos.list'); const paths = repos.map((r) => r.path).sort(); return JSON.stringify({ addOk: add.ok, addedTotal: repos.length, rescanAdded: result.added, cancelled: result.cancelled, foundA: paths.includes(projects + '/a'), foundB: paths.includes(projects + '/org/b'), foundDecoy: paths.some((p) => p.indexOf('node_modules') !== -1), total: repos.length, allWatched: repos.every((r) => r.origin === 'watched'), folderProblem: result.folders[0].problem }); })()",
+      "dump": "scan.json"
+    },
+    {
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const dup = await inv('repos.watchedFolders.add', projects); const nested = await inv('repos.watchedFolders.add', projects + '/org'); return JSON.stringify({ duplicateRejected: dup.ok === false, duplicateMessage: dup.error || '', nestedRejected: nested.ok === false, nestedNamesCovering: (nested.error || '').indexOf(projects) !== -1 }); })()",
+      "dump": "validation.json"
+    },
+    {
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const repos = await inv('repos.list'); const a = repos.find((r) => r.path === projects + '/a'); await window.__gitgood.actions.removeRepository(a, false); await new Promise((r) => setTimeout(r, 400)); const excluded = await inv('repos.exclusions.list'); const again = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 300)); const after = await inv('repos.list'); return JSON.stringify({ excludedCount: excluded.length, addedOnRescan: again.added, stillGone: !after.some((r) => r.path === projects + '/a'), skipped: again.skipped }); })()",
+      "dump": "exclude.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); window.__gitgood.actions.openDialog({ kind: 'settings', tab: 'git' }); await new Promise((r) => setTimeout(r, 700)); const text = document.body.innerText.toLowerCase(); return JSON.stringify({ hasSection: text.indexOf('watched folders') !== -1, hasExclusionSection: text.indexOf('not added again') !== -1, showsDepth: text.indexOf('depth') !== -1 }); })()",
+      "dump": "settings-ui.json"
+    },
+    { "shot": "settings.png" },
+    {
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; window.__gitgood.actions.closeAllDialogs(); const left = await inv('repos.exclusions.remove', projects + '/a'); const rescan = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 400)); const after = await inv('repos.list'); return JSON.stringify({ remaining: left.length, addedBack: rescan.added, hasA: after.some((r) => r.path === projects + '/a') }); })()",
+      "dump": "unexclude.json"
+    },
+    { "rm": "__REPO_PATH__-projects/org/b" },
+    {
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const result = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 400)); const after = await inv('repos.list'); const excluded = await inv('repos.exclusions.list'); return JSON.stringify({ dropped: result.dropped, stillListed: after.some((r) => r.path === projects + '/org/b'), excludedAfterDrop: excluded.length, summary: window.__gitgood.actions.describeScanResult(result) }); })()",
+      "dump": "drop.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.handleMenuAction('scan-watched-folders'); await new Promise((r) => setTimeout(r, 900)); const toasts = window.__gitgood.store.get().toasts; return JSON.stringify({ toastCount: toasts.length, title: toasts.length ? toasts[toasts.length - 1].title : null, message: toasts.length ? toasts[toasts.length - 1].message : null }); })()",
+      "dump": "toast.json"
+    },
+    { "shot": "toast.png" }
+  ],
+  "expect": [
+    { "dump": "scan.json", "jsonPath": "addOk", "equals": true },
+    { "dump": "scan.json", "jsonPath": "addedTotal", "equals": 2 },
+    { "dump": "scan.json", "jsonPath": "cancelled", "equals": false },
+    { "dump": "scan.json", "jsonPath": "foundA", "equals": true },
+    { "dump": "scan.json", "jsonPath": "foundB", "equals": true },
+    { "dump": "scan.json", "jsonPath": "foundDecoy", "equals": false },
+    { "dump": "scan.json", "jsonPath": "total", "equals": 2 },
+    { "dump": "scan.json", "jsonPath": "allWatched", "equals": true },
+    { "dump": "scan.json", "jsonPath": "folderProblem", "equals": null },
+    { "dump": "validation.json", "jsonPath": "duplicateRejected", "equals": true },
+    { "dump": "validation.json", "jsonPath": "nestedRejected", "equals": true },
+    { "dump": "validation.json", "jsonPath": "nestedNamesCovering", "equals": true },
+    { "dump": "exclude.json", "jsonPath": "excludedCount", "equals": 1 },
+    { "dump": "exclude.json", "jsonPath": "addedOnRescan", "equals": 0 },
+    { "dump": "exclude.json", "jsonPath": "stillGone", "equals": true },
+    { "dump": "settings-ui.json", "jsonPath": "hasSection", "equals": true },
+    { "dump": "settings-ui.json", "jsonPath": "hasExclusionSection", "equals": true },
+    { "dump": "settings-ui.json", "jsonPath": "showsDepth", "equals": true },
+    { "dump": "unexclude.json", "jsonPath": "remaining", "equals": 0 },
+    { "dump": "unexclude.json", "jsonPath": "addedBack", "equals": 1 },
+    { "dump": "unexclude.json", "jsonPath": "hasA", "equals": true },
+    { "dump": "drop.json", "jsonPath": "dropped", "equals": 1 },
+    { "dump": "drop.json", "jsonPath": "stillListed", "equals": false },
+    { "dump": "drop.json", "jsonPath": "excludedAfterDrop", "equals": 0 },
+    { "dump": "toast.json", "jsonPath": "toastCount", "truthy": true },
+    { "dump": "toast.json", "jsonPath": "title", "equals": "Watched folders scanned" }
+  ]
+}
