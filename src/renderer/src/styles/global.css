@@ -15,7 +15,7 @@
   --border-muted: #d8dee4;
   --fg: #1f2328;
   --fg-muted: #656d76;
-  --fg-subtle: #8c959f;
+  --fg-subtle: #6e7781;
   --fg-on-emphasis: #ffffff;
   --accent: #0969da;
   --accent-emphasis: #0969da;
@@ -78,7 +78,7 @@
   --border-muted: #21262d;
   --fg: #e6edf3;
   --fg-muted: #8d96a0;
-  --fg-subtle: #6e7681;
+  --fg-subtle: #848d97;
   --fg-on-emphasis: #ffffff;
   --accent: #4493f8;
   --accent-emphasis: #1f6feb;
@@ -86,7 +86,7 @@
   --accent-subtle: rgba(56, 139, 253, 0.15);
   --success: #3fb950;
   --success-emphasis: #238636;
-  --success-hover: #2ea043;
+  --success-hover: #207b32;
   --success-subtle: rgba(46, 160, 67, 0.15);
   --attention: #d29922;
   --attention-emphasis: #9e6a03;
@@ -313,4 +313,20 @@ kbd {
 }
 .hljs-deletion {
   color: var(--hl-deletion);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog-backdrop,
+  .dialog,
+  .toast,
+  table.diff tr.flash-highlight td {
+    animation: none !important;
+  }
+  .toolbar-progress,
+  .progress-bar > div {
+    transition: none !important;
+  }
+  .spinner {
+    animation-duration: 1.6s !important;
+  }
 }

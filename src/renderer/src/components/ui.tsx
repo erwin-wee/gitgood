@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react';
 import { formatRelativeTime } from '@shared/util';
 import { invoke } from '../api';
 import { store, useAppStore } from '../state/store';
@@ -131,18 +131,22 @@ interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export function TextField({ label, hint, error, trailing, className, ...rest }: FieldProps): React.JSX.Element {
+  const autoId = useId();
+  const id = rest.id ?? autoId;
+  const message = error ?? hint;
+  const messageId = message ? `${id}-message` : undefined;
   return (
     <div className={`field ${className ?? ''}`}>
-      {label ? <label>{label}</label> : null}
+      {label ? <label htmlFor={id}>{label}</label> : null}
       {trailing ? (
         <div className="field-row">
-          <input {...rest} />
+          <input {...rest} id={id} aria-invalid={error ? true : undefined} aria-describedby={messageId} />
           {trailing}
         </div>
       ) : (
-        <input {...rest} />
+        <input {...rest} id={id} aria-invalid={error ? true : undefined} aria-describedby={messageId} />
       )}
-      {error ? <span className="error">{error}</span> : hint ? <span className="hint">{hint}</span> : null}
+      {error ? <span id={messageId} className="error">{error}</span> : hint ? <span id={messageId} className="hint">{hint}</span> : null}
     </div>
   );
 }
@@ -326,24 +330,42 @@ export function ContextMenuHost(): React.JSX.Element | null {
 
 export function Dialog({ title, onClose, children, footer, width, icon, dismissible = true, className }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: 'default' | 'wide' | 'xwide'; icon?: IconName; dismissible?: boolean; className?: string }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && dismissible) {
         e.stopPropagation();
         onClose();
+        return;
+      }
+      if (e.key === 'Tab') {
+        if (!ref.current || ref.current.closest('.dialog-backdrop') !== [...document.querySelectorAll('.dialog-backdrop')].at(-1)) return;
+        const focusables = [...ref.current.querySelectorAll<HTMLElement>('a[href],button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')];
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+        if (e.shiftKey ? active === first || !ref.current.contains(active) : active === last || !ref.current.contains(active)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first).focus();
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     const first = ref.current?.querySelector<HTMLElement>('input:not([type=checkbox]), textarea, select, button.primary, button');
     first?.focus();
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
   }, [dismissible, onClose]);
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismissible && onClose()}>
-      <div ref={ref} className={`dialog ${width === 'wide' ? 'wide' : width === 'xwide' ? 'xwide' : ''} ${className ?? ''}`} role="dialog" aria-modal="true">
+      <div ref={ref} className={`dialog ${width === 'wide' ? 'wide' : width === 'xwide' ? 'xwide' : ''} ${className ?? ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="dialog-header">
           {icon ? <Icon name={icon} /> : null}
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           {dismissible ? <Button variant="ghost" iconOnly icon="x" onClick={onClose} title="Close" /> : null}
         </div>
         <div className="dialog-body">{children}</div>
@@ -379,11 +401,11 @@ export function useFilter<T>(items: T[], query: string, keys: (item: T) => strin
   }, [items, query, keys]);
 }
 
-export function FilterInput({ value, onChange, placeholder, id, autoFocus }: { value: string; onChange: (v: string) => void; placeholder: string; id?: string; autoFocus?: boolean }): React.JSX.Element {
+export function FilterInput({ value, onChange, placeholder, label, id, autoFocus }: { value: string; onChange: (v: string) => void; placeholder: string; label?: string; id?: string; autoFocus?: boolean }): React.JSX.Element {
   return (
     <div className="filter-input">
       <Icon name="search" />
-      <input id={id} type="text" value={value} placeholder={placeholder} autoFocus={autoFocus} onChange={(e) => onChange(e.target.value)} spellCheck={false} />
+      <input id={id} type="text" value={value} placeholder={placeholder} aria-label={label ?? placeholder} autoFocus={autoFocus} onChange={(e) => onChange(e.target.value)} spellCheck={false} />
     </div>
   );
 }
