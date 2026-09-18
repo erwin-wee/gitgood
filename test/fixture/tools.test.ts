@@ -38,3 +38,19 @@ describe.skipIf(!hasOnPath('ssh-keygen', ['-V']))('ToolLocator: ssh-keygen detec
     expect(state.sshKeygen.path).toBeTruthy();
   });
 });
+
+describe.skipIf(!hasOnPath('git', ['--version']))('ToolLocator: pre-scan state', () => {
+  /**
+   * `current()` answers synchronously from whatever the last scan found, so
+   * before `ensureLocated()` resolves it reports every tool as missing. Any
+   * caller that surfaces this state to the user (the `app.tools` IPC handler,
+   * which the renderer uses to decide whether to show the "GitGood needs Git
+   * to run" setup screen) has to await the scan first.
+   */
+  it('reports git as missing until the scan has run, and installed afterwards', async () => {
+    const locator = new ToolLocator(fakeStore());
+    expect(locator.current().git.installed).toBe(false);
+    await locator.ensureLocated();
+    expect(locator.current().git.installed).toBe(true);
+  });
+});
