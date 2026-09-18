@@ -41,6 +41,8 @@ import { findShells, openShell } from './integrations/shells';
 import { getLogPath, log } from './logger';
 import { readRepoConfig } from './repo/config';
 import type { RepositoryManager } from './repo/manager';
+import { canonicalPath } from './repo/paths';
+import { addWatchedFolder, folderProblem, sanitizeWatchedFolders, type WatchedFolderScanner } from './repo/watched-folders';
 import type { Store } from './store';
 import type { ToolLocator } from './tools';
 import { canInstall } from './update/update-core';
@@ -65,6 +67,7 @@ export interface AppContext {
   inbox: InboxPoller;
   settingsSync: SettingsSyncService;
   updater: Updater;
+  watchedFolders: WatchedFolderScanner;
   getWindow: () => BrowserWindow | null;
   busy: Set<string>;
 }
@@ -96,7 +99,7 @@ const historyControllers = new Map<string, AbortController>();
 const operationControllers = new Map<string, AbortController>();
 
 export function registerIpc(ctx: AppContext): void {
-  const { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette } = ctx;
+  const { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, watchedFolders } = ctx;
   const send: <K extends keyof EventPayloads>(event: K, payload: EventPayloads[K]) => void = (event, payload) => sendEvent(ctx.getWindow(), event, payload);
   const statusCache = new Map<string, { status: RepositoryStatus; at: number }>();
 
@@ -234,6 +237,14 @@ export function registerIpc(ctx: AppContext): void {
     'app.settings.get': async () => store.getSettings(),
     'app.settings.set': async (patch) => {
       const before = store.getSettings();
+      // Depth clamping, canonical paths and the no-duplicate/no-nesting rules
+      // hold whichever route the list arrives by, not only
+      // repos.watchedFolders.add — otherwise the two disagree about whether a
+      // symlink and its target are the same folder, and it gets walked twice.
+      if (patch.watchedFolders) {
+        const canonical = await Promise.all(patch.watchedFolders.map(async (f) => ({ ...f, path: await canonicalPath(f.path) })));
+        patch = { ...patch, watchedFolders: sanitizeWatchedFolders(canonical) };
+      }
       const next = store.updateSettings(patch);
       if (patch.gitPath !== undefined || patch.ghPath !== undefined || patch.ai?.claudeCliPath !== undefined) {
         void tools.refresh().then((s) => send('tools.changed', s));
@@ -465,6 +476,30 @@ export function registerIpc(ctx: AppContext): void {
     },
     'repos.setAlias': async (id, alias) => repos.setAlias(id, alias),
     'repos.refreshIndicators': async () => repos.refreshIndicators(),
+
+    // ---------------- watched folders ----------------
+    'repos.scanWatchedFolders': async () => watchedFolders.scan(),
+    'repos.cancelScan': async () => watchedFolders.cancel(),
+    'repos.watchedFolders.add': async (path, depth) => {
+      // Stored physically: git reports repositories by their resolved path, so
+      // a folder kept as a symlink/junction path would never match what a scan
+      // finds inside it (and nothing in it could be excluded on removal).
+      const result = addWatchedFolder(store.getSettings().watchedFolders, await canonicalPath(path), depth);
+      if (!result.ok) return { ok: false, error: result.error, settings: store.getSettings() };
+      // The settings listener starts the scan; see WatchedFolderScanner.watchSettings.
+      return { ok: true, settings: store.updateSettings({ watchedFolders: result.folders }) };
+    },
+    'repos.watchedFolders.status': async () => Promise.all(store.getSettings().watchedFolders.map(async (f) => ({ path: f.path, problem: await folderProblem(f.path) }))),
+    'repos.isInWatchedFolder': async (repoPath) => repos.isInWatchedFolder(repoPath),
+    'repos.exclusions.list': async () => store.getExcludedRepositoryPaths(),
+    'repos.exclusions.remove': async (path) => {
+      store.removeExcludedRepositoryPath(path);
+      return store.getExcludedRepositoryPaths();
+    },
+    'repos.exclusions.clear': async () => {
+      store.clearExcludedRepositoryPaths();
+      return store.getExcludedRepositoryPaths();
+    },
 
     // ---------------- repository reads ----------------
     'repo.open': async (path) => repos.open(path),

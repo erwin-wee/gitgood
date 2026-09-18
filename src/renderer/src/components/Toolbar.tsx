@@ -229,7 +229,11 @@ function RepositoryPopover(): React.JSX.Element {
     <div key={r.id} className={`list-row ${current?.id === r.id ? 'selected' : ''} ${r.missing ? 'disabled' : ''}`} style={nested ? { paddingLeft: 28 } : undefined} onClick={() => { store.set({ popover: null }); void actions.openRepository(r); }} onContextMenu={(e) => contextMenu(e, r)} title={r.path}>
       <Icon name={r.parentRepoId ? 'folder' : nested ? 'worktree' : r.github ? 'github' : 'repo'} />
       <span className="row-main">
-        <span className="truncate">{r.alias ?? r.name}{r.alias ? <span className="muted"> ({r.name})</span> : null}</span>
+        <span className="truncate">
+          {r.alias ?? r.name}
+          {r.alias ? <span className="muted"> ({r.name})</span> : null}
+          {r.origin === 'watched' ? <Icon name="search" size={11} className="muted" title="Found in a watched folder" /> : null}
+        </span>
         {r.missing ? <span className="row-sub">Repository not found on disk</span> : null}
       </span>
       {settings?.repositoryIndicators && r.indicator ? (

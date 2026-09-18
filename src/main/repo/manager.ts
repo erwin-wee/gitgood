@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { basename, normalize, resolve } from 'node:path';
+import { basename, join, normalize, resolve } from 'node:path';
 import type { EventPayloads } from '@shared/ipc';
-import type { GitHubRepoRef, RepositoryInfo, RepoWork } from '@shared/types';
+import { repositoryOrigin, type GitHubRepoRef, type RepositoryInfo, type RepoWork } from '@shared/types';
 import { parseRemoteUrl } from '@shared/util';
 import { getBranches } from '../git/branches';
 import type { GitClient } from '../git/git';
@@ -11,17 +11,55 @@ import { getGitDir, getStatus } from '../git/status';
 import { getCommonDir, getMainWorktreePath, listWorktrees } from '../git/worktree';
 import { log } from '../logger';
 import type { Store } from '../store';
+import { canonicalPath, isInside, normalizePath } from './paths';
 import { RepositoryWatcher } from './watcher';
 
-function normalizeForCompare(path: string): string {
-  const n = normalize(path);
-  return process.platform === 'win32' ? n.toLowerCase() : n;
-}
+const normalizeForCompare = normalizePath;
 
 const DERIVED_WORKTREES_TTL_MS = 10_000;
 
 export type EventSender = <K extends keyof EventPayloads>(event: K, payload: EventPayloads[K]) => void;
 
+/** How a repository registered on another one's behalf (a worktree's main) should be recorded. */
+interface ImplicitAddOptions {
+  /** The caller is a watched-folder scan: honour exclusions and mark ownership by location. */
+  discovered?: boolean;
+  /** Collects the ids this call registered, so the scan reports exactly what it did. */
+  registered?: Set<string>;
+}
+
+export interface AddManyResult {
+  added: RepositoryInfo[];
+  /** Found but already in the list, or excluded by the user. */
+  skipped: number;
+  /** Found but could not be registered (not a repository any more, or git failed). */
+  failed: number;
+}
+
+/**
+ * The key two paths are compared on to decide whether they are the same
+ * repository: the working tree root with symbolic links resolved, so a
+ * repository listed under `~/code/gitgood` is recognised when a scan reaches
+ * it as `~/Projects/erwin-wee/gitgood`. Falls back to the normalized path when
+ * the folder is gone or unreadable, so a missing repository never blocks an add.
+ *
+ * Deliberately not the `.git` common directory: a linked worktree shares its
+ * main repository's common dir, and the two must stay separate entries.
+ */
+export async function resolvedKey(path: string): Promise<string> {
+  return normalizePath(await canonicalPath(path));
+}
+
+/** A folder that still holds a `.git` entry of either kind; the same test the scan walker applies. */
+function isRepositoryOnDisk(path: string): boolean {
+  return existsSync(path) && existsSync(join(path, '.git'));
+}
+
+/**
+ * Deliberately NOT normalizePath: this hash is a persisted identity (state.json
+ * keys issue filters and repository-config trust by it), so its input must keep
+ * hashing exactly as it always has. Use normalizePath/samePath to *compare*.
+ */
 export function repositoryId(path: string): string {
   const normalized = process.platform === 'win32' ? normalize(path).toLowerCase() : normalize(path);
   return createHash('sha1').update(normalized).digest('hex').slice(0, 16);
@@ -100,16 +138,44 @@ export class RepositoryManager {
     return results;
   }
 
-  /** Determines whether `repoPath` is a linked worktree, returning the id of its main repository (registering it if needed). */
-  private async resolveWorktreeOf(repoPath: string): Promise<string | null> {
+  /**
+   * Determines whether `repoPath` is a linked worktree, returning the id of its
+   * main repository (registering it if needed).
+   *
+   * `origin` is carried through to a main repository registered here: when a
+   * scan reaches a worktree before its main, the main is discovered by that
+   * scan too, and must not be recorded as if the user had added it by hand.
+   */
+  private async resolveWorktreeOf(repoPath: string, opts: ImplicitAddOptions = {}): Promise<string | null> {
     try {
       const mainPath = await getMainWorktreePath(this.git, repoPath);
       if (!mainPath || repositoryId(mainPath) === repositoryId(repoPath)) return null;
-      const mainInfo = this.getByPath(mainPath) ?? (await this.add(mainPath));
-      return mainInfo.id;
+      const existing = this.getByPath(mainPath);
+      if (existing) return existing.id;
+
+      // Registering a main implicitly must honour the same rules addMany
+      // applies to its own candidates, or a scan quietly reinstates a
+      // repository the user removed. It is only the scanner's to own when it
+      // actually lies in a watched folder.
+      if (opts.discovered) {
+        if (await this.isExcluded(mainPath)) return null;
+        const inWatched = await this.isInWatchedFolder(mainPath);
+        const info = await this.add(mainPath, { origin: inWatched ? 'watched' : 'manual', recordOpen: false });
+        opts.registered?.add(info.id);
+        return info.id;
+      }
+      const info = await this.add(mainPath);
+      opts.registered?.add(info.id);
+      return info.id;
     } catch {
       return null;
     }
+  }
+
+  /** Excluded by the path as stored, or by where it physically is (exclusions predating canonical storage). */
+  private async isExcluded(path: string): Promise<boolean> {
+    if (this.store.isRepositoryExcluded(path)) return true;
+    return this.store.isRepositoryExcluded(await canonicalPath(path));
   }
 
   get(id: string): RepositoryInfo | null {
@@ -121,24 +187,142 @@ export class RepositoryManager {
     return this.get(id);
   }
 
-  async add(path: string): Promise<RepositoryInfo> {
+  /**
+   * Adds one repository, as the user asking for it. `origin: 'watched'` marks
+   * it as discovered instead and leaves `lastOpened` unset, so a repository
+   * registered on a scan's behalf does not jump the recently-opened ordering.
+   */
+  async add(path: string, opts: { origin?: 'manual' | 'watched'; recordOpen?: boolean } = {}): Promise<RepositoryInfo> {
     const resolved = resolve(path);
     const top = await getTopLevel(this.git, resolved);
     if (!top) throw new Error(`"${resolved}" is not a Git repository.`);
     const repoPath = process.platform === 'win32' ? normalize(top) : top;
     const id = repositoryId(repoPath);
     const existing = this.get(id);
+    // `recordOpen` is what separates "the user asked for this repository" from
+    // "a scan registered it on the way past": only the former counts as opening.
+    const recordOpen = opts.recordOpen ?? true;
     if (existing) {
-      this.touch(id);
+      if (recordOpen) this.touch(id);
       return existing;
     }
     this.invalidateWorktrees();
-    const worktreeOf = await this.resolveWorktreeOf(repoPath);
+    const discovered = opts.origin === 'watched';
+    const worktreeOf = await this.resolveWorktreeOf(repoPath, { discovered, registered: undefined });
     const github = await this.detectGitHub(repoPath, true);
-    const info: RepositoryInfo = { id, path: repoPath, name: basename(repoPath), alias: null, missing: false, github, lastOpened: Date.now(), indicator: null, worktreeOf, parentRepoId: null };
+    const info: RepositoryInfo = { id, path: repoPath, name: basename(repoPath), alias: null, missing: false, github, lastOpened: recordOpen ? Date.now() : 0, indicator: null, worktreeOf, parentRepoId: null, ...(discovered ? { origin: 'watched' as const } : {}) };
     this.store.saveRepositories([...this.store.getRepositories(), info]);
     this.send('repos.changed', await this.list(false));
     return info;
+  }
+
+  /**
+   * Registers several repositories in one pass, for a watched-folder scan.
+   *
+   * Unlike `add()` this resolves with bounded concurrency, writes once and
+   * sends a single `repos.changed`, so a folder holding dozens of clones does
+   * not fan out into a git process and a full list broadcast per repository.
+   *
+   * Paths already in the list (compared by resolved location, see
+   * `resolvedKey`) and paths the user has excluded are skipped; the entries
+   * that are added are marked `origin: 'watched'`. Existing entries are left
+   * exactly as they are, keeping their origin, alias and lastOpened.
+   */
+  async addMany(paths: string[], opts: { concurrency?: number } = {}): Promise<AddManyResult> {
+    const concurrency = opts.concurrency ?? 3;
+    const before = this.store.getRepositories();
+    const beforeIds = new Set(before.map((r) => r.id));
+    /** Ids this call registered, directly or through resolveWorktreeOf. */
+    const claimed = new Set<string>();
+    /** Resolved keys of repositories already in the list. */
+    const known = new Set(await Promise.all(before.map((r) => resolvedKey(r.path))));
+    const candidates: { path: string; key: string }[] = [];
+    let skipped = 0;
+    let failed = 0;
+
+    for (const path of paths) {
+      const resolvedPath = resolve(path);
+      if (await this.isExcluded(resolvedPath)) {
+        skipped++;
+        continue;
+      }
+      const key = await resolvedKey(resolvedPath);
+      // `known` grows with each claimed candidate, so two paths that resolve to
+      // the same repository in one call only produce one entry.
+      if (known.has(key)) {
+        skipped++;
+        continue;
+      }
+      known.add(key);
+      candidates.push({ path: resolvedPath, key });
+    }
+    if (!candidates.length) return { added: [], skipped, failed };
+
+    this.invalidateWorktrees();
+    const added: RepositoryInfo[] = [];
+    for (let i = 0; i < candidates.length; i += concurrency) {
+      const batch = candidates.slice(i, i + concurrency);
+      const infos = await Promise.all(
+        batch.map(async (candidate): Promise<RepositoryInfo | null | 'skip' | 'claimed'> => {
+          try {
+            const top = await getTopLevel(this.git, candidate.path);
+            if (!top) return null;
+            const repoPath = process.platform === 'win32' ? normalize(top) : top;
+            const id = repositoryId(repoPath);
+            // Already in the list *before* this call is a genuine skip; added
+            // during it (a worktree's main, or a racing candidate) is this
+            // call's own work and must not be counted as already known.
+            if (this.get(id)) return beforeIds.has(id) ? 'skip' : 'claimed';
+            // git reports the physical path, so the top level of a candidate
+            // reached through a symlink differs from the candidate's own path
+            // while denoting the same repository. Only a key that is neither
+            // this candidate's own nor unclaimed means git resolved onto a
+            // *different* repository (e.g. the candidate was a subdirectory).
+            const key = await resolvedKey(repoPath);
+            if (key !== candidate.key && known.has(key)) return 'skip';
+            known.add(key);
+            const worktreeOf = await this.resolveWorktreeOf(repoPath, { discovered: true, registered: claimed });
+            const github = await this.detectGitHub(repoPath, true);
+            return { id: repositoryId(repoPath), path: repoPath, name: basename(repoPath), alias: null, missing: false, github, lastOpened: 0, indicator: null, worktreeOf, parentRepoId: null, origin: 'watched' };
+          } catch (err) {
+            log.warn(`Could not add ${candidate.path} from a watched folder: ${(err as Error).message}`);
+            return null;
+          }
+        }),
+      );
+      for (const info of infos) {
+        if (info === 'skip') skipped++;
+        else if (info === 'claimed') continue;
+        else if (info === null) failed++;
+        else added.push(info);
+      }
+    }
+
+    // Re-read rather than reusing `before`: resolveWorktreeOf may itself have
+    // registered a main repository while this ran, and two candidates in one
+    // batch can race onto the same top level.
+    const current = this.store.getRepositories();
+    const stored = new Set(current.map((r) => r.id));
+    const fresh: RepositoryInfo[] = [];
+    for (const info of added) {
+      if (stored.has(info.id)) {
+        // Registered while this call ran (two candidates racing onto the same
+        // top level, or resolveWorktreeOf); only a pre-existing entry counts
+        // as skipped.
+        if (beforeIds.has(info.id)) skipped++;
+        continue;
+      }
+      stored.add(info.id);
+      claimed.add(info.id);
+      fresh.push(info);
+    }
+    if (fresh.length) {
+      this.store.saveRepositories([...current, ...fresh]);
+      this.send('repos.changed', await this.list(false));
+    }
+    // Exactly what this call registered — a repository another caller happened
+    // to add while the scan ran is not the scan's to report.
+    return { added: this.store.getRepositories().filter((r) => claimed.has(r.id)), skipped, failed };
   }
 
   /** Registers (or reuses) the repository at `submodulePath` and links it under `parentId`, nesting it in the repository list next to worktrees. */
@@ -151,7 +335,16 @@ export class RepositoryManager {
     return updated;
   }
 
-  /** Removes a repository from the list. If it is a main repository, any of its worktrees that were explicitly registered are removed too (their directories are left untouched). */
+  /**
+   * Removes a repository from the list. If it is a main repository, any of its
+   * worktrees that were explicitly registered are removed too (their
+   * directories are left untouched).
+   *
+   * A repository that sits inside a watched folder is also recorded as
+   * excluded, whatever its origin, so the next scan does not add it straight
+   * back — otherwise removing it would visibly fail to stick. Removals outside
+   * every watched folder record nothing.
+   */
   async remove(id: string): Promise<RepositoryInfo | null> {
     const repo = this.get(id);
     if (!repo) return null;
@@ -159,9 +352,84 @@ export class RepositoryManager {
     const children = this.store.getRepositories().filter((r) => r.worktreeOf === id);
     for (const child of children) this.stopWatching(child.path);
     this.stopWatching(repo.path);
+    for (const r of [repo, ...children]) {
+      if (!(await this.isInWatchedFolder(r.path))) continue;
+      // Stored physically, like everything else the scan compares: an entry
+      // held under a symlink path (a settings import does that) would
+      // otherwise be re-added the moment a scan reached its real path.
+      this.store.addExcludedRepositoryPath(await canonicalPath(r.path));
+    }
     this.store.saveRepositories(this.store.getRepositories().filter((r) => r.id !== id && r.worktreeOf !== id));
     this.send('repos.changed', await this.list(false));
     return repo;
+  }
+
+  /**
+   * True when `repoPath` lies within (or is) one of the registered watched
+   * folders. Compared on physical paths: a repository's stored path comes from
+   * git and has its symlinks resolved, so a watched folder registered before
+   * paths were canonicalised (or hand-edited into settings.json) would
+   * otherwise never match the repositories inside it.
+   */
+  async isInWatchedFolder(repoPath: string): Promise<boolean> {
+    const folders = this.store.getSettings().watchedFolders;
+    if (folders.some((f) => isInside(f.path, repoPath))) return true;
+    const target = await canonicalPath(repoPath);
+    const roots = await Promise.all(folders.map((f) => canonicalPath(f.path)));
+    return roots.some((root) => isInside(root, target));
+  }
+
+  /**
+   * Drops discovered repositories under `folderPath` whose folder is gone or is
+   * no longer a repository, after a scan of that folder that completed cleanly.
+   *
+   * Only `origin: 'watched'` entries are candidates: dropping is the scanner
+   * tidying up entries it created, so a repository the user added by hand stays
+   * in the list and is shown as missing, exactly as it is today. Nothing is
+   * excluded — the repository is gone, not refused.
+   *
+   * `unreadable` carries the directories that scan could not read; a repository
+   * beneath one of them is left alone, so an unmounted drive or a permissions
+   * change never silently empties the list. The caller must not invoke this at
+   * all for a cancelled scan.
+   */
+  async dropVanished(folderPath: string, unreadable: string[]): Promise<RepositoryInfo[]> {
+    const stored = this.store.getRepositories();
+    const dropped = stored.filter(
+      (r) =>
+        repositoryOrigin(r) === 'watched' &&
+        isInside(folderPath, r.path) &&
+        !unreadable.some((u) => isInside(u, r.path)) &&
+        !isRepositoryOnDisk(r.path),
+    );
+    if (!dropped.length) return [];
+    const ids = new Set(dropped.map((r) => r.id));
+
+    // A dropped main takes its *discovered* worktree children with it (they
+    // are gone with it), but never a child the user added by hand, and never
+    // one that is still on disk. Survivors are re-parented to the top level:
+    // an entry whose `worktreeOf` points at a repository no longer in the list
+    // would be nested under nothing and disappear from the sidebar.
+    const orphans = stored.filter((r) => r.worktreeOf && ids.has(r.worktreeOf) && !ids.has(r.id));
+    const alsoDropped = orphans.filter(
+      (r) =>
+        repositoryOrigin(r) === 'watched' &&
+        // Same guards as the primary set: a worktree living outside this
+        // folder, or under a directory this scan could not read (an unmounted
+        // drive), is not this scan's to judge — it is re-parented instead.
+        isInside(folderPath, r.path) &&
+        !unreadable.some((u) => isInside(u, r.path)) &&
+        !isRepositoryOnDisk(r.path),
+    );
+    for (const r of alsoDropped) ids.add(r.id);
+    const survivors = new Set(orphans.filter((r) => !ids.has(r.id)).map((r) => r.id));
+
+    const all = [...dropped, ...alsoDropped];
+    for (const r of all) this.stopWatching(r.path);
+    this.invalidateWorktrees();
+    this.store.saveRepositories(stored.filter((r) => !ids.has(r.id)).map((r) => (survivors.has(r.id) ? { ...r, worktreeOf: null } : r)));
+    this.send('repos.changed', await this.list(false));
+    return all;
   }
 
   /** Repositories (registered or derived) that are worktrees of the given main repository. */

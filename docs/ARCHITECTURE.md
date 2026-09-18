@@ -17,7 +17,10 @@ src/
                   diff explanation service (explain.ts) and its pure validation helpers (explain-core.ts)
     update/       auto-update: UpdateProvider seam, electron-updater-backed provider, pure
                   semver/channel/reducer/gate logic (update-core.ts), orchestration (updater.ts)
-    repo/         repository list, file-system watcher (recursive fs.watch with polling fallback)
+    repo/         repository list, file-system watcher (recursive fs.watch with polling fallback),
+                  watched folders: a pure bounded directory walker (scan.ts) plus the scan
+                  orchestration, exclusions and folder validation (watched-folders.ts); path
+                  comparison with the platform's case rules lives in paths.ts
     integrations/ external editors and terminals per platform
     ipc.ts        typed request handlers for every API method
   preload/        contextBridge exposing a single typed invoke/on bridge
