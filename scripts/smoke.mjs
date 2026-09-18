@@ -429,7 +429,12 @@ async function runElectron(electronPath, cwd, env, timeoutMs) {
   return new Promise((resolvePromise) => {
     const useXvfb = hasXvfbRun();
     const cmd = useXvfb ? 'xvfb-run' : electronPath;
-    const args = useXvfb ? ['-a', electronPath, '.', '--no-sandbox'] : ['.', '--no-sandbox'];
+    // `--disable-gpu`: the window is rendered offscreen, so the GPU path buys
+    // nothing, and initialising the viz compositor against a virtual display
+    // fails intermittently ("Unhandled rejection Error: UnknownVizError" on the
+    // first scenario of a CI run, passing on a re-run of the same commit).
+    const electronArgs = ['.', '--no-sandbox', '--disable-gpu'];
+    const args = useXvfb ? ['-a', electronPath, ...electronArgs] : electronArgs;
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';

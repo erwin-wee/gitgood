@@ -12,6 +12,12 @@ export interface ExecOptions {
   maxBuffer?: number;
   /** Exit codes other than 0 that should not be treated as failure. */
   okExitCodes?: number[];
+  /**
+   * Pass `args` to Windows exactly as given, instead of letting Node quote and
+   * backslash-escape them. Required when invoking `cmd.exe /c`, which does not
+   * understand Node's escaping and applies its own quote-stripping rule.
+   */
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface ExecResult {
@@ -42,6 +48,37 @@ export function formatCommand(file: string, args: string[]): string {
 }
 
 /**
+ * Escapes one argument for a `cmd.exe /c` command line.
+ *
+ * Two parsers read this string in turn: cmd.exe acts on its metacharacters
+ * first, then the child's C runtime applies the backslash/quote rules to what
+ * cmd passed on. So the argument is escaped for the C runtime, and then every
+ * character cmd would act on -- including the quotes just added -- is prefixed
+ * with `^`.
+ *
+ * Escaping the quotes is the part that is easy to get wrong. cmd tracks quote
+ * state across the whole line and does not recognise `\"` as an escaped quote,
+ * so a C-runtime-escaped argument flips that state and leaves a later `&` or
+ * `|` looking like a command separator ("& was unexpected at this time").
+ */
+export function cmdEscapeArgument(arg: string): string {
+  const forCRuntime = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  return forCRuntime.replace(/[()%!^"<>&|]/g, '^$&');
+}
+
+/**
+ * The cmd.exe invocation for a `.cmd`/`.bat`, which Node refuses to spawn
+ * directly (the fix for CVE-2024-27980) even though that is how npm installs
+ * CLIs on Windows. Exported so the command line can be asserted from any host.
+ *
+ * The command is deliberately not wrapped in outer quotes: `^` is literal
+ * inside a quoted section, so the escaping above only works unquoted.
+ */
+export function buildWindowsCmdInvocation(file: string, args: string[], comSpec: string | undefined = process.env.ComSpec): { file: string; args: string[] } {
+  return { file: comSpec || 'cmd.exe', args: ['/d', '/s', '/c', [file, ...args].map(cmdEscapeArgument).join(' ')] };
+}
+
+/**
  * Spawns a process (never through a shell) and collects its output.
  * Rejects with ExecError on non-zero exit, spawn failure, timeout or abort.
  */
@@ -51,11 +88,22 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
   return new Promise<ExecResult>((resolve, reject) => {
     let child;
     try {
-      child = spawn(file, args, {
+      // .cmd/.bat go through cmd.exe explicitly rather than `shell: true`, which
+      // would leave the path and arguments unescaped. See buildWindowsCmdInvocation.
+      const viaCmd = process.platform === 'win32' && /\.(cmd|bat)$/i.test(file);
+      const viaCmdInvocation = viaCmd ? buildWindowsCmdInvocation(file, args) : null;
+      const spawnFile = viaCmdInvocation?.file ?? file;
+      const spawnArgs = viaCmdInvocation?.args ?? args;
+      child = spawn(spawnFile, spawnArgs, {
         cwd: opts.cwd,
         env: opts.env ?? process.env,
         windowsHide: true,
         shell: false,
+        // Its own process group, so a kill reaches the command and anything it
+        // spawned rather than only the wrapper. Never on Windows, where it would
+        // open a console window.
+        detached: process.platform !== 'win32',
+        windowsVerbatimArguments: viaCmd || opts.windowsVerbatimArguments === true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {
@@ -80,9 +128,35 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
       fn();
     };
 
+    /**
+     * Kills the command and its descendants. `child.kill()` alone signals only
+     * the direct child -- for a shell-wrapped command that is the wrapper, and
+     * the real process keeps running and holds the pipes open, so `close` never
+     * fires and the caller hangs until the command finishes on its own.
+     */
+    const killTree = () => {
+      if (child.pid === undefined) {
+        child.kill();
+        return;
+      }
+      if (process.platform === 'win32') {
+        try {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => child.kill());
+        } catch {
+          child.kill();
+        }
+        return;
+      }
+      try {
+        process.kill(-child.pid, 'SIGTERM'); // negative pid: the whole process group
+      } catch {
+        child.kill();
+      }
+    };
+
     const onAbort = () => {
       aborted = true;
-      child.kill();
+      killTree();
     };
     if (opts.signal) {
       if (opts.signal.aborted) onAbort();
@@ -91,7 +165,7 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
-        child.kill();
+        killTree();
       }, opts.timeoutMs);
     }
 
