@@ -5,7 +5,7 @@ import { buildFileViewDiff } from '@shared/diff/parse';
 import { buildStagePatch } from '@shared/diff/patch';
 import { checkRegexBrackets, explanationToMarkdown, extractWorktreePathFromError, formatHistoryQuery, isEmptyHistoryQuery, issueBranchSlug, parseHistoryQuery } from '@shared/util';
 import { ApiError, errorInfo, errorMessage, invoke, on } from '../api';
-import { closeAllDialogs, closeDialog, initialChanges, initialDiff, initialErrorExplain, initialExplain, initialHistory, initialReview, initialStashesView, initialTriage, NO_CONFLICT_EXAMPLES, openDialog, patchChanges, patchDiff, patchErrorExplain, patchExplain, patchHistory, patchNlPalette, patchStashesView, patchTriage, saveExplainPanelWidth, showToast, store, type DialogState, type View } from './store';
+import { closeAllDialogs, closeDialog, initialChanges, initialDiff, initialErrorExplain, initialExplain, initialHistory, initialNlPalette, initialPrecommitReview, initialReview, initialStashesView, initialTriage, NO_CONFLICT_EXAMPLES, openDialog, patchChanges, patchDiff, patchErrorExplain, patchExplain, patchHistory, patchNlPalette, patchStashesView, patchTriage, saveExplainPanelWidth, showToast, store, type DialogState, type View } from './store';
 import { handleReviewProgress, reviewBranch, reviewCurrentPullRequest } from './review';
 import { handlePrecommitReviewProgress, refreshPrecommitStaleness, runPrecommitReviewForGate, syncPrecommitReviewSelection } from './precommitReview';
 import { handleRebaseProgress, tidyBranch } from './rebase';
@@ -296,6 +296,14 @@ export async function openRepository(repo: RepositoryInfo): Promise<void> {
     stashesView: initialStashesView,
     diff: initialDiff,
     review: initialReview,
+    precommitReview: initialPrecommitReview,
+    // All three outlive a repository switch otherwise: the explain panel stays
+    // open over the new repo's diff, and the palette keeps the previous repo's
+    // plan and history with its steps still runnable. `width` is a persisted UI
+    // preference, not repo state, so it is carried across.
+    explain: { ...initialExplain, width: store.get().explain.width },
+    errorExplain: initialErrorExplain,
+    nlPalette: initialNlPalette,
     prs: { list: [], loading: false, current: null, loadedAt: 0, error: null },
     triage: initialTriage,
     popover: null,
@@ -866,6 +874,17 @@ export async function loadCommitDetails(sha: string): Promise<void> {
 /** True while any text/structured filter is active (drag-to-reorder and the legacy "search" positional args are disabled while this is true). */
 export function historyFilterActive(h = store.get().history): boolean {
   return !!h.search.trim();
+}
+
+/**
+ * True while the history list is showing a subset of the branch, so
+ * drag-to-reorder must be off: adjacent rows are not adjacent commits, and
+ * dropping one onto the next would reorder across everything in between.
+ * Broader than `historyFilterActive`, which only covers the text filter —
+ * file-history mode sets `path` with an empty `search`.
+ */
+export function historyReorderDisabled(h = store.get().history): boolean {
+  return historyFilterActive(h) || !!h.path;
 }
 
 let slowSearchTimer: ReturnType<typeof setTimeout> | null = null;

@@ -8,7 +8,7 @@
  */
 import type { NlPlan, NlStep } from '@shared/types';
 import { errorInfo, errorMessage, invoke } from '../api';
-import { closeDialog, openDialog, patchNlPalette, showToast, store, type NlPaletteHistoryEntry } from './store';
+import { openDialog, patchNlPalette, showToast, store, type NlPaletteHistoryEntry } from './store';
 
 const MAX_HISTORY = 20;
 
@@ -150,8 +150,10 @@ async function runFrom(repoPath: string, plan: NlPlan, index: number, chain = tr
     message: [`git ${step.display}`, step.explanation, riskLabel(step), step.preview ? `${step.preview.title}:\n${step.preview.lines.join('\n')}` : null].filter(Boolean).join('\n\n'),
     confirmLabel: 'Run step',
     danger: step.risk !== 'changes-history',
+    // ConfirmDialog already closes itself before awaiting onConfirm, so closing
+    // again here would pop the palette off the stack too and hide the plan card,
+    // the per-step progress and the steps still to run.
     onConfirm: () => {
-      closeDialog(); // return to the palette dialog underneath
       void proceed();
     },
   });

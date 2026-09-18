@@ -193,9 +193,61 @@ function nonFlagArgs(argv: string[]): string[] {
   return argv.filter((a) => !a.startsWith('-'));
 }
 
+/**
+ * Splits `argv` into flags and positionals, letting the flags named in
+ * `valueFlags` swallow the token that follows them (`--contains HEAD`), so a
+ * flag's value is never mistaken for a positional argument. The `--flag=value`
+ * spelling is reported under its bare `--flag` name.
+ */
+function splitArgs(argv: string[], valueFlags: readonly string[] = []): { flags: string[]; positionals: string[] } {
+  const flags: string[] = [];
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith('-')) {
+      positionals.push(a);
+      continue;
+    }
+    const name = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
+    flags.push(name);
+    if (!a.includes('=') && valueFlags.includes(name)) i++; // the next token is this flag's value
+  }
+  return { flags, positionals };
+}
+
+/**
+ * Returns the first flag that is not in `allowed`, or null when every flag is
+ * recognized. Every matcher that rebuilds a command from its positionals must
+ * consult this first: silently dropping an unrecognized flag would run a
+ * command that differs from the `display` string the user confirmed.
+ */
+function firstUnknownFlag(flags: string[], allowed: readonly string[]): string | null {
+  return flags.find((f) => !allowed.includes(f)) ?? null;
+}
+
 // ---- inspect --------------------------------------------------------------
 
 const INSPECT_COMMANDS = new Set(['status', 'log', 'show', 'diff', 'rev-parse']);
+
+/** `git branch` flags that only ever list or filter, never write a ref. */
+const BRANCH_LIST_FLAGS = [
+  '-a', '--all', '-r', '--remotes', '-l', '--list', '-v', '-vv', '--verbose',
+  '--contains', '--no-contains', '--merged', '--no-merged', '--points-at',
+  '--format', '--sort', '--abbrev', '--no-abbrev', '--color', '--no-color',
+  '--column', '--no-column', '-i', '--ignore-case', '--show-current', '--omit-empty',
+] as const;
+
+/**
+ * The subset of `BRANCH_LIST_FLAGS` that consumes a following value token.
+ * `--abbrev`, `--color` and `--column` are deliberately absent: their value is
+ * optional, so git only accepts it in the `--flag=value` spelling and treats a
+ * following token as a branch name to create. Listing them here would let
+ * `git branch --color newbranch` past the positional check below.
+ */
+const BRANCH_VALUE_FLAGS = ['--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--format', '--sort'] as const;
+
+/** `git push` flags GitGood knows how to reproduce through its `git.push` wrapper. */
+const PUSH_FLAGS = ['-u', '--set-upstream', '-f', '--force', '--force-with-lease', '--tags', '--follow-tags', '--progress', '-q', '--quiet', '-v', '--verbose'] as const;
 
 function matchInspect(cmd: string, rest: string[]): MatchResult | null {
   // Inspect commands read only: refuse anything that could reach outside the repository.
@@ -204,8 +256,17 @@ function matchInspect(cmd: string, rest: string[]): MatchResult | null {
     return { family: 'inspect', risk: 'safe', mappedAction: 'git.tryRun', mappedArgs: [[cmd, ...rest]] };
   }
   if (cmd === 'branch') {
-    // Inspect-only branch shape: no mutating flag (-d/-D/-m/-M/-c/-C) and no bare create/checkout form.
-    if (rest.some((a) => /^(-d|-D|--delete|-m|-M|--move|-c|-C|--copy)$/.test(a))) return null;
+    // `git branch` reaches git verbatim via the tryRun sentinel, and `readOnly`
+    // only unsets GIT_OPTIONAL_LOCKS -- it does not stop git from writing. So
+    // this accepts only the listing flags by name: denying a handful of known
+    // mutating flags would let every other one (-f, --set-upstream-to, -u, ...)
+    // through as "safe", which the palette then runs with no confirmation.
+    const { flags, positionals } = splitArgs(rest, BRANCH_VALUE_FLAGS);
+    const unknown = firstUnknownFlag(flags, BRANCH_LIST_FLAGS);
+    if (unknown) return null;
+    // A positional is a branch name to create (`git branch topic`) or a ref to
+    // move (`git branch -f main HEAD~5`) unless it is a `--list` glob.
+    if (positionals.length && !flags.some((f) => f === '--list' || f === '-l')) return null;
     return { family: 'inspect', risk: 'safe', mappedAction: 'git.tryRun', mappedArgs: [['branch', ...rest]] };
   }
   if (cmd === 'stash' && rest[0] === 'list') {
@@ -326,11 +387,26 @@ function matchSync(cmd: string, rest: string[], ctx: NlPolicyContext): MatchResu
       return { family: 'sync', risk: 'touches-remote', mappedAction: null, mappedArgs: [], refusalReason: 'force pushes without lease are not run by GitGood; use --force-with-lease instead.' };
     }
     if (ctx.detached) return { family: 'sync', risk: 'touches-remote', mappedAction: null, mappedArgs: [], refusalReason: 'HEAD is detached; there is no branch to push.' };
+    // `git.push` can only reproduce the flags it has parameters for. Refuse any
+    // other flag rather than dropping it: `push origin --delete main` would
+    // otherwise push to the branch the user asked to delete, and `push --tags`
+    // would quietly push no tags at all.
+    const { flags, positionals } = splitArgs(rest);
+    const unknown = firstUnknownFlag(flags, PUSH_FLAGS);
+    if (unknown) {
+      return { family: 'sync', risk: 'touches-remote', mappedAction: null, mappedArgs: [], refusalReason: `GitGood cannot reproduce "git push ${unknown}" through its own push, so it is shown copy-only.` };
+    }
     const setUpstream = flag(rest, '-u', '--set-upstream');
-    const args = nonFlagArgs(rest);
-    const remote = args[0] ?? null;
-    const branch = args[1] ?? null;
-    return { family: 'sync', risk: hasLease ? 'touches-remote' : 'touches-remote', mappedAction: 'git.push', mappedArgs: [{ force: hasLease, setUpstream, remote, branch, tags: false }] };
+    const remote = positionals[0] ?? null;
+    const branch = positionals[1] ?? null;
+    // A refspec deletes or retargets a remote ref (`:main`, `HEAD:main`) and
+    // reaches git verbatim through `operations.push`; it is never a plain push.
+    const refspec = [remote, branch].find((a) => a?.includes(':'));
+    if (refspec) {
+      return { family: 'sync', risk: 'touches-remote', mappedAction: null, mappedArgs: [], refusalReason: `"${refspec}" is a refspec, which can delete or retarget a remote branch; it is shown copy-only.` };
+    }
+    const tags = flag(rest, '--tags', '--follow-tags');
+    return { family: 'sync', risk: 'touches-remote', mappedAction: 'git.push', mappedArgs: [{ force: hasLease, setUpstream, remote, branch, tags }] };
   }
   return null;
 }
@@ -366,8 +442,25 @@ function matchDiscard(cmd: string, rest: string[], ctx: NlPolicyContext): MatchR
     return { family: 'discard', risk: 'discards-work', mappedAction: null, mappedArgs: [], refusalReason: 'git clean is always shown copy-only in GitGood, never run automatically.' };
   }
   if (cmd === 'restore' || (cmd === 'checkout' && rest[0] === '--')) {
-    const paths = cmd === 'checkout' ? rest.slice(1) : nonFlagArgs(rest);
+    const { flags, positionals } = splitArgs(cmd === 'checkout' ? rest.slice(1) : rest, ['--source']);
+    const paths = cmd === 'checkout' ? rest.slice(1) : positionals;
     if (!paths.length) return null;
+    if (cmd === 'restore') {
+      // `--staged` alone unstages and leaves the working tree untouched, so it
+      // must not become a discard: `git.discard` runs `checkout HEAD --`, which
+      // would destroy the very edits the user was only unstaging.
+      const staged = flags.some((f) => f === '--staged' || f === '-S');
+      const worktree = flags.some((f) => f === '--worktree' || f === '-W');
+      const unknown = firstUnknownFlag(flags, ['--staged', '-S', '--worktree', '-W', '-q', '--quiet']);
+      if (unknown) {
+        return { family: 'discard', risk: 'discards-work', mappedAction: null, mappedArgs: [], refusalReason: `GitGood cannot reproduce "git restore ${unknown}" through its own discard, so it is shown copy-only.` };
+      }
+      if (staged && !worktree) {
+        const bad = paths.find((p) => !isSafeRepoPath(p));
+        if (bad) return { family: 'discard', risk: 'safe', mappedAction: null, mappedArgs: [], refusalReason: `"${bad}" is not a safe repository-relative path.` };
+        return { family: 'discard', risk: 'safe', mappedAction: 'git.unstage', mappedArgs: [paths] };
+      }
+    }
     const bad = paths.find((p) => !isSafeRepoPath(p));
     if (bad) return { family: 'discard', risk: 'discards-work', mappedAction: null, mappedArgs: [], refusalReason: `"${bad}" is not a safe repository-relative path.` };
     const unknown = paths.find((p) => !ctx.statusPaths.includes(p));

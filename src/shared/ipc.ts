@@ -444,7 +444,7 @@ export interface ApiMethods {
   // ---------------- settings export / import / gist sync ----------------
   'settings.export': (sections: SettingsSection[]) => Promise<SettingsExport>;
   'settings.exportToFile': (path: string, sections: SettingsSection[]) => Promise<void>;
-  'settings.previewImport': (path: string) => Promise<ImportPreview>;
+  'settings.previewImport': (path: string, mode: 'merge' | 'replace') => Promise<ImportPreview>;
   'settings.import': (path: string, mode: 'merge' | 'replace', sections: SettingsSection[]) => Promise<AppSettings>;
   'settings.sync.status': () => Promise<SettingsSyncStatus>;
   'settings.sync.enable': () => Promise<{ gistId: string }>;

@@ -98,14 +98,19 @@ export class InboxPoller {
   }
 
   async markRead(threadIds: string[]): Promise<void> {
-    const ids = new Set(threadIds);
+    // Only the threads the server actually accepted are marked read locally:
+    // showing a failed one as read would disagree with GitHub until the next
+    // poll quietly flipped it back to unread.
+    const ids = new Set<string>();
     for (const id of threadIds) {
       try {
         await this.gh.markThreadRead(id);
+        ids.add(id);
       } catch (err) {
         log.warn(`Could not mark notification ${id} read: ${(err as Error).message}`);
       }
     }
+    if (!ids.size) return;
     const nowIso = new Date(this.now()).toISOString();
     const items = this.state.items.map((i) => (ids.has(i.id) ? { ...i, unread: false, lastReadAt: nowIso } : i));
     this.applyItems(items);

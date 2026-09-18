@@ -16,12 +16,18 @@ export function classifyGitError(stderr: string, stdout: string): GitErrorInfo['
   const text = `${stderr}\n${stdout}`;
   const tests: [RegExp, GitErrorInfo['code']][] = [
     [/not a git repository/i, 'not-a-repository'],
+    // An SSH transport failure prints the same `Load key "...": No such file or
+    // directory` / `ssh-keygen: ...` lines as a missing signing key, so those
+    // patterns must not outrank auth-failed: a push with a missing SSH key also
+    // prints "Permission denied (publickey)" and belongs in the credential flow,
+    // not the signing-failure dialog. Only the gpg-specific wording, or a signing
+    // hint with no transport error alongside it, means signing.
+    [/Authentication failed|could not read Username|Permission denied \(publickey\)|Invalid username or (password|token)|HTTP 401|fatal: Authentication|terminal prompts disabled|remote: Support for password authentication|The requested URL returned error: 403/i, 'auth-failed'],
     // Checked before the more generic "signing failed" pattern below, since git's own
     // "error: gpg failed to sign the data" / "fatal: failed to write commit object" wrapper
     // lines accompany both a missing key and other signing failures.
     [/No secret key|secret key not available|No default secret key|ssh-keygen: .* No such file or directory|Load key ".*": No such file or directory/i, 'signing-key-missing'],
     [/gpg failed to sign the data|error: gpg failed to sign|unable to sign the tag/i, 'signing-failed'],
-    [/Authentication failed|could not read Username|Permission denied \(publickey\)|Invalid username or (password|token)|HTTP 401|fatal: Authentication|terminal prompts disabled|remote: Support for password authentication|The requested URL returned error: 403/i, 'auth-failed'],
     [/protected branch hook declined|GH006|GH013|refusing to allow|remote: error: Required status check/i, 'protected-branch'],
     [/\[rejected\][^\n]*(non-fast-forward|fetch first|stale info|needs force)|Updates were rejected|failed to push some refs/i, 'non-fast-forward'],
     [/Could not resolve host|unable to access|Connection timed out|Network is unreachable|Failed to connect|Could not read from remote repository|Connection refused|Recv failure|SSL_ERROR|TLS handshake|Operation timed out/i, 'network'],

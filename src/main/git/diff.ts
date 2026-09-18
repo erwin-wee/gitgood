@@ -8,7 +8,7 @@ import { buildStagePatch, selectAll } from '@shared/diff/patch';
 import { imageMediaType, isImagePath, languageFromPath } from '@shared/util';
 import { EMPTY_TREE_SHA, type GitClient } from './git';
 import { isLfsPointerBuffer, readLfsObject } from './lfs';
-import { mergeBase } from './log';
+import { mergeBase, parseNameStatusZ } from './log';
 import { getGitDir } from './status';
 
 /** The pointer spec line every LFS pointer file starts with; checked before binary detection so pointer diffs get their own summary. */
@@ -226,7 +226,6 @@ export async function readBlobText(git: GitClient, repoPath: string, ref: string
 
 /** Files changed in a stash (including untracked files stored in the third parent). */
 export async function getStashFiles(git: GitClient, repoPath: string, stashRef: string): Promise<CommitFile[]> {
-  const { parseNameStatusZ } = await import('./log');
   const tracked = await git.stdout(repoPath, ['diff', '--name-status', '-z', '-M', `${stashRef}^1`, stashRef], { readOnly: true });
   const files = parseNameStatusZ(tracked);
   const untracked = await git.tryRun(repoPath, ['ls-tree', '-r', '--name-only', '-z', `${stashRef}^3`], { readOnly: true });

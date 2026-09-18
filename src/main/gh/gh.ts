@@ -633,7 +633,8 @@ export class GhClient {
   /** Raw file contents at a commit via the REST API (used for fork PRs whose commits are not fetched locally). */
   async fileContents(ref: GitHubRepoRef, path: string, sha: string, maxBytes: number): Promise<string | null> {
     try {
-      const res = await this.run(['api', '-H', 'Accept: application/vnd.github.raw+json', `repos/${ref.owner}/${ref.name}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(sha)}`], { timeoutMs: 60000, ...(ref.host !== 'github.com' ? {} : {}) });
+      const hostArgs = ref.host !== 'github.com' ? ['--hostname', ref.host] : [];
+      const res = await this.run(['api', ...hostArgs, '-H', 'Accept: application/vnd.github.raw+json', `repos/${ref.owner}/${ref.name}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(sha)}`], { timeoutMs: 60000 });
       if (res.stdout.length > maxBytes || res.stdout.includes('\0')) return null;
       return res.stdout;
     } catch {

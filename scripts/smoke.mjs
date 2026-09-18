@@ -382,6 +382,16 @@ function hasXvfbRun() {
   return (process.env.PATH || '').split(':').some((dir) => dir && existsSync(join(dir, 'xvfb-run')));
 }
 
+/**
+ * True when Electron has a display server to talk to. The window is created
+ * offscreen, but Ozone still initializes a platform backend and aborts (SIGTRAP,
+ * one core dump per scenario) when it finds neither an X nor a Wayland display.
+ */
+function hasDisplay() {
+  if (process.platform !== 'linux') return true;
+  return !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+}
+
 function getAtPath(obj, path) {
   return path.split('.').reduce((acc, key) => (acc === null || acc === undefined ? undefined : acc[key]), obj);
 }
@@ -549,7 +559,17 @@ async function main() {
 
   const { default: electronPath } = await import('electron');
   log(`electron binary: ${electronPath}`);
-  log(hasXvfbRun() ? 'xvfb-run found on PATH; running under it' : 'xvfb-run not found; launching electron directly (real display session)');
+  const useXvfbRun = hasXvfbRun();
+  // Without xvfb-run, the direct launch needs a display that actually exists.
+  // Failing here beats spawning one doomed Electron per scenario, each of which
+  // aborts and dumps a ~4MB core, and reports as an unexplained 0/N run.
+  if (!useXvfbRun && !hasDisplay()) {
+    console.error('[smoke] no display available: DISPLAY and WAYLAND_DISPLAY are both unset, and xvfb-run is not on PATH.');
+    console.error('[smoke] electron cannot start a platform backend and every scenario would abort.');
+    console.error('[smoke] fix: run under a desktop session, prefix with DISPLAY=:0, or install xvfb (xorg-server-xvfb).');
+    process.exit(1);
+  }
+  log(useXvfbRun ? 'xvfb-run found on PATH; running under it' : 'xvfb-run not found; launching electron directly (real display session)');
 
   mkdirSync(OUT_DIR, { recursive: true });
 

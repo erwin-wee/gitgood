@@ -133,8 +133,20 @@ describe('rebase-plan-core: validateRebasePlan', () => {
 
   it('reports nothing-to-do when every row is pick, unchanged, in order', () => {
     const raw = { rows: range.map((c) => ({ sha: c.sha, action: 'pick', squashInto: null, message: c.message, rationale: '' })) };
-    const { alreadyTidy } = validateRebasePlan(raw, range);
+    const { alreadyTidy, originalOrder } = validateRebasePlan(raw, range);
     expect(alreadyTidy).toBe(true);
+    // The renderer recomputes "already tidy" after local edits and needs the
+    // pre-plan order to do it, so the plan has to carry it.
+    expect(originalOrder).toEqual(['aaa1', 'aaa2', 'aaa3']);
+  });
+
+  it('is not tidy when the plan only reorders', () => {
+    const reordered = [range[2], range[0], range[1]];
+    const raw = { rows: reordered.map((c) => ({ sha: c.sha, action: 'pick', squashInto: null, message: c.message, rationale: '' })) };
+    const { alreadyTidy, rows, originalOrder } = validateRebasePlan(raw, range);
+    expect(alreadyTidy).toBe(false);
+    expect(rows.map((r) => r.sha)).toEqual(['aaa3', 'aaa1', 'aaa2']);
+    expect(originalOrder).toEqual(['aaa1', 'aaa2', 'aaa3']);
   });
 
   it('preserves issue references and trailers through a reword', () => {
