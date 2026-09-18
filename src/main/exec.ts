@@ -47,9 +47,35 @@ export function formatCommand(file: string, args: string[]): string {
   return [file, ...args].map(quote).join(' ');
 }
 
-/** Quotes one token for a cmd.exe command line (used only for the .cmd/.bat path). */
-function windowsQuote(s: string): string {
-  return /[\s"&|<>^]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+/**
+ * Escapes one argument for a `cmd.exe /c` command line.
+ *
+ * Two parsers read this string in turn: cmd.exe acts on its metacharacters
+ * first, then the child's C runtime applies the backslash/quote rules to what
+ * cmd passed on. So the argument is escaped for the C runtime, and then every
+ * character cmd would act on -- including the quotes just added -- is prefixed
+ * with `^`.
+ *
+ * Escaping the quotes is the part that is easy to get wrong. cmd tracks quote
+ * state across the whole line and does not recognise `\"` as an escaped quote,
+ * so a C-runtime-escaped argument flips that state and leaves a later `&` or
+ * `|` looking like a command separator ("& was unexpected at this time").
+ */
+export function cmdEscapeArgument(arg: string): string {
+  const forCRuntime = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  return forCRuntime.replace(/[()%!^"<>&|]/g, '^$&');
+}
+
+/**
+ * The cmd.exe invocation for a `.cmd`/`.bat`, which Node refuses to spawn
+ * directly (the fix for CVE-2024-27980) even though that is how npm installs
+ * CLIs on Windows. Exported so the command line can be asserted from any host.
+ *
+ * The command is deliberately not wrapped in outer quotes: `^` is literal
+ * inside a quoted section, so the escaping above only works unquoted.
+ */
+export function buildWindowsCmdInvocation(file: string, args: string[], comSpec: string | undefined = process.env.ComSpec): { file: string; args: string[] } {
+  return { file: comSpec || 'cmd.exe', args: ['/d', '/s', '/c', [file, ...args].map(cmdEscapeArgument).join(' ')] };
 }
 
 /**
@@ -62,13 +88,12 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
   return new Promise<ExecResult>((resolve, reject) => {
     let child;
     try {
-      // Node >= 18.20.2 refuses to spawn a .cmd/.bat without a shell (the fix for
-      // CVE-2024-27980), which is how npm installs CLIs on Windows (`claude.cmd`,
-      // `gh.cmd`). Build the cmd.exe invocation here instead of passing
-      // `shell: true`, so the path and every argument stay quoted.
+      // .cmd/.bat go through cmd.exe explicitly rather than `shell: true`, which
+      // would leave the path and arguments unescaped. See buildWindowsCmdInvocation.
       const viaCmd = process.platform === 'win32' && /\.(cmd|bat)$/i.test(file);
-      const spawnFile = viaCmd ? process.env.ComSpec || 'cmd.exe' : file;
-      const spawnArgs = viaCmd ? ['/d', '/s', '/c', `"${[file, ...args].map(windowsQuote).join(' ')}"`] : args;
+      const viaCmdInvocation = viaCmd ? buildWindowsCmdInvocation(file, args) : null;
+      const spawnFile = viaCmdInvocation?.file ?? file;
+      const spawnArgs = viaCmdInvocation?.args ?? args;
       child = spawn(spawnFile, spawnArgs, {
         cwd: opts.cwd,
         env: opts.env ?? process.env,
