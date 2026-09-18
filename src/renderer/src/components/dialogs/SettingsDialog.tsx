@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { AppSettings, FoundEditor, FoundShell, RepositoryScanProgress, SigningConfig, SigningConfigInfo, SigningKey, WatchedFolderProblem, WatchedFolderStatus } from '@shared/types';
+import { watchedFolderLabel, type AppSettings, type FoundEditor, type FoundShell, type RepositoryScanProgress, type SigningConfig, type SigningConfigInfo, type SigningKey, type WatchedFolderProblem, type WatchedFolderStatus } from '@shared/types';
 import { errorMessage, invoke, isMac, modKey, on } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type SettingsTab } from '../../state/store';
@@ -458,7 +458,8 @@ function WatchedFoldersCard({ settings, update }: { settings: AppSettings; updat
             return (
               <div key={folder.path} className="watched-folder-row">
                 <div className="watched-folder-path">
-                  <span className="mono" title={folder.path}>{folder.path}</span>
+                  {/* The folder as the user chose it; the tooltip names where it actually resolves, which is the path scans and exclusions work in. */}
+                  <span className="mono" title={folder.displayPath ? `${folder.displayPath} → ${folder.path}` : folder.path}>{watchedFolderLabel(folder)}</span>
                   {problem ? <span className="muted" style={{ fontSize: 12 }}>{FOLDER_PROBLEM_TEXT[problem]}</span> : null}
                 </div>
                 <label className="muted" style={{ fontSize: 12 }}>

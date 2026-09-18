@@ -4,6 +4,7 @@ import {
   WATCHED_FOLDER_DEFAULT_DEPTH,
   WATCHED_FOLDER_MAX_DEPTH,
   WATCHED_FOLDER_MIN_DEPTH,
+  watchedFolderLabel,
   type RepositoryScanResult,
   type WatchedFolder,
   type WatchedFolderProblem,
@@ -35,23 +36,35 @@ export type AddFolderResult = { ok: true; folders: WatchedFolder[] } | { ok: fal
  * Adds `path` to `existing`, rejecting a folder that is already watched or that
  * sits inside one that is — a nested folder would be walked twice and its
  * repositories attributed to whichever scan reached them first.
+ *
+ * `path` is the physical path everything is compared by; `chosen` is what the
+ * user picked, kept alongside it (and named in these messages) when the two
+ * differ, so a symlinked folder is not reported back under a path they never
+ * typed. Callers resolve `path` with `canonicalPath` before calling.
  */
-export function addWatchedFolder(existing: WatchedFolder[], path: string, depth = WATCHED_FOLDER_DEFAULT_DEPTH): AddFolderResult {
+export function addWatchedFolder(existing: WatchedFolder[], path: string, depth = WATCHED_FOLDER_DEFAULT_DEPTH, chosen?: string): AddFolderResult {
   const candidate = resolve(normalize(path.trim()));
   if (!candidate) return { ok: false, error: 'Choose a folder to watch.' };
 
   const duplicate = existing.find((f) => samePath(f.path, candidate));
-  if (duplicate) return { ok: false, error: `"${duplicate.path}" is already a watched folder.` };
+  if (duplicate) return { ok: false, error: `"${watchedFolderLabel(duplicate)}" is already a watched folder.` };
 
   const covering = existing.find((f) => isInside(f.path, candidate));
-  if (covering) return { ok: false, error: `"${covering.path}" is already watched and covers this folder.` };
+  if (covering) return { ok: false, error: `"${watchedFolderLabel(covering)}" is already watched and covers this folder.` };
 
   const covered = existing.filter((f) => isInside(candidate, f.path));
   if (covered.length) {
-    return { ok: false, error: `Remove ${covered.map((f) => `"${f.path}"`).join(' and ')} first — this folder contains ${covered.length === 1 ? 'it' : 'them'}.` };
+    return { ok: false, error: `Remove ${covered.map((f) => `"${watchedFolderLabel(f)}"`).join(' and ')} first — this folder contains ${covered.length === 1 ? 'it' : 'them'}.` };
   }
 
-  return { ok: true, folders: [...existing, { path: candidate, depth: clampDepth(depth) }] };
+  const folder: WatchedFolder = { path: candidate, depth: clampDepth(depth) };
+  // Only worth storing when it says something the physical path does not; the
+  // comparison is lexical, so a link path that normalizes to its own target
+  // (the common case) leaves the entry as a single path.
+  const display = chosen && chosen.trim() ? resolve(normalize(chosen.trim())) : '';
+  if (display && !samePath(display, candidate)) folder.displayPath = display;
+
+  return { ok: true, folders: [...existing, folder] };
 }
 
 /** Normalizes a whole list arriving from a settings patch: clamped depths, no duplicates, no folder nested in another. */
@@ -59,7 +72,7 @@ export function sanitizeWatchedFolders(folders: WatchedFolder[]): WatchedFolder[
   const out: WatchedFolder[] = [];
   for (const folder of folders) {
     if (!folder || typeof folder.path !== 'string' || !folder.path.trim()) continue;
-    const result = addWatchedFolder(out, folder.path, folder.depth);
+    const result = addWatchedFolder(out, folder.path, folder.depth, typeof folder.displayPath === 'string' ? folder.displayPath : undefined);
     if (result.ok) out.push(result.folders[result.folders.length - 1]);
   }
   return out;

@@ -1,13 +1,15 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { GitClient } from '../../src/main/git/git';
 import { RepositoryManager, repositoryId, resolvedKey } from '../../src/main/repo/manager';
+import { canonicalPath } from '../../src/main/repo/paths';
 import { addWatchedFolder, clampDepth, sanitizeWatchedFolders, watchedFoldersDiffer, WatchedFolderScanner } from '../../src/main/repo/watched-folders';
 import { Store } from '../../src/main/store';
 import type { EventPayloads } from '../../src/shared/ipc';
+import { watchedFolderLabel } from '../../src/shared/types';
 import { createRepo, hasGitSync, type TestRepo } from '../helpers/repo';
 
 const canTestUnreadable = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0;
@@ -428,6 +430,24 @@ describe.skipIf(!hasGitSync())('watched folder scanning', () => {
     expect((await h.scanner.scan()).added).toBe(0);
   });
 
+  it('registers a symlinked folder under its physical path while remembering the one that was chosen', async () => {
+    h = await harness();
+    const real = h.makeRepo('real', 'projects', 'a');
+    const link = h.at('link-projects');
+    symlinkSync(h.at('real', 'projects'), link, 'dir');
+
+    // What repos.watchedFolders.add does: compare and store physically, keep the chosen path for display.
+    const added = addWatchedFolder([], await canonicalPath(link), 3, link);
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    h.store.updateSettings({ watchedFolders: added.folders });
+
+    expect(added.folders[0]).toEqual({ path: h.at('real', 'projects'), displayPath: link, depth: 3 });
+    expect(watchedFolderLabel(added.folders[0])).toBe(link);
+    expect((await h.scanner.scan()).added).toBe(1);
+    expect(h.store.getRepositories().map((r) => r.path)).toEqual([real]);
+  });
+
   // -------------------------------------------------------------------------
   // Worktrees discovered before their main repository (regression)
   // -------------------------------------------------------------------------
@@ -695,6 +715,31 @@ describe('watched folder registration', () => {
     expect(addWatchedFolder([{ path: root, depth: 3 }], sibling).ok).toBe(true);
   });
 
+  it('keeps the chosen path for display when it differs from the physical one', () => {
+    const chosen = process.platform === 'win32' ? 'Z:\\work' : '/home/me/link-to-projects';
+    const result = addWatchedFolder([], root, 3, chosen);
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) expect(result.folders).toEqual([{ path: root, displayPath: chosen, depth: 3 }]);
+  });
+
+  it('stores no display path when the chosen path is already physical', () => {
+    const result = addWatchedFolder([], root, 3, `${root}${sep}`);
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) expect(result.folders).toEqual([{ path: root, depth: 3 }]);
+  });
+
+  it('names the chosen path, not the physical one, when rejecting', () => {
+    const chosen = process.platform === 'win32' ? 'Z:\\work' : '/home/me/link-to-projects';
+    const existing = [{ path: root, displayPath: chosen, depth: 3 }];
+    for (const rejected of [addWatchedFolder(existing, root), addWatchedFolder(existing, sub)]) {
+      expect(rejected.ok).toBe(false);
+      if (!rejected.ok) expect(rejected.error).toContain(chosen);
+    }
+    const container = addWatchedFolder([{ path: sub, displayPath: chosen, depth: 3 }], root);
+    expect(container.ok).toBe(false);
+    if (!container.ok) expect(container.error).toContain(chosen);
+  });
+
   it('clamps depth into 1-10', () => {
     expect(clampDepth(0)).toBe(1);
     expect(clampDepth(-5)).toBe(1);
@@ -712,6 +757,11 @@ describe('watched folder registration', () => {
       { path: '   ', depth: 3 },
     ]);
     expect(folders).toEqual([{ path: root, depth: 10 }]);
+  });
+
+  it('carries a display path through a settings patch', () => {
+    const chosen = process.platform === 'win32' ? 'Z:\\work' : '/home/me/link-to-projects';
+    expect(sanitizeWatchedFolders([{ path: root, displayPath: chosen, depth: 3 }])).toEqual([{ path: root, displayPath: chosen, depth: 3 }]);
   });
 
   it('spots the changes that call for a rescan', () => {

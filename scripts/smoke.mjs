@@ -109,6 +109,9 @@ const REPO_KINDS = {
     execFileSync('git', ['init', '-q', '-b', 'main', outside], { env: repo.env, stdio: 'ignore' });
     // A symlink to org/b, for the "one entry per repository" check.
     symlinkSync(join(projects, 'org', 'b'), `${repo.path}-link-b`, 'dir');
+    // A symlink to the `-outside` folder, for registering a watched folder
+    // through a link and checking it is displayed as the user chose it.
+    symlinkSync(`${repo.path}-outside`, `${repo.path}-link-outside`, 'dir');
     return repo;
   },
   uncommittedChanges: (workRoot) => {
