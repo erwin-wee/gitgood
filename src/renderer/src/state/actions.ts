@@ -1,4 +1,4 @@
-import type { AddWorktreeOptions, BlameHunk, BlameResult, Branch, BranchDeleteResult, Commit, CommitOptions, ErrorFix, ExplainSource, ExplainTarget, FileDiff, GitErrorInfo, HistoryQuery, PrTriage, PullRequest, RepoWork, RepositoryInfo, RepositoryStatus, Stash, StaleBranch, TriageState, UncommittedChangesStrategy, WorkingFile, ConflictResolutionResult, AppSettings, UpdateState, Worktree } from '@shared/types';
+import type { AddWorktreeOptions, BlameHunk, BlameResult, Branch, BranchDeleteResult, Commit, CommitOptions, ErrorFix, ExplainSource, ExplainTarget, FileDiff, GitErrorInfo, HistoryQuery, PrTriage, PullRequest, RepoWork, RepositoryInfo, RepositoryScanResult, RepositoryStatus, Stash, StaleBranch, TriageState, UncommittedChangesStrategy, WorkingFile, ConflictResolutionResult, AppSettings, UpdateState, Worktree } from '@shared/types';
 import { EMPTY_HISTORY_QUERY, EXPLAIN_FOLLOWUP_LIMIT, ZERO_SHA } from '@shared/types';
 import type { OperationOutcome } from '@shared/ipc';
 import { buildFileViewDiff } from '@shared/diff/parse';
@@ -332,6 +332,35 @@ export async function addLocalRepository(path: string): Promise<void> {
     await openRepository(repo);
   } catch (err) {
     showError('Could not add repository', err);
+  }
+}
+
+/** One sentence for a finished watched-folder scan, for the toast and the Options summary. */
+export function describeScanResult(result: RepositoryScanResult): string {
+  if (result.alreadyRunning) return 'A scan is already running.';
+  // A scan that added nothing says so outright, whatever else it did: "12
+  // already known" on its own reads as though something was found.
+  const parts: string[] = [result.added ? `${result.added} ${result.added === 1 ? 'repository' : 'repositories'} added` : 'No new repositories found'];
+  if (result.dropped) parts.push(`${result.dropped} removed (no longer on disk)`);
+  if (result.skipped) parts.push(`${result.skipped} already known or excluded`);
+  if (result.failed) parts.push(`${result.failed} could not be added`);
+  if (result.unreadable) parts.push(`${result.unreadable} ${result.unreadable === 1 ? 'folder' : 'folders'} could not be read`);
+  const summary = parts.join(' · ');
+  return result.cancelled ? `Scan cancelled — ${summary.charAt(0).toLowerCase()}${summary.slice(1)}` : summary;
+}
+
+/** Scans every watched folder from the UI (menu, Options) and reports the outcome. */
+export async function scanWatchedFolders(): Promise<void> {
+  try {
+    const result = await invoke('repos.scanWatchedFolders');
+    store.set({ repos: await invoke('repos.list') });
+    showToast({
+      kind: result.unreadable && !result.added ? 'warning' : 'info',
+      title: result.cancelled ? 'Watched folder scan cancelled' : 'Watched folders scanned',
+      message: describeScanResult(result),
+    });
+  } catch (err) {
+    showError('Could not scan watched folders', err);
   }
 }
 
@@ -2855,6 +2884,8 @@ export async function handleMenuAction(action: string, args?: unknown): Promise<
     case 'fetch':
       if (needsRepo()) return fetchRemote();
       return;
+    case 'scan-watched-folders':
+      return void scanWatchedFolders();
     case 'remove-repository':
       if (repo) openDialog({ kind: 'remove-repo', repo });
       return;

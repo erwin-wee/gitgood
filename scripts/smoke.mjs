@@ -15,7 +15,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,6 +83,32 @@ const REPO_KINDS = {
     const repo = makeRepo(workRoot);
     repo.commit('Initial commit', { 'README.md': '# Fixture repo\n', 'src/app.ts': 'export const value = 1;\n' });
     repo.commit('Add a second file', { 'src/util.ts': 'export const helper = () => 2;\n' });
+    return repo;
+  },
+  /**
+   * For the watched-folders smoke tests: `<repo.path>-projects` holds two
+   * repositories at different depths (`a`, `org/b`), a `node_modules` decoy
+   * that must never be discovered, and `outside/c` next to (not inside) the
+   * watched folder. Paths are derived from `__REPO_PATH__` by the scenario,
+   * the same way 09-worktrees derives its worktree path.
+   */
+  watchedFolders: (workRoot) => {
+    const repo = REPO_KINDS.basic(workRoot);
+    const projects = `${repo.path}-projects`;
+    const initAt = (...segments) => {
+      const dir = join(projects, ...segments);
+      mkdirSync(dir, { recursive: true });
+      execFileSync('git', ['init', '-q', '-b', 'main', dir], { env: repo.env, stdio: 'ignore' });
+      return dir;
+    };
+    initAt('a');
+    initAt('org', 'b');
+    initAt('node_modules', 'decoy');
+    const outside = join(`${repo.path}-outside`, 'c');
+    mkdirSync(outside, { recursive: true });
+    execFileSync('git', ['init', '-q', '-b', 'main', outside], { env: repo.env, stdio: 'ignore' });
+    // A symlink to org/b, for the "one entry per repository" check.
+    symlinkSync(join(projects, 'org', 'b'), `${repo.path}-link-b`, 'dir');
     return repo;
   },
   uncommittedChanges: (workRoot) => {
@@ -465,7 +491,10 @@ async function runScenario(scenarioFile, electronPath) {
   const repo = build ? build(workRoot) : null;
 
   let env = { ...(repo ? repo.env : isolatedEnv(workRoot)), GITGOOD_USER_DATA: userData };
-  const settings = scenario.settings ? structuredClone(scenario.settings) : {};
+  // `__REPO_PATH__` is substituted into seeded settings as well as into step
+  // scripts, so a scenario can seed a setting that names the fixture (e.g. a
+  // watched folder) and exercise what happens at launch.
+  const settings = scenario.settings ? JSON.parse(repo ? JSON.stringify(scenario.settings).split('__REPO_PATH__').join(JSON.stringify(repo.path).slice(1, -1)) : JSON.stringify(scenario.settings)) : {};
 
   // Generic claude stub scenario: a scenario file sets `needsClaudeStub: true` and `claudeStubRules`
   // (the same rule shape as test/helpers/gh-stub) to have `claude` (per app settings.ai.claudeCliPath)
@@ -499,6 +528,7 @@ async function runScenario(scenarioFile, electronPath) {
   const steps = (scenario.steps ?? []).map((step) => {
     const out = { ...step };
     if (out.js && repo) out.js = out.js.split('__REPO_PATH__').join(JSON.stringify(repo.path));
+    if (out.rm && repo) out.rm = out.rm.split('__REPO_PATH__').join(repo.path);
     if (out.dump) out.dump = join(outDir, out.dump);
     if (out.shot) out.shot = join(outDir, out.shot);
     return out;

@@ -4,6 +4,7 @@ import { app, safeStorage } from 'electron';
 import { DEFAULT_SETTINGS, type AppSettings, type ImportPreview, type InboxItem, type IssueFilter, type RepositoryInfo, type SettingsExport, type SettingsSection } from '@shared/types';
 import { log } from './logger';
 import { repositoryId } from './repo/manager';
+import { normalizePath } from './repo/paths';
 import { applyRepositoryImport, buildImportPreview, buildIntegrationsPatch, buildPreferencesPatch, buildSettingsExport, validateSettingsExport } from './settings/sync-core';
 
 /** Retained backups of settings.json, kept before any replace import. */
@@ -69,6 +70,12 @@ interface AppStateFile {
   trustedRepoConfigs: Record<string, boolean>;
   /** The exact check command that was shown when trust was granted, per repository; a changed command re-prompts. */
   trustedRepoCommands: Record<string, string>;
+  /**
+   * Repositories the user removed from the list while they sat inside a watched
+   * folder: a scan must not add them back. Stored normalized (see paths.ts) and
+   * machine-local, like the trust maps above — never part of a settings export.
+   */
+  excludedRepositoryPaths: string[];
 }
 
 export interface SettingsSyncState {
@@ -122,6 +129,7 @@ export class Store {
         dismissedUpdateVersion: null,
         trustedRepoConfigs: {},
         trustedRepoCommands: {},
+        excludedRepositoryPaths: [],
       }),
     };
     this.secrets = { file: join(this.dir, 'secrets.json'), value: readJson<SecretsFile>(join(this.dir, 'secrets.json'), { anthropicApiKey: null }) };
@@ -191,6 +199,33 @@ export class Store {
     if (trusted && command) commands[repoPath] = command;
     else delete commands[repoPath];
     this.updateState({ trustedRepoConfigs: { ...this.state.value.trustedRepoConfigs, [repoPath]: trusted }, trustedRepoCommands: commands });
+  }
+
+  // ---------------- watched-folder exclusions ----------------
+
+  /** Excluded paths as stored (normalized). */
+  getExcludedRepositoryPaths(): string[] {
+    return this.state.value.excludedRepositoryPaths ?? [];
+  }
+
+  isRepositoryExcluded(path: string): boolean {
+    const target = normalizePath(path);
+    return this.getExcludedRepositoryPaths().some((p) => p === target);
+  }
+
+  addExcludedRepositoryPath(path: string): void {
+    const target = normalizePath(path);
+    if (this.getExcludedRepositoryPaths().includes(target)) return;
+    this.updateState({ excludedRepositoryPaths: [...this.getExcludedRepositoryPaths(), target] });
+  }
+
+  removeExcludedRepositoryPath(path: string): void {
+    const target = normalizePath(path);
+    this.updateState({ excludedRepositoryPaths: this.getExcludedRepositoryPaths().filter((p) => p !== target) });
+  }
+
+  clearExcludedRepositoryPaths(): void {
+    this.updateState({ excludedRepositoryPaths: [] });
   }
 
   getApiKey(): string | null {

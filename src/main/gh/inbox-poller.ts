@@ -201,7 +201,11 @@ export class InboxPoller {
       const repos = this.listLocalRepos();
       const items = toInboxItems(result.items as RawNotification[], repos);
       const previouslyKnown = new Set(this.state.items.map((i) => i.id));
-      const newlyArrived = items.filter((i) => i.unread && !previouslyKnown.has(i.id));
+      // A poll with no prior lastModified cursor is either the very first sync or one
+      // right after a cache reset: every unread item looks "new" purely for lack of
+      // history, so treat this batch as the baseline instead of flooding notifications.
+      const isFirstSync = this.lastModified === null;
+      const newlyArrived = isFirstSync ? [] : items.filter((i) => i.unread && !previouslyKnown.has(i.id));
       this.lastModified = result.lastModified ?? this.lastModified;
       const nextState: InboxState = { items, unreadCount: items.filter((i) => i.unread).length, lastPolledAt, paused: null, pausedUntil: null };
       this.setState(nextState);

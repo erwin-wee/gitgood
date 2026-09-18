@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import type { AppSettings, FoundEditor, FoundShell, SigningConfig, SigningConfigInfo, SigningKey } from '@shared/types';
-import { errorMessage, invoke, isMac, modKey } from '../../api';
+import type { AppSettings, FoundEditor, FoundShell, RepositoryScanProgress, SigningConfig, SigningConfigInfo, SigningKey, WatchedFolderProblem, WatchedFolderStatus } from '@shared/types';
+import { errorMessage, invoke, isMac, modKey, on } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type SettingsTab } from '../../state/store';
 import { AGENT_PRESETS, agentTemplate, validateAgentTemplate } from '@shared/agent-presets';
@@ -176,6 +176,7 @@ function GitTab({ settings, update }: { settings: AppSettings; update: (p: Parti
         placeholder="Leave empty for a sibling of the repository"
         trailing={<Button onClick={() => void invoke('app.chooseDirectory', { title: 'Choose default worktree location' }).then((d) => d && update({ defaultWorktreeDirectory: d }))}>Choose…</Button>}
       />
+      <WatchedFoldersCard settings={settings} update={update} />
       <h4>Pull behavior</h4>
       <div className="settings-row">
         <label>When pulling</label>
@@ -383,6 +384,131 @@ function SigningSection(): React.JSX.Element {
         <p className="muted" style={{ fontSize: 12 }}>
           Global signing is configured ({info.global.format}); this repository will use it unless overridden here.
         </p>
+      ) : null}
+    </>
+  );
+}
+
+const FOLDER_PROBLEM_TEXT: Record<WatchedFolderProblem, string> = {
+  missing: 'This folder no longer exists.',
+  'not-a-directory': 'This path is not a folder.',
+  unreadable: 'This folder could not be read (check its permissions).',
+};
+
+/**
+ * Watched folders: registered folders, their scan depth, the scan controls and
+ * the exclusion list. Paths here are machine-local and never leave the machine
+ * through a settings export, which the copy states so it is not a surprise.
+ */
+function WatchedFoldersCard({ settings, update }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }): React.JSX.Element {
+  const folders = settings.watchedFolders;
+  const [statuses, setStatuses] = useState<WatchedFolderStatus[]>([]);
+  const [exclusions, setExclusions] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [progress, setProgress] = useState<RepositoryScanProgress | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  const refresh = React.useCallback(() => {
+    void invoke('repos.watchedFolders.status').then(setStatuses).catch(() => setStatuses([]));
+    void invoke('repos.exclusions.list').then(setExclusions).catch(() => setExclusions([]));
+  }, []);
+
+  useEffect(refresh, [refresh, folders]);
+
+  useEffect(() => on('repos.scanProgress', (p) => setProgress(p.folder ? p : null)), []);
+
+  const problemFor = (path: string): WatchedFolderProblem | null => statuses.find((s) => s.path === path)?.problem ?? null;
+
+  const addFolder = async (): Promise<void> => {
+    const chosen = await invoke('app.chooseDirectory', { title: 'Choose a folder to watch for repositories' });
+    if (!chosen) return;
+    setError(null);
+    const result = await invoke('repos.watchedFolders.add', chosen);
+    if (!result.ok) setError(result.error ?? 'That folder could not be added.');
+    refresh();
+  };
+
+  const scan = async (): Promise<void> => {
+    setScanning(true);
+    setSummary(null);
+    setError(null);
+    try {
+      const result = await invoke('repos.scanWatchedFolders');
+      setSummary(actions.describeScanResult(result));
+      refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setScanning(false);
+      setProgress(null);
+    }
+  };
+
+  return (
+    <>
+      <h4>Watched folders</h4>
+      <p className="muted" style={{ fontSize: 12 }}>
+        Every Git repository inside these folders is added automatically. Folders are scanned when GitGood starts, when you change them here, and when you choose Rescan now — not continuously, so a repository cloned elsewhere appears after the next scan. These paths stay on this computer and are never part of a settings export.
+      </p>
+      {folders.length ? (
+        <div className="watched-folders">
+          {folders.map((folder, index) => {
+            const problem = problemFor(folder.path);
+            return (
+              <div key={folder.path} className="watched-folder-row">
+                <div className="watched-folder-path">
+                  <span className="mono" title={folder.path}>{folder.path}</span>
+                  {problem ? <span className="muted" style={{ fontSize: 12 }}>{FOLDER_PROBLEM_TEXT[problem]}</span> : null}
+                </div>
+                <label className="muted" style={{ fontSize: 12 }}>
+                  Depth
+                  <select
+                    value={folder.depth}
+                    style={{ marginLeft: 6 }}
+                    onChange={(e) => update({ watchedFolders: folders.map((f, i) => (i === index ? { ...f, depth: Number(e.target.value) } : f)) })}
+                  >
+                    {Array.from({ length: 10 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </label>
+                <Button size="sm" onClick={() => update({ watchedFolders: folders.filter((_, i) => i !== index) })}>Remove</Button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="muted" style={{ fontSize: 12 }}>No folders are watched yet.</p>
+      )}
+      <div className="settings-row" style={{ gap: 8 }}>
+        <Button onClick={() => void addFolder()}>Add folder…</Button>
+        <Button onClick={() => void scan()} disabled={!folders.length} loading={scanning}>Rescan now</Button>
+        {scanning ? <Button onClick={() => void invoke('repos.cancelScan')}>Cancel</Button> : null}
+        {scanning && progress ? (
+          <span className="muted" style={{ fontSize: 12 }}>
+            {progress.found} found · {progress.scanned} folders checked
+          </span>
+        ) : null}
+      </div>
+      {error ? <Callout tone="danger">{error}</Callout> : null}
+      {summary && !scanning ? <Callout tone="info">{summary}</Callout> : null}
+      {exclusions.length ? (
+        <>
+          <h4>Not added again</h4>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Repositories you removed while they were inside a watched folder. Scans skip them until you remove them from this list.
+          </p>
+          <div className="watched-folders">
+            {exclusions.map((path) => (
+              <div key={path} className="watched-folder-row">
+                <span className="mono watched-folder-path" title={path}>{path}</span>
+                <Button size="sm" onClick={() => void invoke('repos.exclusions.remove', path).then(setExclusions)}>Remove from list</Button>
+              </div>
+            ))}
+          </div>
+          <Button size="sm" onClick={() => void invoke('repos.exclusions.clear').then(setExclusions)}>Clear all</Button>
+        </>
       ) : null}
     </>
   );

@@ -84,6 +84,8 @@ import type {
   Remote,
   RepositoryChangedEvent,
   RepositoryInfo,
+  RepositoryScanProgress,
+  RepositoryScanResult,
   PortableIntegrations,
   PortablePreferences,
   PortableRepository,
@@ -127,6 +129,9 @@ import type {
   StaleBranchReason,
   UpdateChannel,
   UpdateState,
+  WatchedFolder,
+  WatchedFolderProblem,
+  WatchedFolderStatus,
 } from './types';
 
 export interface DiffOptions {
@@ -239,6 +244,19 @@ export interface ApiMethods {
   'repos.clone': (opts: CloneOptions) => Promise<RepositoryInfo>;
   'repos.setAlias': (id: string, alias: string | null) => Promise<void>;
   'repos.refreshIndicators': () => Promise<RepositoryInfo[]>;
+
+  /** Scans every watched folder; resolves with `alreadyRunning` when one is in flight. */
+  'repos.scanWatchedFolders': () => Promise<RepositoryScanResult>;
+  'repos.cancelScan': () => Promise<void>;
+  /** Adds a watched folder, validated (no duplicate, no nesting); returns the rejection message instead of throwing. */
+  'repos.watchedFolders.add': (path: string, depth?: number) => Promise<{ ok: boolean; error?: string; settings: AppSettings }>;
+  /** Reports which watched folders are missing, not a directory, or unreadable. */
+  'repos.watchedFolders.status': () => Promise<WatchedFolderStatus[]>;
+  /** Whether a repository path lies inside a watched folder — i.e. whether removing it will also exclude it. */
+  'repos.isInWatchedFolder': (repoPath: string) => Promise<boolean>;
+  'repos.exclusions.list': () => Promise<string[]>;
+  'repos.exclusions.remove': (path: string) => Promise<string[]>;
+  'repos.exclusions.clear': () => Promise<string[]>;
 
   'repo.open': (path: string) => Promise<RepositoryInfo>;
   'repo.close': (path: string) => Promise<void>;
@@ -480,6 +498,7 @@ export interface EventPayloads {
   'window.focus': { focused: boolean };
   'gh.inbox.changed': InboxState;
   'app.update.changed': UpdateState;
+  'repos.scanProgress': RepositoryScanProgress;
 }
 
 export type EventName = keyof EventPayloads;
@@ -494,4 +513,4 @@ export interface GitGoodApi {
 }
 
 // Re-exported so the renderer can import everything from one place.
-export type { Remote, CommitFile, Stash, Tag, Branch, Commit, HistoryPage, HistoryQuery, FileDiff, ConflictResolutionResult, CommitDetails, RepositoryStatus, RepositoryInfo, MenuActionEvent, RepositoryChangedEvent, ProgressEvent, FoundEditor, FoundShell, GitConfigInfo, GitHubRepoDetails, GitHubRepoRef, GitHubRepoSummary, PullRequest, CheckRun, GitHubAccount, ToolsState, AppInfo, AppSettings, AiSettings, CloneOptions, CommitOptions, CreatePullRequestOptions, NewRepositoryOptions, PublishOptions, RebaseSquashOptions, UncommittedChangesStrategy, AiResolveProgressEvent, AiReviewProgressEvent, PostReviewOptions, ReviewPlan, ReviewRun, ReviewStartOptions, ReviewTarget, WorktreeReviewOptions, Worktree, AddWorktreeOptions, PrTriage, TriageState, TriageNextAction, AiTriageProgressEvent, BlameResult, BlameHunk, FileAtCommitResult, PathHistoryEntry, Submodule, SubmoduleState, LfsStatus, LfsFile, LargeBlob, StaleBranch, StaleBranchReason, RepoWork, Housekeeping, BranchDeleteResult, SigningConfig, SigningConfigInfo, SigningKey, InboxItem, InboxState, InboxPauseReason, InboxSubjectType, NotificationReason, SettingsSection, SettingsExport, ImportPreview, ImportPreviewSection, PortablePreferences, PortableIntegrations, PortableRepository, SettingsSyncStatus, SettingsSyncStateName, UpdateState, UpdateChannel, ExplainSource, ExplainTarget, Explanation, ExplainReference, ExplainFollowUp, ErrorExplanation, ErrorFix, FixActionId, FixRisk, PrDraft, PrDraftInput, ReleaseRange, ReleaseCommit, ReleasePr, ReleaseRangeQuery, ReleaseRangeResult, ReleaseNotesInput, ReleaseNotesItem, ReleaseNotesSection, ReleaseNotesUnreferencedEntry, ReleaseNotes, CreateReleaseOptions, SplitHunk, SplitPlanCommit, SplitPlan, SplitPreflight, SplitApplyProgress, RebasePlanAction, RebasePlanRow, RebasePlan, RebasePreflight, RebaseApplyProgress, NlRisk, NlStep, NlPlan, NlRunResult, NlProgressEvent };
+export type { Remote, CommitFile, Stash, Tag, Branch, Commit, HistoryPage, HistoryQuery, FileDiff, ConflictResolutionResult, CommitDetails, RepositoryStatus, RepositoryInfo, MenuActionEvent, RepositoryChangedEvent, ProgressEvent, FoundEditor, FoundShell, GitConfigInfo, GitHubRepoDetails, GitHubRepoRef, GitHubRepoSummary, PullRequest, CheckRun, GitHubAccount, ToolsState, AppInfo, AppSettings, AiSettings, CloneOptions, CommitOptions, CreatePullRequestOptions, NewRepositoryOptions, PublishOptions, RebaseSquashOptions, UncommittedChangesStrategy, AiResolveProgressEvent, AiReviewProgressEvent, PostReviewOptions, ReviewPlan, ReviewRun, ReviewStartOptions, ReviewTarget, WorktreeReviewOptions, Worktree, AddWorktreeOptions, PrTriage, TriageState, TriageNextAction, AiTriageProgressEvent, BlameResult, BlameHunk, FileAtCommitResult, PathHistoryEntry, Submodule, SubmoduleState, LfsStatus, LfsFile, LargeBlob, StaleBranch, StaleBranchReason, RepoWork, Housekeeping, BranchDeleteResult, SigningConfig, SigningConfigInfo, SigningKey, InboxItem, InboxState, InboxPauseReason, InboxSubjectType, NotificationReason, SettingsSection, SettingsExport, ImportPreview, ImportPreviewSection, PortablePreferences, PortableIntegrations, PortableRepository, SettingsSyncStatus, SettingsSyncStateName, UpdateState, UpdateChannel, ExplainSource, ExplainTarget, Explanation, ExplainReference, ExplainFollowUp, ErrorExplanation, ErrorFix, FixActionId, FixRisk, PrDraft, PrDraftInput, ReleaseRange, ReleaseCommit, ReleasePr, ReleaseRangeQuery, ReleaseRangeResult, ReleaseNotesInput, ReleaseNotesItem, ReleaseNotesSection, ReleaseNotesUnreferencedEntry, ReleaseNotes, CreateReleaseOptions, SplitHunk, SplitPlanCommit, SplitPlan, SplitPreflight, SplitApplyProgress, RebasePlanAction, RebasePlanRow, RebasePlan, RebasePreflight, RebaseApplyProgress, NlRisk, NlStep, NlPlan, NlRunResult, NlProgressEvent, WatchedFolder, WatchedFolderStatus, WatchedFolderProblem, RepositoryScanResult, RepositoryScanProgress };

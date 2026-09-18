@@ -21,6 +21,7 @@ import { InboxPoller } from './gh/inbox-poller';
 import { shouldNotifyInboxItem } from './gh/inbox';
 import { SettingsSyncService } from './gh/settings-sync';
 import { registerIpc, sendEvent, type AppContext } from './ipc';
+import { WatchedFolderScanner } from './repo/watched-folders';
 import { initLogger, log } from './logger';
 import { buildMenu } from './menu';
 import { parseProtocolUrl, protocolUrlFromArgv } from './protocol';
@@ -123,6 +124,7 @@ if (!gotLock) {
       { listLocalRepos: () => store.getRepositories().map((r) => ({ id: r.id, github: r.github })), getAccount: () => tools.current().ghAccount },
     );
     const settingsSync = new SettingsSyncService(store, gh, repos);
+    const watchedFolders = new WatchedFolderScanner(store, repos, (event, payload) => sendEvent(getWindow(), event, payload));
     const disabledEnv: DisabledEnv = { isPackaged: app.isPackaged, platform: process.platform, portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR, appImagePath: process.env.APPIMAGE, appImageWritable: appImageWritable(process.env.APPIMAGE) };
     // electron-updater's AppUpdater is a TypedEmitter generic over its own event map, which does not
     // structurally satisfy ElectronAutoUpdater's plain string-keyed on/once/off — verified by hand
@@ -133,7 +135,7 @@ if (!gotLock) {
       log.info(`Update state: ${state.status}${state.status === 'available' ? ` (${state.version})` : ''}`);
       sendEvent(getWindow(), 'app.update.changed', state);
     }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv, isPerMachineInstall: isPerMachineInstall(process.execPath, process.platform) });
-    const ctx: AppContext = { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, getWindow, busy: new Set() };
+    const ctx: AppContext = { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, watchedFolders, getWindow, busy: new Set() };
     registerIpc(ctx);
     Menu.setApplicationMenu(buildMenu(getWindow));
 
@@ -175,6 +177,17 @@ if (!gotLock) {
     applyInboxBadge(mainWindow, inbox.getState().unreadCount);
     inbox.start();
     updater.start();
+    watchedFolders.watchSettings();
+    // The launch scan waits for the first paint so startup is never serialized
+    // behind a filesystem walk; with no watched folders it does nothing at all.
+    mainWindow.once('ready-to-show', () => {
+      if (!store.getSettings().watchedFolders.length) return;
+      log.info('Scanning watched folders');
+      void watchedFolders
+        .scan()
+        .then((r) => log.info(`Watched-folder scan: ${r.added} added, ${r.skipped} skipped, ${r.dropped} dropped, ${r.unreadable} unreadable${r.cancelled ? ', cancelled' : ''}`))
+        .catch((err) => log.error('Watched-folder scan failed', err));
+    });
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
@@ -235,12 +248,19 @@ if (!gotLock) {
    * against the renderer, saving screenshots, then quits.
    */
   function runSmokeScript(win: BrowserWindow, scriptJson: string): void {
-    const steps = JSON.parse(scriptJson) as { wait?: number; js?: string; shot?: string; dump?: string }[];
+    const steps = JSON.parse(scriptJson) as { wait?: number; js?: string; shot?: string; dump?: string; rm?: string }[];
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
     win.webContents.once('did-finish-load', async () => {
       try {
         for (const step of steps) {
           if (step.wait) await delay(step.wait);
+          // `rm` deletes a path between steps, for scenarios that have to
+          // simulate a repository disappearing from disk (watched folders).
+          if (step.rm) {
+            const { rm } = await import('node:fs/promises');
+            await rm(step.rm, { recursive: true, force: true });
+            log.info(`smoke removed path: ${step.rm}`);
+          }
           if (step.js) {
             try {
               const result = await win.webContents.executeJavaScript(step.js, true);

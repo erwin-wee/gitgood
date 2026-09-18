@@ -380,9 +380,9 @@ function CommitForm(): React.JSX.Element {
         disabled={!canCommit}
         loading={changes.committing}
         icon={changes.amend ? 'pencil' : 'commit'}
-        title={precommitBlockers ? `${precommitBlockers} blocker${precommitBlockers === 1 ? '' : 's'} found, review before committing` : `${isMac ? '⌘' : 'Ctrl'}+Enter`}
+        title={precommitBlockers ? `${precommitBlockers} blocker${precommitBlockers === 1 ? '' : 's'} found, review before committing` : `${label} (${isMac ? '⌘' : 'Ctrl'}+Enter)`}
       >
-        {label}
+        <span className="btn-label">{label}</span>
       </Button>
       {status?.hasConflicts ? (
         <Button variant="ghost" size="sm" icon="alert" onClick={() => openDialog({ kind: 'conflicts' })}>

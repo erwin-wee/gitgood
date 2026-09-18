@@ -110,7 +110,61 @@ export interface AppSettings {
   autoDownloadUpdates: boolean;
   /** Release channel: 'beta' also offers prereleases. Fixed in Options → Advanced, never part of the release feed URL (that is fixed in the build). */
   updateChannel: UpdateChannel;
+  /**
+   * Folders scanned for Git repositories on launch, on change, and on demand.
+   * Machine-local: deliberately absent from PortablePreferences, so these paths
+   * never leave the machine through a settings export or gist sync.
+   */
+  watchedFolders: WatchedFolder[];
   ai: AiSettings;
+}
+
+// ---------------------------------------------------------------------------
+// Watched folders
+// ---------------------------------------------------------------------------
+
+/** A folder scanned for repositories, with how many levels below it may be examined (the folder itself is level 0). */
+export interface WatchedFolder {
+  path: string;
+  /** 1–10; the deepest level below `path` that a scan examines. */
+  depth: number;
+}
+
+export const WATCHED_FOLDER_MIN_DEPTH = 1;
+export const WATCHED_FOLDER_MAX_DEPTH = 10;
+export const WATCHED_FOLDER_DEFAULT_DEPTH = 3;
+
+/** Why a watched folder cannot be scanned, shown against its row in Options. */
+export type WatchedFolderProblem = 'missing' | 'not-a-directory' | 'unreadable';
+
+export interface WatchedFolderStatus {
+  path: string;
+  problem: WatchedFolderProblem | null;
+}
+
+export interface RepositoryScanResult {
+  added: number;
+  /** Repositories found but already in the list, or excluded. */
+  skipped: number;
+  /** Repositories found that could not be registered (no longer a repository, or git failed). */
+  failed: number;
+  /** Directories that could not be read (permissions). */
+  unreadable: number;
+  /** Repositories dropped because their folder is gone; see the drop pass. */
+  dropped: number;
+  cancelled: boolean;
+  /** Set when a scan was already running and this request did nothing. */
+  alreadyRunning?: boolean;
+  folders: WatchedFolderStatus[];
+}
+
+export interface RepositoryScanProgress {
+  /** The watched folder currently being walked. */
+  folder: string;
+  /** Directories examined so far across the whole scan. */
+  scanned: number;
+  /** Repositories found so far across the whole scan. */
+  found: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +234,18 @@ export interface RepositoryInfo {
   worktreeOf: string | null;
   /** Id of the repository this was opened from as a submodule ("Open as repository"), or null otherwise. */
   parentRepoId: string | null;
+  /**
+   * How this entry got into the list. Absent in repositories.json files written
+   * before watched folders existed, and read as 'manual' — see repositoryOrigin().
+   * Only a watched-folder scan writes 'watched'; a repository the user added by
+   * hand keeps 'manual' even when a scan later finds it in a watched folder.
+   */
+  origin?: 'manual' | 'watched';
+}
+
+/** `RepositoryInfo.origin` with the default applied: entries written before watched folders existed are manual. */
+export function repositoryOrigin(repo: Pick<RepositoryInfo, 'origin'>): 'manual' | 'watched' {
+  return repo.origin === 'watched' ? 'watched' : 'manual';
 }
 
 /** One entry from `git worktree list`, including the main worktree. */
@@ -1799,6 +1865,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   checkForUpdatesAutomatically: true,
   autoDownloadUpdates: true,
   updateChannel: 'stable',
+  watchedFolders: [],
   ai: {
     provider: 'anthropic',
     model: 'claude-opus-5',

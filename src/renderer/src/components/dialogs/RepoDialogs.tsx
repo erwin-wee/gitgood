@@ -304,7 +304,19 @@ export function AddRepoDialog(): React.JSX.Element {
 export function RemoveRepoDialog({ repo }: { repo: RepositoryInfo }): React.JSX.Element {
   const [trash, setTrash] = useState(false);
   const [busy, setBusy] = useState(false);
-  const worktrees = useAppStore((s) => s.repos.filter((r) => r.worktreeOf === repo.id));
+  // Select the stable array and derive here: a selector that filters returns a
+  // fresh array on every call, which makes useSyncExternalStore's snapshot
+  // unstable and loops the render (React #185).
+  const allRepos = useAppStore((s) => s.repos);
+  const worktrees = useMemo(() => allRepos.filter((r) => r.worktreeOf === repo.id), [allRepos, repo.id]);
+  // Removing a repository inside a watched folder also excludes it, whatever
+  // its origin; say so here rather than letting the next scan surprise anyone.
+  const [inWatchedFolder, setInWatchedFolder] = useState(false);
+  useEffect(() => {
+    void invoke('repos.isInWatchedFolder', repo.path)
+      .then(setInWatchedFolder)
+      .catch(() => setInWatchedFolder(false));
+  }, [repo.path]);
   return (
     <Dialog
       title="Remove repository"
@@ -324,6 +336,11 @@ export function RemoveRepoDialog({ repo }: { repo: RepositoryInfo }): React.JSX.
       {worktrees.length ? (
         <Callout tone="warning">
           This repository has {worktrees.length} worktree{worktrees.length === 1 ? '' : 's'} in the list ({worktrees.map((w) => w.alias ?? w.name).join(', ')}). They will be removed from the list too; their directories are left untouched.
+        </Callout>
+      ) : null}
+      {inWatchedFolder ? (
+        <Callout tone="info">
+          This repository is inside a watched folder. It will not be added back by future scans; you can undo that under Options → Git → Watched folders.
         </Callout>
       ) : null}
       <Checkbox checked={trash} onChange={setTrash} label={`Also move this repository to the ${window.gitgoodBridge.platform === 'win32' ? 'Recycle Bin' : 'Trash'}`} />
