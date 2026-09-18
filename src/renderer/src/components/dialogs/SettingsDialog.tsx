@@ -779,6 +779,14 @@ function UpdateStatusLine(): React.JSX.Element | null {
         <Callout tone="success">
           GitGood {updateState.version} is available. <Button size="sm" variant="link" onClick={() => void actions.downloadUpdate()}>Download</Button>
         </Callout>
+      ) : updateState.status === 'downloading' ? (
+        <Callout tone="info">
+          Downloading GitGood {updateState.version}{updateState.percent != null ? ` (${Math.round(updateState.percent)}%)` : ''}…
+        </Callout>
+      ) : updateState.status === 'ready' ? (
+        <Callout tone="success">
+          GitGood {updateState.version} is ready to install. <Button size="sm" variant="link" onClick={() => void actions.installUpdate()}>Restart to update</Button>
+        </Callout>
       ) : updateState.status === 'error' ? (
         <Callout tone="danger">{updateState.message}</Callout>
       ) : null}

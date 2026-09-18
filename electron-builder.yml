@@ -32,12 +32,18 @@ mac:
   target: [dmg, zip]
   category: public.app-category.developer-tools
   icon: build/icon.png
+  artifactName: ${productName}-${version}.${ext}
 linux:
   target: [AppImage]
   category: Development
   icon: build/icon.png
   maintainer: Erwin Wee
+  artifactName: ${productName}-${version}.${ext}
 protocols:
   - name: GitGood
     schemes: [gitgood, x-github-client]
-publish: null
+publish:
+  provider: github
+  owner: erwin-wee
+  repo: gitgood
+  draft: true
