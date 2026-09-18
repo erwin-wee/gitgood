@@ -588,6 +588,12 @@
   justify-content: center;
   padding: 7px 12px;
 }
+.commit-form .commit-btn .btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .commit-form .coauthors {
   display: flex;
   flex-wrap: wrap;
