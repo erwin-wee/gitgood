@@ -127,7 +127,10 @@ async function tag({ yes, verify }) {
   log(git('log', '--oneline', `${previous}..HEAD`) || '(no commits since the previous tag)');
   await confirm(`Push ${tagName}? This starts the release build.`, yes);
 
-  git('tag', tagName);
+  // Annotated with -m, never bare: `tag.gpgsign` turns a bare `git tag` into a
+  // signed one, which wants a message, and git would open an editor onto the
+  // pipe execFileSync gives it ("Standard output is not a terminal").
+  git('tag', '-a', '-m', tagName, tagName);
   git('push', 'origin', tagName);
   log(`pushed ${tagName} — the build is starting.`);
   try {
