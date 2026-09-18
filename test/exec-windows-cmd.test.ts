@@ -52,16 +52,32 @@ describe('cmdEscapeArgument', () => {
   });
 });
 
+/**
+ * Simulates cmd.exe's `/S` quote handling: strip the first character if it is
+ * a quote, then strip the *last quote character found anywhere in the
+ * string* (not necessarily the last character), preserving whatever follows
+ * it. This is what desyncs per-argument quoting when the remainder is a
+ * sequence of separately quoted segments instead of one wrapped string.
+ */
+function applySlashS(s: string): string {
+  let out = s.startsWith('"') ? s.slice(1) : s;
+  const lastQuote = out.lastIndexOf('"');
+  if (lastQuote !== -1) out = out.slice(0, lastQuote) + out.slice(lastQuote + 1);
+  return out;
+}
+
 describe('buildWindowsCmdInvocation', () => {
-  it('invokes cmd.exe with /d /s /c and an unquoted, fully escaped command', () => {
+  it('invokes cmd.exe with /d /s /c and the escaped command wrapped in one outer quote pair', () => {
     const { file, args } = buildWindowsCmdInvocation('C:\\npm\\claude.cmd', ['-p', '--json-schema', '{"a":"b"}'], 'C:\\Windows\\system32\\cmd.exe');
     expect(file).toBe('C:\\Windows\\system32\\cmd.exe');
     expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
-    // Not wrapped in outer quotes: `^` is literal inside a quoted section, so
-    // wrapping would disable the escaping. `/s` only strips when the first and
-    // last characters are both quotes, which an escaped command never starts with.
-    expect(args[3].startsWith('"')).toBe(false);
-    expect(unescapedMetaCharsRemain(args[3])).toBe(false);
+    const inner = ['C:\\npm\\claude.cmd', '-p', '--json-schema', '{"a":"b"}'].map(cmdEscapeArgument).join(' ');
+    // Wrapped so /S's stripping (first char + last quote char in the whole
+    // string) removes exactly the wrapper, leaving every per-argument quote
+    // pair -- all of them `^`-escaped -- untouched.
+    expect(args[3]).toBe(`"${inner}"`);
+    expect(applySlashS(args[3])).toBe(inner);
+    expect(unescapedMetaCharsRemain(inner)).toBe(false);
   });
 
   it('falls back to cmd.exe when ComSpec is empty', () => {
