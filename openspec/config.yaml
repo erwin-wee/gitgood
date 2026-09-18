@@ -1,0 +1,40 @@
+schema: spec-driven
+
+context: |
+  GitGood is an Electron desktop Git client (GitHub Desktop parity) for Windows, macOS and Linux.
+  Tech stack: TypeScript, Electron, React 19 (plain CSS, no UI framework), electron-vite, vitest.
+  It drives the `git` and `gh` CLIs found on PATH; no bundled git, no GitHub REST client library.
+  Runtime deps are kept to four (@anthropic-ai/sdk, highlight.js, react, react-dom); new deps need a dependency review first.
+  Architecture: main process (src/main: exec.ts runner, git/ and gh/ wrappers, ai/ backends, ipc.ts),
+  preload contextBridge, renderer (src/renderer), shared types and the single typed IPC contract (src/shared/ipc.ts).
+  All git runs use GIT_TERMINAL_PROMPT=0; errors are classified (auth, network, non-fast-forward, conflicts, protected branch).
+  AI features call AiBackend.complete({ system, prompt, schema, model, effort }) on either the Anthropic SDK or the Claude Code CLI,
+  always with a JSON schema for the output. Existing AI capabilities: conflict resolution, commit messages, pull request review.
+  Smoke testing: build, then run with GITGOOD_USER_DATA and GITGOOD_SMOKE_SCRIPT; the renderer exposes window.__gitgood.
+  Spec layout is flat: openspec/specs/<capability>/spec.md, kebab-case, AI capabilities prefixed ai-.
+
+rules:
+  proposal:
+    - Name the git/gh commands the change depends on in Impact; parity with GitHub Desktop is context, not motivation.
+    - Mark anything that posts to GitHub or rewrites history as a user-confirmed action.
+  specs:
+    - AI output MUST be validated against repository facts (paths exist in the diff, line numbers exist in a hunk, no conflict markers) before it is shown; invalid items are dropped and counted.
+    - The model never runs git commands or writes to GitHub; every AI result is a proposal the user applies, edits or dismisses.
+    - AI entry points are hidden, not disabled, when the AI provider is set to disabled.
+    - Anything posted to GitHub from an AI result carries an AI-assisted footer.
+    - Long-running AI work reports progress and is cancellable.
+    - Destructive git operations require the existing confirmation dialogs and, where possible, an undo path.
+    - Cover Windows paths and CRLF line endings when file content or paths are involved.
+  design:
+    - Reference existing wrappers in src/main/git, src/main/gh and src/main/ai by file; do not propose new runtime dependencies without a dependency review task.
+  tasks:
+    - Every change ends with tasks to run `npm run typecheck` and `npm test`, and a smoke pass where UI is involved.
+
+operations:
+  apply:
+    guidance:
+      - Keep each task compiling; run typecheck after each group.
+      - Do not commit unless asked.
+  archive:
+    guidance:
+      - Confirm the README Features section mentions the shipped capability before archiving.

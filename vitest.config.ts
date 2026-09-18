@@ -1,10 +1,31 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
+const sharedAlias = { '@shared': resolve('src/shared') };
+
 export default defineConfig({
-  resolve: { alias: { '@shared': resolve('src/shared') } },
   test: {
-    include: ['test/**/*.test.ts'],
-    environment: 'node',
+    projects: [
+      {
+        resolve: { alias: sharedAlias },
+        test: {
+          name: 'unit',
+          include: ['test/**/*.test.ts'],
+          exclude: ['test/fixture/**', 'test/smoke/**'],
+          environment: 'node',
+        },
+      },
+      {
+        resolve: { alias: { ...sharedAlias, electron: resolve('test/helpers/electron-mock.ts') } },
+        test: {
+          name: 'fixture',
+          include: ['test/fixture/**/*.test.ts'],
+          environment: 'node',
+          testTimeout: 30000,
+          hookTimeout: 30000,
+          pool: 'forks',
+        },
+      },
+    ],
   },
 });
