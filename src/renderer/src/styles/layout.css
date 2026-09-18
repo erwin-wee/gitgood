@@ -353,3 +353,113 @@
 .toast.info .toast-icon {
   color: var(--accent);
 }
+
+/* ---------------------------------------------------------------------- */
+/* Notifications inbox                                                    */
+/* ---------------------------------------------------------------------- */
+
+.btn.inbox-bell {
+  position: relative;
+}
+.inbox-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1.5px solid var(--bg-subtle);
+}
+.inbox-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--danger-emphasis, var(--danger));
+  color: var(--fg-on-emphasis, #fff);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+  font-weight: 700;
+}
+.inbox-paused-marker {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--attention);
+  border: 1px solid var(--bg-subtle);
+}
+
+.inbox-panel {
+  position: fixed;
+  top: 51px;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-overlay);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  z-index: 150;
+}
+.inbox-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.inbox-filters {
+  padding: 8px 12px 0;
+}
+.inbox-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.inbox-panel-body {
+  flex: 1;
+  overflow-y: auto;
+}
+.inbox-panel-footer {
+  padding: 6px 12px;
+  font-size: 11px;
+  border-top: 1px solid var(--border);
+}
+.inbox-empty {
+  padding: 24px 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.inbox-item .inbox-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: transparent;
+}
+.inbox-item .inbox-unread-dot.on {
+  background: var(--accent);
+}
+.inbox-item.unread .row-main .truncate {
+  font-weight: 600;
+}
+.inbox-item.focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

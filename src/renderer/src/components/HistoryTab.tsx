@@ -1,26 +1,50 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { Commit } from '@shared/types';
+import type { Commit, CommitSignature, HistoryQuery, SignatureStatus } from '@shared/types';
 import { isMac } from '../api';
 import * as actions from '../state/actions';
-import { openDialog, patchHistory, store, useAppStore } from '../state/store';
+import { historyFilterActive } from '../state/actions';
+import { openDialog, patchHistory, setPopover, store, useAppStore } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
-import { Avatar, Badge, Button, FilterInput, Icon, RelativeTime, Spinner, openContextMenu, type MenuItem } from './ui';
+import { Avatar, Badge, Button, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
+
+const SIGNATURE_BADGES: Partial<Record<SignatureStatus, { icon: IconName; className: string; label: (signer: string | null) => string }>> = {
+  good: { icon: 'check-circle', className: 'sig-good', label: (signer) => `Good signature${signer ? ` from ${signer}` : ''}` },
+  bad: { icon: 'x-circle', className: 'sig-bad', label: () => 'Bad signature' },
+  revoked: { icon: 'x-circle', className: 'sig-bad', label: (signer) => `Signed with a revoked key${signer ? ` (${signer})` : ''}` },
+  expired: { icon: 'alert', className: 'sig-warn', label: () => 'Signature has expired' },
+  'expired-key': { icon: 'alert', className: 'sig-warn', label: (signer) => `Signed with an expired key${signer ? ` (${signer})` : ''}` },
+  // Also what an SSH-signed commit shows when an allowed-signers file is configured but does not
+  // list this signer (git can check the signature cryptographically but not the identity).
+  untrusted: { icon: 'lock', className: 'sig-unknown', label: (signer) => `Good signature from an unrecognized or untrusted key${signer ? ` (${signer})` : ''}. For SSH signatures, add the signer to the allowed-signers file in Options → Git.` },
+  'unknown-key': { icon: 'lock', className: 'sig-unknown', label: (signer) => (signer ? `Signed by ${signer}; the key is not available to verify it.` : 'Signature from an unrecognized key.') },
+};
+
+function SignatureBadge({ signature }: { signature: CommitSignature | null }): React.JSX.Element | null {
+  if (!signature || signature.status === 'none') return null;
+  const badge = SIGNATURE_BADGES[signature.status];
+  if (!badge) return null;
+  return <Icon name={badge.icon} size={12} className={badge.className} title={badge.label(signature.signer)} />;
+}
 
 function commitMenu(commit: Commit, selected: string[]): MenuItem[] {
   const s = store.get();
   const repo = s.currentRepo;
   const isHead = s.status?.branch.sha === commit.sha;
   const tags = commit.refs.filter((r) => r.startsWith('tag: ')).map((r) => r.slice(5));
+  const aiEnabled = (s.settings?.ai.provider ?? 'disabled') !== 'disabled';
   if (selected.length > 1 && selected.includes(commit.sha)) {
     const target = s.history.commits.filter((c) => selected.includes(c.sha)).pop()!;
+    const tidyReason = aiEnabled ? actions.tidyBranchDisabledReason(selected) : 'AI features are turned off';
     return [
       { label: `Squash ${selected.length} commits…`, icon: 'squash', onClick: () => openDialog({ kind: 'squash', shas: selected, targetSha: target.sha }) },
       { label: `Cherry-pick ${selected.length} commits…`, icon: 'cherry', onClick: () => openDialog({ kind: 'cherry-pick', shas: selected }) },
+      ...(aiEnabled ? [{ label: 'Tidy Up with AI…', icon: 'sparkle' as const, disabled: !!tidyReason, title: tidyReason ?? undefined, onClick: () => actions.tidyBranch(selected) }] : []),
       { type: 'separator' },
       { label: 'Copy SHAs', onClick: () => void actions.copyToClipboard(selected.join('\n'), 'SHAs copied') },
     ];
   }
   return [
+    ...(aiEnabled ? [{ label: 'Explain commit', icon: 'sparkle' as const, onClick: () => actions.explainCommit(commit.sha) }, { type: 'separator' as const }] : []),
     ...(isHead ? [{ label: 'Amend commit…', icon: 'pencil' as const, onClick: () => { actions.setView('changes'); void actions.setAmend(true); } }] : []),
     { label: 'Edit commit message…', onClick: () => openDialog({ kind: 'reword', commit }) },
     { label: 'Revert changes in commit', icon: 'undo', onClick: () => void actions.revertCommit(commit.sha) },
@@ -28,6 +52,7 @@ function commitMenu(commit: Commit, selected: string[]): MenuItem[] {
     { label: 'Create branch from commit…', icon: 'branch', onClick: () => openDialog({ kind: 'new-branch', startPoint: commit.sha, startPointLabel: `${commit.shortSha} ${commit.summary}` }) },
     { label: 'Create tag…', icon: 'tag', onClick: () => openDialog({ kind: 'tag', sha: commit.sha }) },
     ...(tags.length ? [{ label: tags.length === 1 ? `Delete tag ${tags[0]}…` : 'Delete tag…', danger: true, onClick: () => void actions.deleteTag(tags[0]) }] : []),
+    ...(tags.length ? [{ label: `Release notes since ${tags[0]}…`, icon: 'tag' as const, onClick: () => actions.openReleaseNotes(tags[0]) }] : []),
     { label: 'Cherry-pick to branch…', icon: 'cherry', onClick: () => openDialog({ kind: 'cherry-pick', shas: [commit.sha] }) },
     { label: 'Checkout commit', onClick: () => void actions.checkoutCommit(commit.sha) },
     { label: 'Drop commit…', danger: true, onClick: () => openDialog({ kind: 'confirm', title: 'Drop commit?', message: `"${commit.summary}" will be removed from the branch history. Commits after it are rewritten.`, confirmLabel: 'Drop commit', danger: true, onConfirm: () => void actions.dropCommit(commit.sha) }) },
@@ -42,8 +67,11 @@ export function HistoryTab(): React.JSX.Element {
   const history = useAppStore((s) => s.history);
   const status = useAppStore((s) => s.status);
   const focused = useAppStore((s) => s.focused);
+  const popover = useAppStore((s) => s.popover);
+  const verifySignatures = useAppStore((s) => s.settings?.historyVerifySignatures ?? false);
   const sentinel = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState<string | 'top' | null>(null);
+  const filterActive = historyFilterActive(history);
 
   useEffect(() => {
     const el = sentinel.current;
@@ -67,9 +95,41 @@ export function HistoryTab(): React.JSX.Element {
 
   return (
     <>
-      <div className="history-header">
-        <FilterInput id="history-search" value={history.search} onChange={actions.setHistorySearch} placeholder="Search commits (message, author, SHA)" />
+      {history.path ? (
+        <div className="history-path-chip">
+          <Icon name="history" size={12} />
+          <span className="mono truncate" title={history.path}>{history.path}</span>
+          <Button size="sm" variant="ghost" iconOnly icon="x" title="Show full branch history" onClick={() => actions.clearFileHistory()} />
+        </div>
+      ) : null}
+      <div className="history-header" style={{ position: 'relative' }}>
+        <FilterInput id="history-search" value={history.search} onChange={actions.setHistorySearch} placeholder="Search commits, or content:/regex:/path:/author:/after:/before:/all:" />
+        <Button
+          className="history-filter-toggle"
+          size="sm"
+          variant={popover === 'history-filter' ? 'accent' : 'ghost'}
+          iconOnly
+          icon="filter"
+          title="Filter history…"
+          onClick={() => setPopover('history-filter')}
+        />
+        {popover === 'history-filter' ? <HistoryFilterPopover /> : null}
       </div>
+      {history.queryError ? (
+        <div className="history-query-error">
+          <Icon name="alert" size={12} /> {history.queryError}
+        </div>
+      ) : filterActive ? (
+        <div className="history-match-bar">
+          <span>
+            {history.commits.length}
+            {history.hasMore ? '+' : ''} {history.commits.length === 1 && !history.hasMore ? 'commit' : 'commits'} match
+          </span>
+          {history.slowSearch && history.loading ? <span className="muted">Still searching… try narrowing with a path: filter.</span> : null}
+          <span style={{ flex: 1 }} />
+          <Button size="sm" variant="ghost" onClick={() => actions.clearHistoryFilter()}>Clear</Button>
+        </div>
+      ) : null}
       <div
         className="commit-list"
         onDragOver={(e) => {
@@ -87,7 +147,7 @@ export function HistoryTab(): React.JSX.Element {
             <Spinner /> Loading history…
           </div>
         ) : null}
-        {!history.loading && !history.commits.length ? <div className="list-empty">{history.search ? 'No commits match your search.' : status?.branch.unborn ? 'No commits yet.' : 'No history to show.'}</div> : null}
+        {!history.loading && !history.commits.length ? <div className="list-empty">{filterActive ? 'No commits match your search.' : status?.branch.unborn ? 'No commits yet.' : 'No history to show.'}</div> : null}
         {dragOver === 'top' && history.dragging ? <div style={{ height: 2, background: 'var(--accent)' }} /> : null}
         {history.commits.map((c, index) => {
           const selected = history.selectedShas.includes(c.sha);
@@ -103,7 +163,7 @@ export function HistoryTab(): React.JSX.Element {
                 if (!history.selectedShas.includes(c.sha)) actions.selectCommit(c.sha);
                 openContextMenu(e, commitMenu(c, store.get().history.selectedShas));
               }}
-              draggable={!history.search}
+              draggable={!filterActive}
               onDragStart={(e) => {
                 const shas = history.selectedShas.includes(c.sha) ? history.selectedShas : [c.sha];
                 patchHistory({ dragging: shas });
@@ -154,6 +214,7 @@ export function HistoryTab(): React.JSX.Element {
               </span>
               {unpushed ? <Icon name="arrow-up" className="unpushed" title="Not yet pushed" /> : null}
               {c.coAuthors.length ? <Icon name="person" className="muted" title={`Co-authored by ${c.coAuthors.map((a) => a.name).join(', ')}`} /> : null}
+              {verifySignatures ? <SignatureBadge signature={c.signature} /> : null}
             </div>
           );
         })}
@@ -165,10 +226,57 @@ export function HistoryTab(): React.JSX.Element {
   );
 }
 
+/** Form-control equivalent of the search box's `key:value` syntax; two-way synced through `history.query` (see setHistoryQuery). */
+function HistoryFilterPopover(): React.JSX.Element {
+  const query = useAppStore((s) => s.history.query);
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.popover') || target.closest('.history-filter-toggle') || target.closest('.context-menu')) return;
+      setPopover(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPopover(null);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
+  const update = (patch: Partial<HistoryQuery>) => actions.setHistoryQuery({ ...store.get().history.query, ...patch });
+  return (
+    <div className="popover history-filter-popover" style={{ top: 40, right: 0, left: 'auto' }}>
+      <div className="popover-header">
+        <strong>Filter history</strong>
+      </div>
+      <div className="history-filter-body">
+        <TextField label="Content contains (added or removed)" placeholder="e.g. computeTotal" value={query.content ?? ''} onChange={(e) => update({ content: e.target.value || null })} />
+        <TextField label="Diff matches regex" hint="POSIX ERE; matches lines that changed, not just added/removed" placeholder="e.g. ^import" value={query.diffRegex ?? ''} onChange={(e) => update({ diffRegex: e.target.value || null })} />
+        <TextField label="Path" placeholder="src/**/*.ts" value={query.paths[0] ?? ''} onChange={(e) => update({ paths: e.target.value ? [e.target.value] : [] })} />
+        <TextField label="Author" placeholder="name or email" value={query.author ?? ''} onChange={(e) => update({ author: e.target.value || null })} />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <TextField label="After" type="date" value={query.after ?? ''} onChange={(e) => update({ after: e.target.value || null })} />
+          <TextField label="Before" type="date" value={query.before ?? ''} onChange={(e) => update({ before: e.target.value || null })} />
+        </div>
+        <Checkbox checked={query.allRefs} onChange={(v) => update({ allRefs: v })} label="Search every branch, tag and remote" />
+      </div>
+      <div className="popover-footer">
+        <Button size="sm" variant="ghost" onClick={() => actions.clearHistoryFilter()}>Clear all</Button>
+        <span style={{ flex: 1 }} />
+        <Button size="sm" onClick={() => setPopover(null)}>Done</Button>
+      </div>
+    </div>
+  );
+}
+
 export function CommitDetailsPane(): React.JSX.Element {
   const history = useAppStore((s) => s.history);
   const repo = useAppStore((s) => s.currentRepo);
   const status = useAppStore((s) => s.status);
+  const verifySignatures = useAppStore((s) => s.settings?.historyVerifySignatures ?? false);
+  const aiEnabled = useAppStore((s) => (s.settings?.ai.provider ?? 'disabled') !== 'disabled');
   const [expanded, setExpanded] = useState(false);
 
   if (history.selectedShas.length > 1) {
@@ -204,6 +312,7 @@ export function CommitDetailsPane(): React.JSX.Element {
     );
   }
   const c = details.commit;
+  const visibleFiles = history.matchingFiles ? details.files.filter((f) => history.matchingFiles!.includes(f.path)) : details.files;
   const isHead = status?.branch.sha === c.sha;
   const tags = c.refs.filter((r) => r.startsWith('tag: ')).map((r) => r.slice(5));
   return (
@@ -230,7 +339,15 @@ export function CommitDetailsPane(): React.JSX.Element {
             </Badge>
           ))}
           {details.pushed === false ? <Badge tone="attention">unpushed</Badge> : null}
+          {verifySignatures && c.signature && c.signature.status !== 'none' ? (
+            <span title={SIGNATURE_BADGES[c.signature.status]?.label(c.signature.signer)}>
+              <SignatureBadge signature={c.signature} /> {c.signature.signer ?? 'unknown signer'}
+            </span>
+          ) : null}
           <span style={{ flex: 1 }} />
+          {aiEnabled ? (
+            <Button size="sm" variant="ghost" icon="sparkle" onClick={() => actions.explainCommit(c.sha)}>Explain</Button>
+          ) : null}
           {isHead && !status?.hasConflicts ? (
             <Button size="sm" variant="ghost" icon="pencil" onClick={() => { actions.setView('changes'); void actions.setAmend(true); }}>Amend</Button>
           ) : null}
@@ -248,23 +365,32 @@ export function CommitDetailsPane(): React.JSX.Element {
       <div className="commit-body">
         <div className="commit-files">
           <div className="changes-header">
-            <span className="count">{details.files.length} changed file{details.files.length === 1 ? '' : 's'}</span>
+            <span className="count">
+              {visibleFiles.length} {history.matchingFiles ? 'matching' : 'changed'} file{visibleFiles.length === 1 ? '' : 's'}
+            </span>
           </div>
           <div className="file-list">
-            {details.files.map((f) => (
+            {visibleFiles.map((f) => (
               <CommitFileRow
                 key={f.path}
                 file={f}
                 selected={history.selectedFile === f.path}
                 onSelect={() => actions.selectCommitFile(f.path)}
-                onContextMenu={(e) =>
+                onContextMenu={(e) => {
+                  const unavailable = f.binary || f.status === 'deleted';
                   openContextMenu(e, [
                     { label: 'Open in external editor', onClick: () => void actions.openInEditor(f.path), disabled: f.status === 'deleted' },
                     { label: isMac ? 'Reveal in Finder' : 'Show in Explorer', onClick: () => void actions.showInFolder(f.status === 'deleted' ? null : f.path) },
                     { label: 'Copy relative file path', onClick: () => void actions.copyToClipboard(f.path, 'Path copied') },
+                    { type: 'separator' },
+                    { label: 'Blame this file', onClick: () => { actions.selectCommitFile(f.path); actions.toggleBlame(); }, disabled: unavailable },
+                    { label: 'File history…', onClick: () => actions.openFileHistory(f.path) },
+                    { label: 'View file at this commit', onClick: () => actions.openFileAtCommit(f.path, c.sha), disabled: unavailable },
+                    { label: 'Restore this version…', onClick: () => actions.requestRestoreFile(f.path, c.sha), disabled: unavailable },
+                    { type: 'separator' },
                     { label: 'View on GitHub', onClick: () => repo?.github && void actions.openExternal(`${repo.github.url}/blob/${c.sha}/${f.path}`), disabled: !repo?.github },
-                  ])
-                }
+                  ]);
+                }}
               />
             ))}
           </div>

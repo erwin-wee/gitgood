@@ -1,19 +1,29 @@
-import React, { useMemo } from 'react';
-import type { FileDiff } from '@shared/types';
+import React, { useMemo, useRef, useState } from 'react';
+import type { ConflictBlockResolution, FileDiff } from '@shared/types';
 import { applyResolutions, parseConflicts, resolutionForChoice, type BlockChoice } from '@shared/diff/conflicts';
 import { escapeHtml } from '@shared/util';
 import { highlightToLines } from '../../lib/highlight';
 import * as actions from '../../state/actions';
-import { useAppStore } from '../../state/store';
+import { openDialog, useAppStore } from '../../state/store';
 import { Button, Icon, Spinner } from '../ui';
 
 type ConflictData = Extract<FileDiff, { kind: 'conflict' }>;
+
+/** Per-line confidence tint, computed once a file has been AI-resolved (no markers left) and its blocks/ranges are known. */
+interface LineTint {
+  blockId: number;
+  confidence: ConflictBlockResolution['confidence'];
+  isStart: boolean;
+}
 
 export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path: string; syntax: boolean }): React.JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const aiBusy = useAppStore((s) => s.aiBusy);
   const aiState = useAppStore((s) => s.ai[path]);
   const operation = useAppStore((s) => s.status?.operation.kind ?? 'none');
+  const resolution = useAppStore((s) => s.conflictResolutions[path]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [lowIndex, setLowIndex] = useState(0);
   const parsed = useMemo(() => parseConflicts(diff.content), [diff.content]);
   const hl = useMemo(() => (syntax ? highlightToLines(diff.content, diff.language) : null), [syntax, diff.content, diff.language]);
 
@@ -41,16 +51,47 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
     return kinds;
   }, [parsed]);
 
+  // Tints only make sense once the markers are gone (the AI wrote its resolution and, unless
+  // auto-stage is off or a check failed, the file may still show as "conflicted" in git's index).
+  const tintsByLine = useMemo(() => {
+    if (!resolution || parsed.blocks.length > 0) return null;
+    const map = new Map<number, LineTint>();
+    for (const b of resolution.blocks) {
+      for (let i = b.range.start; i < b.range.end && i < parsed.lines.length; i++) {
+        map.set(i, { blockId: b.id, confidence: b.confidence, isStart: i === b.range.start });
+      }
+    }
+    return map;
+  }, [resolution, parsed]);
+
+  const lowConfidenceLines = useMemo(() => {
+    if (!tintsByLine) return [];
+    return [...tintsByLine.entries()].filter(([, t]) => t.confidence === 'low' && t.isStart).map(([line]) => line);
+  }, [tintsByLine]);
+
+  const jumpToLine = (line: number) => {
+    containerRef.current?.querySelector<HTMLElement>(`[data-conflict-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+
+  const jumpLow = (delta: 1 | -1) => {
+    if (!lowConfidenceLines.length) return;
+    const next = (lowIndex + delta + lowConfidenceLines.length) % lowConfidenceLines.length;
+    setLowIndex(next);
+    jumpToLine(lowConfidenceLines[next]);
+  };
+
   const choose = (blockId: number, choice: BlockChoice) => {
     const block = parsed.blocks.find((b) => b.id === blockId);
     if (!block) return;
-    const content = applyResolutions(parsed, new Map([[blockId, resolutionForChoice(block, choice)]]));
-    void actions.writeResolvedContent(path, content, parsed.blocks.length > 1);
+    const { content } = applyResolutions(parsed, new Map([[blockId, resolutionForChoice(block, choice)]]));
+    void actions.writeResolvedContent(path, content, parsed.blocks.length > 1, diff.content);
   };
 
   const oursName = operation === 'rebase' ? `${diff.oursLabel} (upstream)` : `${diff.oursLabel} (current branch)`;
   const theirsName = operation === 'rebase' ? `${diff.theirsLabel} (your commit)` : `${diff.theirsLabel} (incoming)`;
   const aiEnabled = settings?.ai.provider !== 'disabled';
+
+  const counts = resolution ? { high: resolution.blocks.filter((b) => b.confidence === 'high').length, medium: resolution.blocks.filter((b) => b.confidence === 'medium').length, low: resolution.blocks.filter((b) => b.confidence === 'low').length } : null;
 
   return (
     <div className="conflict-view">
@@ -64,7 +105,31 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
             <Spinner /> {aiState.message}
           </span>
         ) : null}
+        {resolution?.guidedBy.length ? (
+          <span className="badge accent" title={`Guided by the manual resolution of ${resolution.guidedBy.join(', ')}`}>
+            Guided by {resolution.guidedBy[0]}
+            {resolution.guidedBy.length > 1 ? ` +${resolution.guidedBy.length - 1}` : ''}
+          </span>
+        ) : null}
+        {resolution?.check ? (
+          <span className={`badge ${resolution.check.ok ? 'success' : 'danger'}`} title={resolution.check.command}>
+            {resolution.check.ok ? 'Check passed' : resolution.check.timedOut ? 'Check timed out' : 'Check failed'}
+          </span>
+        ) : null}
         <span className="spacer" />
+        {counts && counts.high + counts.medium + counts.low > 0 ? (
+          <div className="conflict-legend">
+            <span className="legend-chip conf-high" title="High confidence">{counts.high} high</span>
+            <span className="legend-chip conf-medium" title="Medium confidence">{counts.medium} medium</span>
+            <span className="legend-chip conf-low" title="Low confidence">{counts.low} low</span>
+            {lowConfidenceLines.length > 1 ? (
+              <>
+                <Button size="sm" variant="ghost" iconOnly icon="arrow-up" title="Previous low-confidence block" onClick={() => jumpLow(-1)} />
+                <Button size="sm" variant="ghost" iconOnly icon="arrow-down" title="Next low-confidence block" onClick={() => jumpLow(1)} />
+              </>
+            ) : null}
+          </div>
+        ) : null}
         {aiEnabled ? (
           <Button variant="accent" size="sm" icon="sparkle" loading={aiBusy} onClick={() => void actions.resolveWithAi(path)} title="Let Claude reconcile both sides of every conflict block">
             Resolve with AI
@@ -77,14 +142,27 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
           <Button size="sm" variant="primary" icon="check" onClick={() => void actions.markResolved([path])}>Mark as resolved</Button>
         ) : null}
       </div>
-      <div>
+      <div ref={containerRef}>
         {parsed.lines.map((line, i) => {
           const kind = lineKinds[i];
           const block = kind === 'marker' ? parsed.blocks.find((b) => b.end - 1 === i) : undefined;
+          const tint = tintsByLine?.get(i);
           return (
             <React.Fragment key={i}>
-              <div className={`conflict-line ${kind}`}>
-                <span className="num">{i + 1}</span>
+              <div className={`conflict-line ${kind}${tint ? ` conf-${tint.confidence}` : ''}`} data-conflict-line={i}>
+                <span className="num">
+                  {tint?.isStart ? (
+                    <button
+                      type="button"
+                      className="conf-badge"
+                      title={`${tint.confidence} confidence — click for the model's rationale and per-block actions`}
+                      onClick={() => openDialog({ kind: 'resolution-popover', path, blockId: tint.blockId })}
+                    >
+                      <Icon name="sparkle" size={10} />
+                    </button>
+                  ) : null}
+                  {i + 1}
+                </span>
                 <span className="code" dangerouslySetInnerHTML={{ __html: kind === 'plain' && hl && hl[i] !== undefined ? hl[i] || ' ' : escapeHtml(line) || ' ' }} />
               </div>
               {block ? (

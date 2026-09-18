@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { CommitFile, Stash, WorkingFile } from '@shared/types';
+import type { CommitFile, ReviewFinding, ReviewSeverity, WorkingFile } from '@shared/types';
 import { extname } from '@shared/util';
 import { invoke, isMac } from '../api';
 import * as actions from '../state/actions';
 import { openDialog, patchChanges, store, useAppStore } from '../state/store';
-import { Avatar, Button, Checkbox, Icon, PathLabel, RelativeTime, Spinner, openContextMenu, statusIcon, statusLabel, type MenuItem } from './ui';
+import { liveFindings, SEVERITY_ICON, SEVERITY_TONE } from './review/ReviewView';
+import { Avatar, Button, Checkbox, Icon, PathLabel, Spinner, openContextMenu, statusIcon, statusLabel, type MenuItem } from './ui';
 
 const SUMMARY_LIMIT = 72;
 
@@ -44,6 +45,9 @@ export function ChangesTab(): React.JSX.Element {
       { label: selected.length > 1 ? `Discard ${selected.length} selected changes…` : 'Discard changes…', danger: true, onClick: () => actions.requestDiscard(selected, false) },
       { label: 'Discard all changes…', danger: true, onClick: () => actions.requestDiscard(files.map((f) => f.path), true) },
       { type: 'separator' },
+      { label: 'Blame this file', onClick: () => { actions.selectWorkingFile(file.path); actions.toggleBlame(); }, disabled: file.status === 'untracked' || !!file.submodule || !!file.conflict },
+      { label: 'File history…', onClick: () => actions.openFileHistory(file.path) },
+      { type: 'separator' },
       { label: selected.length > 1 ? 'Include selected in commit' : 'Include in commit', onClick: () => patchChanges((c) => ({ excluded: c.excluded.filter((p) => !selected.includes(p)) })) },
       { label: selected.length > 1 ? 'Exclude selected from commit' : 'Exclude from commit', onClick: () => patchChanges((c) => ({ excluded: [...new Set([...c.excluded, ...selected])], partial: Object.fromEntries(Object.entries(c.partial).filter(([p]) => !selected.includes(p))) })) },
       { type: 'separator' },
@@ -56,6 +60,8 @@ export function ChangesTab(): React.JSX.Element {
       { type: 'separator' },
       { label: 'Copy file path', onClick: () => void invoke('app.joinPath', s.currentRepo!.path, ...file.path.split('/')).then((p) => actions.copyToClipboard(p, 'Path copied')) },
       { label: 'Copy relative file path', onClick: () => void actions.copyToClipboard(file.path, 'Path copied') },
+      { type: 'separator' },
+      { label: selected.length > 1 ? `Stash ${selected.length} selected files…` : 'Stash selected files…', onClick: () => openDialog({ kind: 'stash-selected-files', paths: selected }) },
     );
     openContextMenu(e, items);
   };
@@ -76,7 +82,7 @@ export function ChangesTab(): React.JSX.Element {
         ) : null}
       </div>
       <div className="file-list" onContextMenu={(e) => { if ((e.target as HTMLElement).closest('.file-row')) return; if (files.length) openContextMenu(e, [{ label: 'Discard all changes…', danger: true, onClick: () => actions.requestDiscard(files.map((f) => f.path), true) }, { label: 'Stash all changes', onClick: () => void actions.stashAll() }]); }}>
-        {status && files.length === 0 && !changes.showingStash ? (
+        {status && files.length === 0 ? (
           <div className="empty-state" style={{ padding: 24 }}>
             <Icon name="check-circle" size={28} />
             <p>{status.branch.unborn ? 'This repository has no commits yet. Add some files to make your first commit.' : 'No local changes.'}</p>
@@ -84,7 +90,7 @@ export function ChangesTab(): React.JSX.Element {
         ) : null}
         {visible.map((file) => {
           const included = changes.excluded.includes(file.path) ? false : changes.partial[file.path] ? 'indeterminate' : true;
-          const selected = changes.selectedPaths.includes(file.path) && !changes.showingStash;
+          const selected = changes.selectedPaths.includes(file.path);
           const aiState = ai[file.path];
           return (
             <div
@@ -98,6 +104,7 @@ export function ChangesTab(): React.JSX.Element {
               <PathLabel path={file.path} />
               {aiState && aiState.phase !== 'done' && aiState.phase !== 'error' ? <Spinner /> : null}
               {file.conflict ? <span className="badge danger" title={file.conflict.replace(/-/g, ' ')}>conflict</span> : null}
+              {file.lfs ? <Icon name="download" size={12} className="muted" title="Git LFS pointer" /> : null}
               <span className={`status-icon ${file.status}`} title={file.status === 'renamed' && file.oldPath ? `Renamed from ${file.oldPath}` : statusLabel(file.status)}>
                 <Icon name={statusIcon(file.status)} />
               </span>
@@ -105,95 +112,95 @@ export function ChangesTab(): React.JSX.Element {
           );
         })}
       </div>
-      {stashes.length ? <StashSection stashes={stashes} /> : null}
+      {stashes.length ? (
+        <button type="button" className="stash-nav-button" onClick={() => actions.setView('stashes')} title="Open the Stashes view">
+          <Icon name="stash" />
+          <span>{stashes.length} stash{stashes.length === 1 ? '' : 'es'}</span>
+          <Icon name="chevron-right" size={12} />
+        </button>
+      ) : null}
+      <PrecommitFindingsStrip />
       <CommitForm />
     </>
   );
 }
 
-function StashSection({ stashes }: { stashes: Stash[] }): React.JSX.Element {
-  const showing = useAppStore((s) => s.changes.showingStash);
-  const branch = useAppStore((s) => s.status?.branch.name ?? null);
-  const sorted = useMemo(() => [...stashes].sort((a, b) => (a.branch === branch ? -1 : b.branch === branch ? 1 : a.index - b.index)), [stashes, branch]);
+// ---------------------------------------------------------------------------
+// Pre-commit AI review findings strip
+// ---------------------------------------------------------------------------
+
+function PrecommitFindingsStrip(): React.JSX.Element | null {
+  const review = useAppStore((s) => s.precommitReview);
+  const run = review.run;
+  const findings = useMemo(() => liveFindings(run), [run]);
+  if (!run && !review.running) return null;
+
+  if (!run) {
+    return (
+      <div className="precommit-strip">
+        <Spinner />
+        <span className="muted">{review.progress?.message ?? 'Reviewing changes…'}</span>
+        <span style={{ flex: 1 }} />
+        <Button size="sm" variant="ghost" onClick={() => actions.cancelPrecommitReview()}>Cancel</Button>
+      </div>
+    );
+  }
+
+  const counts = { blocker: 0, warning: 0, nit: 0 } as Record<ReviewSeverity, number>;
+  for (const f of findings) counts[f.severity]++;
+  const staleCount = review.stalePaths.length;
+  const reviewedFiles = run.files.filter((f) => f.status === 'reviewed').length;
+
   return (
-    <div className="stash-section">
-      <div className="list-group-header">Stashed changes ({stashes.length})</div>
-      {sorted.map((st) => (
-        <div
-          key={st.sha}
-          className={`stash-row ${showing?.sha === st.sha ? 'selected' : ''}`}
-          onClick={() => void actions.viewStash(showing?.sha === st.sha ? null : st)}
-          onContextMenu={(e) =>
-            openContextMenu(e, [
-              { label: 'Restore (pop)', onClick: () => void actions.restoreStash(st, true) },
-              { label: 'Apply (keep stash)', onClick: () => void actions.restoreStash(st, false) },
-              { type: 'separator' },
-              { label: 'Discard stash…', danger: true, onClick: () => void actions.dropStash(st) },
-            ])
-          }
-        >
-          <Icon name="stash" />
-          <span className="row-main">
-            <span className="truncate">{st.message}</span>
-            <span className="row-sub truncate">
-              {st.branch ? `On ${st.branch} · ` : ''}
-              <RelativeTime date={st.date} />
-            </span>
-          </span>
+    <div className={`precommit-strip ${review.expanded ? 'expanded' : ''}`}>
+      <button type="button" className="precommit-strip-header" onClick={() => actions.togglePrecommitReviewStrip()}>
+        <Icon name="sparkle" />
+        {review.running ? <Spinner /> : null}
+        {counts.blocker ? <span className="finding-count danger" title={`${counts.blocker} blocker${counts.blocker === 1 ? '' : 's'}`}>{counts.blocker}</span> : null}
+        {counts.warning ? <span className="finding-count attention" title={`${counts.warning} warning${counts.warning === 1 ? '' : 's'}`}>{counts.warning}</span> : null}
+        {counts.nit ? <span className="finding-count neutral" title={`${counts.nit} nit${counts.nit === 1 ? '' : 's'}`}>{counts.nit}</span> : null}
+        <span className="muted truncate" style={{ flex: 1, textAlign: 'left' }}>{findings.length ? run.summary || `${findings.length} finding${findings.length === 1 ? '' : 's'}` : `No issues found in ${reviewedFiles} file${reviewedFiles === 1 ? '' : 's'}`}</span>
+        {staleCount ? <span className="badge attention" title="Some reviewed files changed since this run">{staleCount} stale</span> : null}
+        <Icon name={review.expanded ? 'chevron-down' : 'chevron-right'} size={12} />
+      </button>
+      {review.expanded ? (
+        <div className="precommit-strip-body">
+          {findings.map((f) => (
+            <PrecommitFindingRow key={f.id} finding={f} stale={review.stalePaths.includes(f.path)} active={review.activeFindingId === f.id} />
+          ))}
+          {!findings.length ? <div className="list-empty">Nothing to flag in the reviewed files.</div> : null}
+          <div className="precommit-strip-actions">
+            {run.droppedInvalid ? <span className="muted" style={{ fontSize: 11 }}>{run.droppedInvalid} candidate{run.droppedInvalid === 1 ? '' : 's'} dropped by validation</span> : null}
+            <span style={{ flex: 1 }} />
+            {staleCount ? <Button size="sm" variant="ghost" icon="sync" onClick={() => void actions.rereviewStalePrecommitFindings()} disabled={review.running}>Re-review {staleCount} stale file{staleCount === 1 ? '' : 's'}</Button> : null}
+          </div>
         </div>
-      ))}
+      ) : null}
     </div>
   );
 }
 
-export function StashView(): React.JSX.Element | null {
-  const stash = useAppStore((s) => s.changes.showingStash);
-  const files = useAppStore((s) => s.changes.stashFiles);
-  const selected = useAppStore((s) => s.changes.stashSelectedFile);
-  if (!stash) return null;
+function PrecommitFindingRow({ finding, stale, active }: { finding: ReviewFinding; stale: boolean; active: boolean }): React.JSX.Element {
   return (
-    <div className="commit-details">
-      <div className="commit-summary">
-        <h3>
-          <Icon name="stash" /> {stash.message}
-        </h3>
-        <div className="meta-row">
-          <span>{stash.ref}</span>
-          {stash.branch ? <span>on {stash.branch}</span> : null}
-          <RelativeTime date={stash.date} />
-          <span style={{ flex: 1 }} />
-          <Button size="sm" variant="primary" onClick={() => void actions.restoreStash(stash, true)}>Restore</Button>
-          <Button size="sm" onClick={() => void actions.restoreStash(stash, false)}>Apply</Button>
-          <Button size="sm" variant="danger" onClick={() => void actions.dropStash(stash)}>Discard</Button>
-          <Button size="sm" variant="ghost" iconOnly icon="x" title="Back to changes" onClick={() => void actions.viewStash(null)} />
-        </div>
-      </div>
-      <div className="commit-body">
-        <div className="commit-files">
-          <div className="changes-header">
-            <span className="count">{files.length} changed file{files.length === 1 ? '' : 's'}</span>
-          </div>
-          <div className="file-list">
-            {files.map((f) => (
-              <CommitFileRow key={f.path} file={f} selected={selected === f.path} onSelect={() => actions.selectStashFile(f.path)} />
-            ))}
-          </div>
-        </div>
-        <StashDiffSlot />
-      </div>
+    <div className={`finding-row ${active ? 'active' : ''} ${stale ? 'stale' : ''}`} onClick={() => actions.focusPrecommitFinding(finding)} title={stale ? 'This file changed since the review; re-review to refresh.' : finding.detail}>
+      <Icon name={SEVERITY_ICON[finding.severity]} className={`finding-icon ${SEVERITY_TONE[finding.severity]}`} />
+      <span className="finding-main">
+        <span className="finding-title truncate">{finding.title}</span>
+        <span className="finding-sub truncate">
+          <span className="mono">{finding.path}:{finding.line}{finding.endLine && finding.endLine !== finding.line ? `-${finding.endLine}` : ''}</span> · {finding.category}
+          {stale ? ' · stale' : ''}
+        </span>
+      </span>
+      <Button size="sm" variant="ghost" iconOnly icon="x" title="Dismiss" onClick={(e) => { e.stopPropagation(); void actions.dismissPrecommitFinding(finding); }} />
     </div>
   );
-}
-
-function StashDiffSlot(): React.JSX.Element {
-  // Rendered by App via the shared DiffPane; kept as a slot for layout symmetry.
-  return <div id="stash-diff-slot" style={{ display: 'flex', flex: 1, minWidth: 0 }} />;
 }
 
 export function CommitFileRow({ file, selected, onSelect, onContextMenu }: { file: CommitFile; selected: boolean; onSelect: () => void; onContextMenu?: (e: React.MouseEvent) => void }): React.JSX.Element {
   return (
     <div className={`file-row ${selected ? 'selected' : ''}`} onClick={onSelect} onContextMenu={onContextMenu}>
       <PathLabel path={file.path} />
+      {file.lfs ? <Icon name="download" size={12} className="muted" title="Git LFS pointer" /> : null}
       {file.additions !== null || file.deletions !== null ? (
         <span className="stats">
           {file.additions ? <span className="stat-add">+{file.additions}</span> : null}
@@ -217,7 +224,12 @@ function CommitForm(): React.JSX.Element {
   const changes = useAppStore((s) => s.changes);
   const settings = useAppStore((s) => s.settings);
   const aiCommitBusy = useAppStore((s) => s.aiCommitBusy);
+  const precommitReview = useAppStore((s) => s.precommitReview);
+  const precommitFindings = useMemo(() => liveFindings(precommitReview.run), [precommitReview.run]);
+  const precommitBlockers = precommitFindings.filter((f) => f.severity === 'blocker').length;
+  const signingConfigVersion = useAppStore((s) => s.signingConfigVersion);
   const [identity, setIdentity] = useState<{ name: string | null; email: string | null } | null>(null);
+  const [willSign, setWillSign] = useState(false);
   const [coAuthorInput, setCoAuthorInput] = useState('');
   const summaryRef = useRef<HTMLInputElement>(null);
 
@@ -227,10 +239,13 @@ function CommitForm(): React.JSX.Element {
     void invoke('repo.config', repo.path)
       .then((c) => !cancelled && setIdentity(c.effective))
       .catch(() => undefined);
+    void invoke('repo.signing.get', repo.path)
+      .then((s) => !cancelled && setWillSign(s.effective.signCommits))
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [repo]);
+  }, [repo, signingConfigVersion]);
 
   const files = status?.files ?? [];
   const included = files.filter((f) => !changes.excluded.includes(f.path));
@@ -281,13 +296,42 @@ function CommitForm(): React.JSX.Element {
           spellCheck
           autoComplete="off"
         />
+        {willSign ? <Icon name="lock" size={14} className="muted" title="Commits are signed" /> : null}
         {settings?.ai.provider !== 'disabled' ? (
           <Button variant="ghost" iconOnly icon="sparkle" className="sparkle" loading={aiCommitBusy} title="Generate commit message with AI" onClick={() => void actions.generateCommitMessage()} disabled={included.length === 0 || changes.committing} />
+        ) : null}
+        {settings?.ai.provider !== 'disabled' ? (
+          <Button variant="ghost" iconOnly icon="eye" loading={precommitReview.running} title="Review changes with AI before committing" onClick={() => void actions.reviewChangesBeforeCommit()} disabled={included.length === 0 || changes.committing} />
+        ) : null}
+        {actions.splitEntryVisible() ? (
+          <Button
+            variant="ghost"
+            iconOnly
+            icon="kebab"
+            title="More AI actions"
+            disabled={changes.committing}
+            onClick={(e) =>
+              openContextMenu(e, [
+                {
+                  label: 'Split into commits with AI…',
+                  icon: 'sparkle',
+                  disabled: !actions.splitEntryEnabled(),
+                  title: actions.splitEntryEnabled() ? undefined : 'At least two changed files are needed to split into commits.',
+                  onClick: () => actions.openSplitDialog(),
+                },
+              ])
+            }
+          />
         ) : null}
       </div>
       {summaryTooLong && settings?.showCommitLengthWarning !== false ? (
         <span className="length-warning">
           <Icon name="alert" size={12} /> Great commit summaries are 72 characters or fewer ({changes.summary.length}).
+        </span>
+      ) : null}
+      {precommitReview.run?.commitMessageMatches === false ? (
+        <span className="length-warning">
+          <Icon name="alert" size={12} /> {precommitReview.run.commitMessageNote || 'The commit message may not match the diff.'}
         </span>
       ) : null}
       <textarea placeholder="Description" value={changes.description} onChange={(e) => patchChanges({ description: e.target.value })} disabled={changes.committing} spellCheck />
@@ -319,13 +363,22 @@ function CommitForm(): React.JSX.Element {
       <div className="form-actions">
         <div className="left">
           <Button variant="ghost" size="sm" icon="person" title={changes.showCoAuthors ? 'Remove co-authors' : 'Add co-authors'} onClick={() => patchChanges((c) => ({ showCoAuthors: !c.showCoAuthors }))} />
+          {repo?.github ? <Button variant="ghost" size="sm" icon="issue" title="Reference an issue" onClick={() => actions.openIssuesDialog()}>#</Button> : null}
           <Checkbox checked={changes.amend} onChange={(v) => void actions.setAmend(v)} label="Amend last commit" disabled={changes.committing || !!status?.branch.unborn || inMerge} />
         </div>
         <span className="muted" style={{ fontSize: 12 }}>
           {included.length} of {files.length} file{files.length === 1 ? '' : 's'}
         </span>
       </div>
-      <Button type="submit" variant="primary" className="commit-btn" disabled={!canCommit} loading={changes.committing} icon={changes.amend ? 'pencil' : 'commit'} title={`${isMac ? '⌘' : 'Ctrl'}+Enter`}>
+      <Button
+        type="submit"
+        variant={precommitBlockers ? 'danger' : 'primary'}
+        className={`commit-btn ${precommitBlockers ? 'has-blockers' : ''}`}
+        disabled={!canCommit}
+        loading={changes.committing}
+        icon={changes.amend ? 'pencil' : 'commit'}
+        title={precommitBlockers ? `${precommitBlockers} blocker${precommitBlockers === 1 ? '' : 's'} found, review before committing` : `${isMac ? '⌘' : 'Ctrl'}+Enter`}
+      >
         {label}
       </Button>
       {status?.hasConflicts ? (

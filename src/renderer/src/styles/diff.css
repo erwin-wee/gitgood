@@ -35,10 +35,17 @@
   gap: 4px;
   flex: 0 0 auto;
 }
+.diff-body-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
 .diff-body {
   flex: 1;
   overflow: auto;
   min-height: 0;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--diff-font-size, 12px);
   line-height: 20px;
@@ -144,6 +151,10 @@ table.diff .sel.del-num {
 }
 table.diff tr.selected-line .code {
   box-shadow: inset 3px 0 0 var(--diff-selected-outline);
+}
+table.diff tr.highlight-match .code {
+  background: var(--attention-subtle);
+  box-shadow: inset 3px 0 0 var(--attention);
 }
 table.diff tr.hunk td {
   background: var(--diff-hunk-bg);
@@ -373,6 +384,155 @@ table.diff tr.expander button:hover {
   color: var(--fg-muted);
   margin-right: 4px;
 }
+/* AI resolution confidence tints (add-ai-conflict-resolution-upgrade), keyed by line range. */
+.conflict-line.conf-high .code {
+  box-shadow: inset 3px 0 0 var(--success);
+}
+.conflict-line.conf-medium .code {
+  box-shadow: inset 3px 0 0 var(--attention);
+}
+.conflict-line.conf-low .code {
+  box-shadow: inset 3px 0 0 var(--danger);
+  background: var(--danger-subtle);
+}
+.conf-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin-right: 2px;
+  border: none;
+  border-radius: 3px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.conf-badge:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+.conflict-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-ui);
+}
+.legend-chip {
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+  white-space: nowrap;
+}
+.legend-chip.conf-high {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+.legend-chip.conf-medium {
+  background: var(--attention-subtle);
+  color: var(--attention);
+}
+.legend-chip.conf-low {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+/* Explain-why popover (ResolutionPopover.tsx) */
+.resolution-popover .badge {
+  margin-bottom: 8px;
+}
+.resolution-side {
+  margin: 6px 0;
+}
+.resolution-side-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+.resolution-side-toggle:hover {
+  color: var(--fg);
+}
+/* Blame gutter */
+table.diff .blame-cell {
+  width: 14ch;
+  min-width: 14ch;
+  padding: 0;
+  user-select: none;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+table.diff .blame-cell.empty {
+  background: var(--bg-subtle);
+}
+.blame-block {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 20px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  text-align: left;
+}
+.blame-block:hover,
+table.diff .blame-cell.active .blame-block {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.blame-block .blame-sha {
+  opacity: 0.8;
+}
+.blame-block .blame-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.blame-block .blame-uncommitted {
+  font-style: italic;
+  color: var(--fg-muted);
+}
+table.diff tr.blame-card-row td {
+  padding: 0;
+  background: var(--bg-subtle);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.blame-card {
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 480px;
+  font-family: var(--font-ui);
+}
+.blame-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.blame-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .ai-status {
   display: inline-flex;
   align-items: center;
@@ -380,4 +540,17 @@ table.diff tr.expander button:hover {
   font-size: 12px;
   color: var(--done);
   font-family: var(--font-ui);
+}
+
+/* Brief highlight when an explanation reference scrolls the diff to a line. */
+table.diff tr.flash-highlight td {
+  animation: explain-flash 1.2s ease-out;
+}
+@keyframes explain-flash {
+  0% {
+    background: var(--accent-subtle, var(--bg-selected));
+  }
+  100% {
+    background: transparent;
+  }
 }

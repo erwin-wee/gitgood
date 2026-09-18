@@ -2,15 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import { bootstrap, setView } from './state/actions';
 import { store, useAppStore } from './state/store';
 import { Banners } from './components/Banners';
-import { ChangesTab, StashView } from './components/ChangesTab';
+import { ChangesTab } from './components/ChangesTab';
 import { Dialogs } from './components/dialogs';
 import { DiffPane } from './components/diff/DiffPane';
+import { HealthView } from './components/HealthView';
 import { CommitDetailsPane, HistoryTab } from './components/HistoryTab';
+import { InboxPanel } from './components/Inbox';
 import { SetupScreen } from './components/Setup';
+import { StashesView } from './components/StashesTab';
 import { Toasts } from './components/Toasts';
 import { Toolbar } from './components/Toolbar';
 import { ContextMenuHost, Icon } from './components/ui';
 import { Welcome } from './components/Welcome';
+import { ReviewView } from './components/review/ReviewView';
 
 function useSidebarResize(): { width: number; onMouseDown: (e: React.MouseEvent) => void; active: boolean } {
   const width = useAppStore((s) => s.sidebarWidth);
@@ -52,6 +56,10 @@ export function App(): React.JSX.Element {
   const status = useAppStore((s) => s.status);
   const changes = useAppStore((s) => s.changes);
   const history = useAppStore((s) => s.history);
+  const stashesView = useAppStore((s) => s.stashesView);
+  const reviewOpen = useAppStore((s) => s.review.open);
+  const reviewPath = useAppStore((s) => s.review.selectedPath);
+  const reviewFile = useAppStore((s) => s.review.run?.files.find((f) => f.file.path === s.review.selectedPath)?.file ?? null);
   const { width, onMouseDown, active } = useSidebarResize();
 
   useEffect(() => {
@@ -79,11 +87,13 @@ export function App(): React.JSX.Element {
     content = <SetupScreen tools={tools} />;
   } else if (!repo) {
     content = <Welcome />;
+  } else if (view === 'stashes' && !reviewOpen) {
+    content = <StashesView />;
+  } else if (view === 'health' && !reviewOpen) {
+    content = <HealthView />;
   } else {
     const selectedWorking = changes.selectedPaths.length === 1 ? changes.selectedPaths[0] : null;
     const workingFile = selectedWorking ? status?.files.find((f) => f.path === selectedWorking) ?? null : null;
-    const commitFile = history.selectedFile && history.details ? history.details.files.find((f) => f.path === history.selectedFile) ?? null : null;
-    const stashFile = changes.showingStash && changes.stashSelectedFile ? changes.stashFiles.find((f) => f.path === changes.stashSelectedFile) ?? null : null;
     content = (
       <div className="main">
         <aside className="sidebar" style={{ width }}>
@@ -95,42 +105,43 @@ export function App(): React.JSX.Element {
               History
             </button>
           </div>
-          {view === 'changes' ? <ChangesTab /> : <HistoryTab />}
+          {view === 'history' ? <HistoryTab /> : <ChangesTab />}
           <div className={`sidebar-resizer ${active ? 'active' : ''}`} onMouseDown={onMouseDown} />
         </aside>
         <section className="content">
-          {view === 'changes' ? (
-            changes.showingStash ? (
-              <StashView />
-            ) : changes.selectedPaths.length > 1 ? (
-              <div className="empty-state">
-                <Icon name="diff-modified" size={32} />
-                <h2>{changes.selectedPaths.length} files selected</h2>
-                <p>Right-click to discard or ignore the selected files, or use the checkboxes to include them in your next commit.</p>
-              </div>
-            ) : (
-              <DiffPane path={selectedWorking} oldPath={workingFile?.oldPath ?? null} status={workingFile?.status ?? null} mode="working" emptyMessage={status?.files.length ? 'Select a file to view its changes.' : status?.branch.unborn ? 'Make your first commit to get started.' : 'No local changes. Edit files in your editor and they will show up here.'} />
-            )
-          ) : (
+          {reviewOpen ? (
+            <ReviewView />
+          ) : view === 'history' ? (
             <CommitDetailsPane />
+          ) : changes.selectedPaths.length > 1 ? (
+            <div className="empty-state">
+              <Icon name="diff-modified" size={32} />
+              <h2>{changes.selectedPaths.length} files selected</h2>
+              <p>Right-click to discard or ignore the selected files, or use the checkboxes to include them in your next commit.</p>
+            </div>
+          ) : (
+            <DiffPane path={selectedWorking} oldPath={workingFile?.oldPath ?? null} status={workingFile?.status ?? null} mode="working" emptyMessage={status?.files.length ? 'Select a file to view its changes.' : status?.branch.unborn ? 'Make your first commit to get started.' : 'No local changes. Edit files in your editor and they will show up here.'} />
           )}
         </section>
       </div>
     );
   }
 
-  // The stash and commit views render their diff into a shared pane so state stays centralized.
-  const showStashDiff = repo && view === 'changes' && !!changes.showingStash;
-  const showCommitDiff = repo && view === 'history' && history.selectedShas.length === 1 && !!history.details;
+  // The stash, commit and review views render their diff into a shared pane so state stays centralized.
+  const showStashDiff = repo && !reviewOpen && view === 'stashes' && !!stashesView.selectedSha;
+  const showCommitDiff = repo && !reviewOpen && view === 'history' && history.selectedShas.length === 1 && !!history.details;
+  const showReviewDiff = repo && reviewOpen;
 
   return (
     <div className="app">
       <Toolbar />
       {settingsLoaded && !gitMissing ? <Banners /> : null}
       {content}
-      {showStashDiff ? <PortalDiff target="stash-diff-slot" path={changes.stashSelectedFile} status={changes.stashFiles.find((f) => f.path === changes.stashSelectedFile)?.status ?? null} mode="stash" /> : null}
+      {showStashDiff ? <PortalDiff target="stashes-diff-slot" path={stashesView.selectedFile} status={stashesView.files.find((f) => f.path === stashesView.selectedFile)?.status ?? null} mode="stash" /> : null}
+      {showReviewDiff ? <PortalDiff target="review-diff-slot" path={reviewPath} oldPath={reviewFile?.oldPath ?? null} status={reviewFile?.status ?? null} mode="review" /> : null}
       {showCommitDiff ? <PortalDiff target="commit-diff-slot" path={history.selectedFile} oldPath={history.details?.files.find((f) => f.path === history.selectedFile)?.oldPath ?? null} status={history.details?.files.find((f) => f.path === history.selectedFile)?.status ?? null} mode="commit" /> : null}
       <Dialogs />
+      <InboxPanel />
       <Toasts />
       <ContextMenuHost />
     </div>
@@ -139,7 +150,7 @@ export function App(): React.JSX.Element {
 
 import { createPortal } from 'react-dom';
 
-function PortalDiff({ target, path, oldPath, status, mode }: { target: string; path: string | null; oldPath?: string | null; status?: string | null; mode: 'working' | 'commit' | 'stash' }): React.JSX.Element | null {
+function PortalDiff({ target, path, oldPath, status, mode }: { target: string; path: string | null; oldPath?: string | null; status?: string | null; mode: 'working' | 'commit' | 'stash' | 'review' }): React.JSX.Element | null {
   const [el, setEl] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const find = () => setEl(document.getElementById(target));
@@ -149,5 +160,5 @@ function PortalDiff({ target, path, oldPath, status, mode }: { target: string; p
     return () => obs.disconnect();
   }, [target]);
   if (!el) return null;
-  return createPortal(<DiffPane path={path} oldPath={oldPath} status={status} mode={mode} emptyMessage="Select a file to view its changes." />, el);
+  return createPortal(<DiffPane path={path} oldPath={oldPath} status={status} mode={mode} emptyMessage={mode === 'review' ? 'Select a file or a finding to see the diff.' : 'Select a file to view its changes.'} />, el);
 }

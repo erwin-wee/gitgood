@@ -1,0 +1,620 @@
+/* ---------------------------------------------------------------------------
+   AI pull request review: review view, findings panel, diff annotations
+   --------------------------------------------------------------------------- */
+
+.review-view {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.review-files {
+  width: clamp(180px, 22%, 280px);
+  flex: 0 0 auto;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.review-files .changes-header {
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+.review-files .changes-header .count {
+  color: var(--fg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.review-file-row {
+  display: flex;
+  align-items: center;
+}
+.review-file-row .file-row {
+  flex: 1;
+  min-width: 0;
+}
+.review-file-row.failed .file-row,
+.review-file-row.cancelled .file-row {
+  opacity: 0.7;
+}
+.finding-count {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-right: 8px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+}
+.finding-count.danger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+.finding-count.attention {
+  background: var(--attention-subtle);
+  color: var(--attention);
+}
+.review-skipped {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  border-top: 1px solid var(--border);
+}
+.review-skipped ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.review-skipped li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Findings panel */
+.review-panel {
+  width: clamp(240px, 30%, 360px);
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+.review-panel-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.review-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.review-panel-title strong {
+  white-space: nowrap;
+}
+.review-panel-title .icon {
+  color: var(--accent);
+}
+.review-counts {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  align-items: center;
+}
+.review-counts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.review-counts .danger {
+  color: var(--danger);
+}
+.review-counts .attention {
+  color: var(--attention);
+}
+.review-counts .neutral {
+  color: var(--fg-muted);
+}
+.review-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.review-stale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--attention-subtle);
+  color: var(--attention);
+  font-size: 12px;
+}
+.review-stale.danger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+.review-stale span {
+  flex: 1;
+}
+.review-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  max-height: 140px;
+  overflow: auto;
+}
+.review-findings {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.finding-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border);
+}
+.finding-row:hover {
+  background: var(--bg-hover);
+}
+.finding-row.active {
+  background: var(--bg-selected);
+  border-left-color: var(--accent);
+}
+.finding-row.low-confidence {
+  opacity: 0.7;
+}
+.finding-row .finding-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.finding-row .finding-title {
+  font-size: 12px;
+  font-weight: 500;
+}
+.finding-row .finding-sub {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.finding-icon.danger {
+  color: var(--danger);
+}
+.finding-icon.attention {
+  color: var(--attention);
+}
+.finding-icon.neutral {
+  color: var(--fg-muted);
+}
+.review-panel-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.review-panel.collapsed {
+  width: 36px;
+  align-items: center;
+  padding-top: 6px;
+  gap: 8px;
+}
+.review-panel.collapsed .collapsed-count {
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--bg-subtle);
+}
+.review-panel.collapsed .collapsed-count.danger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+.review-panel.collapsed .collapsed-count.attention {
+  background: var(--attention-subtle);
+  color: var(--attention);
+}
+
+/* Diff annotations */
+table.diff tr.annotated .num:nth-of-type(2),
+table.diff.unified tr.annotated td.num:last-of-type {
+  position: relative;
+}
+.annotation-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 0 3px;
+  height: 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  cursor: pointer;
+  vertical-align: middle;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  line-height: 1;
+}
+.annotation-marker.danger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+.annotation-marker.attention {
+  background: var(--attention-subtle);
+  color: var(--attention);
+}
+.annotation-marker.active,
+.annotation-marker:hover {
+  outline: 1px solid currentColor;
+}
+table.diff tr.annotation-row td {
+  padding: 0;
+  background: var(--bg-subtle);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  white-space: normal;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.finding-card {
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--fg-muted);
+  border-radius: 6px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 900px;
+}
+.finding-card.danger {
+  border-left-color: var(--danger);
+}
+.finding-card.attention {
+  border-left-color: var(--attention);
+}
+.finding-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.finding-card p {
+  margin: 0;
+}
+.finding-suggestion {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.finding-suggestion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px;
+  background: var(--bg-subtle);
+  font-size: 11px;
+}
+.finding-suggestion pre {
+  margin: 0;
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--diff-font-size, 12px);
+  background: var(--success-subtle);
+  overflow: auto;
+  max-height: 240px;
+}
+.finding-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Pre-flight and post dialogs */
+.review-plan-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.review-plan-files {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 260px;
+  overflow: auto;
+  margin-bottom: 10px;
+}
+.review-plan-files.skipped {
+  color: var(--fg-muted);
+}
+.review-plan-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.review-plan-file:last-child {
+  border-bottom: none;
+}
+.review-plan-file .path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.review-plan-file .stats {
+  font-size: 11px;
+  display: inline-flex;
+  gap: 6px;
+}
+.review-post-findings {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+.review-post-finding {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.review-post-finding:last-child {
+  border-bottom: none;
+}
+.review-post-finding .truncate {
+  flex: 1;
+  min-width: 0;
+}
+.review-progress-toast .spinner {
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------------------------------
+   Pre-commit AI review: findings strip above the commit form (ChangesTab.tsx)
+   --------------------------------------------------------------------------- */
+
+.precommit-strip {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  flex: 0 0 auto;
+}
+.precommit-strip-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+.precommit-strip-header:hover {
+  background: var(--bg-hover);
+}
+.precommit-strip-header .icon:first-child {
+  color: var(--accent);
+}
+.precommit-strip-body {
+  border-top: 1px solid var(--border);
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.precommit-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+.finding-row.stale {
+  opacity: 0.55;
+}
+.commit-btn.has-blockers {
+  box-shadow: 0 0 0 2px var(--danger-subtle);
+}
+
+/* ---------------------------------------------------------------------------
+   AI diff explanation panel (DiffPane.tsx / components/explain/ExplainPanel.tsx)
+   --------------------------------------------------------------------------- */
+
+.explain-panel {
+  position: relative;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+  min-width: 240px;
+  max-width: 640px;
+}
+.explain-resize-handle {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+}
+.explain-panel.collapsed {
+  width: 36px !important;
+  min-width: 36px;
+  align-items: center;
+  padding-top: 6px;
+  gap: 8px;
+}
+.explain-panel-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.explain-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.explain-panel-title .icon {
+  color: var(--accent);
+}
+.explain-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.explain-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--danger-subtle);
+  color: var(--danger);
+  font-size: 12px;
+}
+.explain-sections section {
+  margin-bottom: 12px;
+}
+.explain-sections h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--fg-muted);
+}
+.explain-sections p,
+.explain-sections ul {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.explain-sections ul {
+  padding-left: 18px;
+}
+.explain-references {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.explain-reference {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--fg);
+  font-size: 12px;
+}
+.explain-reference:hover {
+  background: var(--bg-hover);
+}
+.explain-reference .mono {
+  color: var(--accent);
+  flex: 0 0 auto;
+  max-width: 45%;
+}
+.explain-reference-label {
+  color: var(--fg-muted);
+  flex: 1;
+  min-width: 0;
+}
+.explain-followups {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.explain-followup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.explain-followup-question {
+  margin: 0;
+  font-weight: 500;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.explain-followup-answer {
+  margin: 0;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+.explain-followup-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--danger);
+}
+.explain-followup-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.explain-followup-input textarea {
+  resize: vertical;
+  min-height: 40px;
+}
+.explain-followup-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -1,11 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DiffHunk, DiffLine, FileDiff } from '@shared/types';
+import type { BlameHunk, DiffHunk, DiffLine, FileDiff } from '@shared/types';
+import { ZERO_SHA } from '@shared/types';
 import { intralineDiff, type CharRange } from '@shared/diff/intraline';
 import { escapeHtml } from '@shared/util';
 import { highlightToLines } from '../../lib/highlight';
-import { Icon } from '../ui';
+import { Icon, openContextMenu } from '../ui';
 
 type TextDiffData = Extract<FileDiff, { kind: 'text' }>;
+
+/** A marker attached to a new-side line (used by AI review findings). */
+export interface LineAnnotation {
+  id: string;
+  /** New-side line number. */
+  line: number;
+  tone: 'danger' | 'attention' | 'neutral';
+  title: string;
+}
+
+/** Stable id for one blame block instance (a commit can have several runs, so sha alone isn't unique). */
+export function blameBlockId(hunk: BlameHunk): string {
+  return `${hunk.sha}:${hunk.startLine}`;
+}
 
 export interface TextDiffProps {
   diff: TextDiffData;
@@ -17,6 +32,21 @@ export interface TextDiffProps {
   selectable: boolean;
   selectedLines: string[] | null;
   onSelectionChange?: (selected: Set<string>, total: number) => void;
+  /** Gutter markers keyed by new-side line; clicking one toggles it active. */
+  annotations?: LineAnnotation[];
+  activeAnnotationId?: string | null;
+  onAnnotationClick?: (id: string) => void;
+  /** Renders the inline card shown under a line whose annotation is active. */
+  renderAnnotationCard?: (ids: string[]) => React.ReactNode;
+  /** Blame gutter, keyed by new-side line number (the file's own line numbers, since blame targets a full file view). */
+  blame?: BlameHunk[] | null;
+  activeBlameId?: string | null;
+  onBlameBlockClick?: (id: string) => void;
+  renderBlameCard?: (hunk: BlameHunk) => React.ReactNode;
+  /** Set when a History content/regex search is active: scrolls to and highlights the first add/delete line whose text matches. */
+  highlightTerm?: { text: string; regex: boolean } | null;
+  /** When set, right-clicking a line (or a text selection spanning several lines of one hunk) offers "Explain selected lines"/"Explain this line", reporting the new-side line range. */
+  onExplainRange?: (hunkIndex: number, startLine: number, endLine: number) => void;
 }
 
 const EXPAND_STEP = 20;
@@ -170,9 +200,159 @@ function pairLines(hunk: DiffHunk, hunkIndex: number): Pair[] {
   return pairs;
 }
 
-export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange }: TextDiffProps): React.JSX.Element {
+export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange, annotations, activeAnnotationId, onAnnotationClick, renderAnnotationCard, blame, activeBlameId, onBlameBlockClick, renderBlameCard, highlightTerm, onExplainRange }: TextDiffProps): React.JSX.Element {
   const [expansions, setExpansions] = useState<Record<string, number>>({});
   useEffect(() => setExpansions({}), [diff]);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  const annotationsByLine = useMemo(() => {
+    const map = new Map<number, LineAnnotation[]>();
+    for (const a of annotations ?? []) {
+      const list = map.get(a.line) ?? [];
+      list.push(a);
+      map.set(a.line, list);
+    }
+    return map;
+  }, [annotations]);
+  const activeLine = useMemo(() => (activeAnnotationId ? annotations?.find((a) => a.id === activeAnnotationId)?.line ?? null : null), [annotations, activeAnnotationId]);
+  useEffect(() => {
+    if (activeLine === null || !tableRef.current) return;
+    const row = tableRef.current.querySelector<HTMLElement>(`tr[data-new-line="${activeLine}"]`);
+    row?.scrollIntoView({ block: 'center' });
+  }, [activeLine, diff]);
+
+  // First add/delete/context line (in diff order) whose text matches the active History content/regex search.
+  const highlightKey = useMemo(() => {
+    if (!highlightTerm?.text) return null;
+    let re: RegExp | null = null;
+    if (highlightTerm.regex) {
+      try {
+        re = new RegExp(highlightTerm.text);
+      } catch {
+        return null;
+      }
+    }
+    for (let hi = 0; hi < diff.hunks.length; hi++) {
+      const lines = diff.hunks[hi].lines;
+      for (let li = 0; li < lines.length; li++) {
+        const l = lines[li];
+        if (l.type === 'context') continue;
+        const matched = re ? re.test(l.text) : l.text.includes(highlightTerm.text);
+        if (matched) return `${hi}:${li}`;
+      }
+    }
+    return null;
+  }, [diff.hunks, highlightTerm]);
+  useEffect(() => {
+    if (!highlightKey || !tableRef.current) return;
+    const row = tableRef.current.querySelector<HTMLElement>(`tr[data-key="${highlightKey}"]`);
+    row?.scrollIntoView({ block: 'center' });
+  }, [highlightKey, diff]);
+
+  const TONE_RANK = { danger: 0, attention: 1, neutral: 2 } as const;
+  const annotationMarker = (newNo: number | null) => {
+    if (newNo === null) return null;
+    const list = annotationsByLine.get(newNo);
+    if (!list?.length) return null;
+    const tone = [...list].sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone])[0].tone;
+    const active = list.some((a) => a.id === activeAnnotationId);
+    return (
+      <button
+        type="button"
+        className={`annotation-marker ${tone} ${active ? 'active' : ''}`}
+        title={list.map((a) => a.title).join('\n')}
+        onClick={(e) => {
+          e.stopPropagation();
+          onAnnotationClick?.(active ? list.find((a) => a.id === activeAnnotationId)!.id : list[0].id);
+        }}
+      >
+        <Icon name="sparkle" size={11} />
+        {list.length > 1 ? <span className="annotation-count">{list.length}</span> : null}
+      </button>
+    );
+  };
+  const annotationRow = (newNo: number | null, colSpan: number) => {
+    if (newNo === null || activeLine !== newNo || !renderAnnotationCard) return null;
+    const ids = (annotationsByLine.get(newNo) ?? []).map((a) => a.id);
+    if (!ids.length) return null;
+    return (
+      <tr className="annotation-row" key={`ann-${newNo}`}>
+        <td colSpan={colSpan}>{renderAnnotationCard(ids)}</td>
+      </tr>
+    );
+  };
+
+  // -------------------------------------------------------------------------
+  // Blame gutter: one extra leftmost column, drawn per-line but styled to
+  // look like a single block for each run of consecutive lines from the same
+  // commit (see blameByLine/blameRange below).
+  // -------------------------------------------------------------------------
+  const blameByLine = useMemo(() => {
+    const map = new Map<number, BlameHunk>();
+    for (const h of blame ?? []) for (let l = h.startLine; l < h.startLine + h.lineCount; l++) map.set(l, h);
+    return map;
+  }, [blame]);
+  const blameRange = useMemo(() => {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const h of blame ?? []) {
+      if (h.sha === ZERO_SHA) continue;
+      const t = new Date(h.author.date).getTime();
+      if (!Number.isNaN(t)) {
+        min = Math.min(min, t);
+        max = Math.max(max, t);
+      }
+    }
+    return min <= max ? { min, max } : null;
+  }, [blame]);
+  const blameAgeStyle = (hunk: BlameHunk): React.CSSProperties => {
+    if (hunk.sha === ZERO_SHA) return { background: 'var(--bg-subtle)', borderLeft: '3px dashed var(--fg-muted)' };
+    if (!blameRange) return { background: 'var(--diff-hunk-bg)' };
+    const t = new Date(hunk.author.date).getTime();
+    const age = Number.isNaN(t) ? 0.5 : blameRange.max <= blameRange.min ? 0 : (blameRange.max - t) / (blameRange.max - blameRange.min);
+    return { background: `hsl(212, 60%, ${88 - age * 34}%)`, color: age > 0.55 ? '#0b1220' : undefined };
+  };
+  const blameActiveLine = useMemo(() => {
+    if (!activeBlameId || !blame) return null;
+    const hunk = blame.find((h) => blameBlockId(h) === activeBlameId);
+    return hunk ? hunk.startLine + hunk.lineCount - 1 : null;
+  }, [blame, activeBlameId]);
+  useEffect(() => {
+    if (blameActiveLine === null || !tableRef.current) return;
+    tableRef.current.querySelector<HTMLElement>(`tr[data-new-line="${blameActiveLine}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [blameActiveLine]);
+  const blameCell = (newNo: number | null) => {
+    if (!blame) return null;
+    const hunk = newNo === null ? undefined : blameByLine.get(newNo);
+    if (!hunk) return <td className="blame-cell empty" />;
+    const isFirst = newNo === hunk.startLine;
+    const id = blameBlockId(hunk);
+    const isZero = hunk.sha === ZERO_SHA;
+    return (
+      <td className={`blame-cell ${isFirst ? 'first' : ''} ${activeBlameId === id ? 'active' : ''}`} style={blameAgeStyle(hunk)}>
+        {isFirst ? (
+          <button type="button" className="blame-block" onClick={() => onBlameBlockClick?.(id)}>
+            {isZero ? <span className="blame-uncommitted">Not committed yet</span> : (
+              <>
+                <span className="blame-sha mono">{hunk.shortSha}</span>
+                <span className="blame-author truncate">{hunk.author.name}</span>
+              </>
+            )}
+          </button>
+        ) : null}
+      </td>
+    );
+  };
+  const blameCardRow = (newNo: number | null, colSpan: number) => {
+    if (newNo === null || newNo !== blameActiveLine || !renderBlameCard || !activeBlameId || !blame) return null;
+    const hunk = blame.find((h) => blameBlockId(h) === activeBlameId);
+    if (!hunk) return null;
+    return (
+      <tr className="blame-card-row" key={`blame-${newNo}`}>
+        <td colSpan={colSpan}>{renderBlameCard(hunk)}</td>
+      </tr>
+    );
+  };
 
   const newLines = useMemo(() => splitContent(diff.newContent), [diff.newContent]);
   const oldLines = useMemo(() => splitContent(diff.oldContent), [diff.oldContent]);
@@ -355,11 +535,46 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
 
   const noNewline = (line: DiffLine) => (line.noNewline ? <span className="no-newline"> ⏎ No newline at end of file</span> : null);
 
+  // Explain selected lines: a right-click over an active text selection (or, with no selection, the clicked row alone)
+  // offers "Explain N selected lines"/"Explain this line", scoped to the single hunk the clicked row belongs to.
+  const handleExplainContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!onExplainRange) return;
+      const table = tableRef.current;
+      if (!table) return;
+      const clickedRow = (e.target as HTMLElement).closest<HTMLElement>('tr[data-key]');
+      let rows: HTMLElement[] = [];
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        rows = Array.from(table.querySelectorAll<HTMLElement>('tr[data-key]')).filter((r) => range.intersectsNode(r));
+      }
+      if (!rows.length && clickedRow) rows = [clickedRow];
+      if (!rows.length) return;
+      const hunkIndex = Number(rows[0].dataset.key!.split(':')[0]);
+      const sameHunk = rows.filter((r) => Number(r.dataset.key!.split(':')[0]) === hunkIndex);
+      const lineNumbers = sameHunk.map((r) => (r.dataset.newLine !== undefined ? Number(r.dataset.newLine) : null)).filter((n): n is number => n !== null);
+      if (!lineNumbers.length) return;
+      const startLine = Math.min(...lineNumbers);
+      const endLine = Math.max(...lineNumbers);
+      e.preventDefault();
+      e.stopPropagation();
+      openContextMenu(e, [
+        {
+          label: lineNumbers.length > 1 ? `Explain ${lineNumbers.length} selected lines` : 'Explain this line',
+          onClick: () => onExplainRange(hunkIndex, startLine, endLine),
+        },
+      ]);
+    },
+    [onExplainRange],
+  );
+
   if (mode === 'split') {
-    const colSpan = selectable ? 6 : 4;
+    const colSpan = (selectable ? 6 : 4) + (blame ? 1 : 0);
     return (
-      <table className={`diff split ${wrap ? 'wrap' : 'nowrap'}`}>
+      <table ref={tableRef} className={`diff split ${wrap ? 'wrap' : 'nowrap'}`} onContextMenu={handleExplainContextMenu}>
         <colgroup>
+          {blame ? <col style={{ width: '14ch' }} /> : null}
           {selectable ? <col style={{ width: 22 }} /> : null}
           <col style={{ width: 50 }} />
           <col />
@@ -373,6 +588,7 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
               {hunkHeaderRow(v, colSpan)}
               {v.above.map((x) => (
                 <tr key={`a${x.newNo}`} className="context extra">
+                  {blameCell(x.newNo)}
                   {selectable ? <td className="sel" /> : null}
                   <td className="num">{x.oldNo}</td>
                   <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
@@ -385,8 +601,12 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
                 const leftType = p.left?.line.type ?? 'empty';
                 const rightType = p.right?.line.type ?? 'empty';
                 const rowClass = leftType === 'delete' && rightType === 'add' ? 'modified' : leftType === 'delete' ? 'delete' : rightType === 'add' ? 'add' : 'context';
+                const rightNo = p.right?.line.newLineNumber ?? null;
+                const pairMatches = (!!p.left && p.left.key === highlightKey) || (!!p.right && p.right.key === highlightKey);
                 return (
-                  <tr key={idx} className={`${rowClass} ${(p.left && selected.has(p.left.key) && p.left.line.type !== 'context') || (p.right && selected.has(p.right.key) && p.right.line.type !== 'context') ? 'selected-line' : ''}`}>
+                  <React.Fragment key={idx}>
+                  <tr className={`${rowClass} ${(p.left && selected.has(p.left.key) && p.left.line.type !== 'context') || (p.right && selected.has(p.right.key) && p.right.line.type !== 'context') ? 'selected-line' : ''} ${rightNo !== null && annotationsByLine.has(rightNo) ? 'annotated' : ''} ${pairMatches ? 'highlight-match' : ''}`} data-new-line={rightNo ?? undefined} data-key={p.left?.key ?? p.right?.key ?? undefined}>
+                    {blameCell(rightNo)}
                     {selCell(p.left)}
                     {p.left ? (
                       <>
@@ -405,7 +625,10 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
                     {selCell(p.right)}
                     {p.right ? (
                       <>
-                        <td className={`num ${p.right.line.type === 'add' ? 'add-num' : ''}`}>{p.right.line.newLineNumber}</td>
+                        <td className={`num ${p.right.line.type === 'add' ? 'add-num' : ''}`}>
+                          {p.right.line.newLineNumber}
+                          {annotationMarker(rightNo)}
+                        </td>
                         <td className={`code ${p.right.line.type === 'add' ? 'add-code' : ''}`}>
                           <span dangerouslySetInnerHTML={{ __html: renderCode(p.right.line, p.right.key) }} />
                           {noNewline(p.right.line)}
@@ -418,10 +641,14 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
                       </>
                     )}
                   </tr>
+                  {annotationRow(rightNo, colSpan)}
+                  {blameCardRow(rightNo, colSpan)}
+                  </React.Fragment>
                 );
               })}
               {v.below.map((x) => (
                 <tr key={`b${x.newNo}`} className="context extra">
+                  {blameCell(x.newNo)}
                   {selectable ? <td className="sel" /> : null}
                   <td className="num">{x.oldNo}</td>
                   <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
@@ -447,10 +674,11 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     );
   }
 
-  const colSpan = selectable ? 5 : 4;
+  const colSpan = (selectable ? 5 : 4) + (blame ? 1 : 0);
   return (
-    <table className={`diff unified ${wrap ? 'wrap' : 'nowrap'}`}>
+    <table ref={tableRef} className={`diff unified ${wrap ? 'wrap' : 'nowrap'}`} onContextMenu={handleExplainContextMenu}>
       <colgroup>
+        {blame ? <col style={{ width: '14ch' }} /> : null}
         {selectable ? <col style={{ width: 22 }} /> : null}
         <col style={{ width: 50 }} />
         <col style={{ width: 50 }} />
@@ -463,6 +691,7 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
             {hunkHeaderRow(v, colSpan)}
             {v.above.map((x) => (
               <tr key={`a${x.newNo}`} className="context extra">
+                {blameCell(x.newNo)}
                 {selectable ? <td className="sel" /> : null}
                 <td className="num">{x.oldNo}</td>
                 <td className="num">{x.newNo}</td>
@@ -474,20 +703,29 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
               const key = `${v.hunkIndex}:${li}`;
               const isChange = line.type !== 'context';
               return (
-                <tr key={li} className={`${line.type} ${isChange && selected.has(key) ? 'selected-line' : ''}`}>
+                <React.Fragment key={li}>
+                <tr className={`${line.type} ${isChange && selected.has(key) ? 'selected-line' : ''} ${line.newLineNumber !== null && annotationsByLine.has(line.newLineNumber) ? 'annotated' : ''} ${key === highlightKey ? 'highlight-match' : ''}`} data-new-line={line.newLineNumber ?? undefined} data-key={key}>
+                  {blameCell(line.newLineNumber)}
                   {selCell(isChange ? { line, key } : null)}
                   <td className="num">{line.oldLineNumber ?? ''}</td>
-                  <td className="num">{line.newLineNumber ?? ''}</td>
+                  <td className="num">
+                    {line.newLineNumber ?? ''}
+                    {annotationMarker(line.newLineNumber)}
+                  </td>
                   <td className="marker">{line.type === 'add' ? '+' : line.type === 'delete' ? '−' : ''}</td>
                   <td className="code">
                     <span dangerouslySetInnerHTML={{ __html: renderCode(line, key) }} />
                     {noNewline(line)}
                   </td>
                 </tr>
+                {annotationRow(line.newLineNumber, colSpan)}
+                {blameCardRow(line.newLineNumber, colSpan)}
+                </React.Fragment>
               );
             })}
             {v.below.map((x) => (
               <tr key={`b${x.newNo}`} className="context extra">
+                {blameCell(x.newNo)}
                 {selectable ? <td className="sel" /> : null}
                 <td className="num">{x.oldNo}</td>
                 <td className="num">{x.newNo}</td>

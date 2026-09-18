@@ -1,9 +1,20 @@
-import React, { useEffect, useState } from 'react';
-import type { CheckRun, PullRequest } from '@shared/types';
-import { errorMessage, invoke } from '../../api';
+import React, { useEffect, useRef, useState } from 'react';
+import type { CheckRun, PrDraft, PullRequest } from '@shared/types';
+import { appendDraftFooter, PR_DRAFT_FOOTER } from '@shared/util';
+import { errorInfo, errorMessage, invoke } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, useAppStore } from '../../state/store';
 import { Badge, Button, Callout, Checkbox, Dialog, Icon, RelativeTime, Spinner, TextField } from '../ui';
+import { NOTICE_KEY } from './ReviewDialogs';
+
+/** Reads the persisted "seen" flag for the shared AI first-use disclosure notice (see ReviewDialogs.tsx's NOTICE_KEY). */
+function noticeAlreadySeen(): boolean {
+  try {
+    return localStorage.getItem(NOTICE_KEY) === '1';
+  } catch {
+    return true;
+  }
+}
 
 export function SignInDialog(): React.JSX.Element {
   const login = useAppStore((s) => s.login);
@@ -11,7 +22,10 @@ export function SignInDialog(): React.JSX.Element {
   const account = tools?.ghAccount ?? null;
   const ghMissing = tools ? !tools.gh.installed : false;
   useEffect(() => {
-    if (account) closeDialog();
+    // Auto-close once signed in — but not while a scope refresh (grantNotificationsScope) is
+    // deliberately reusing this dialog for an already-signed-in account.
+    if (account && !login.inProgress) closeDialog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
   return (
     <Dialog
@@ -97,12 +111,15 @@ export function ForcePushDialog(): React.JSX.Element {
   );
 }
 
-export function CreatePullRequestDialog(): React.JSX.Element {
+export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
+  const settings = useAppStore((s) => s.settings);
+  const aiEnabled = settings?.ai.provider !== 'disabled';
   const status = useAppStore((s) => s.status);
   const branches = useAppStore((s) => s.branches);
   const defaultBranch = useAppStore((s) => s.defaultBranch);
   const commits = useAppStore((s) => s.history.commits);
+  const draftProgress = useAppStore((s) => s.ai['<pull request>']);
   const head = status?.branch.name ?? '';
   const [base, setBase] = useState(defaultBranch ?? 'main');
   const [title, setTitle] = useState(() => commits[0]?.summary ?? head.replace(/[-_/]+/g, ' '));
@@ -111,6 +128,20 @@ export function CreatePullRequestDialog(): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<{ nameWithOwner: string; parent: string | null } | null>(null);
+  // ---- AI draft ----
+  const [drafting, setDrafting] = useState(false);
+  const [pendingDraft, setPendingDraft] = useState<PrDraft | null>(null);
+  const [aiOrigin, setAiOrigin] = useState(false);
+  // True only once the user has actually typed in the field (never set by the template/commit
+  // auto-fill or by applying a draft), so drafting into an untouched, auto-filled dialog fills it
+  // directly instead of always triggering the Replace/Keep/Append prompt.
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [bodyTouched, setBodyTouched] = useState(false);
+  const [restored, setRestored] = useState(false);
+  const [noticeSeen, setNoticeSeen] = useState(noticeAlreadySeen);
+  const [aheadCount, setAheadCount] = useState<number | null>(null);
+  const autoDraftTriggered = useRef(false);
+
   useEffect(() => {
     if (!repo) return;
     void invoke('gh.pr.template', repo.path).then((t) => t && setBody(t)).catch(() => undefined);
@@ -120,12 +151,79 @@ export function CreatePullRequestDialog(): React.JSX.Element {
   const remoteBases = branches.filter((b) => b.kind === 'remote').map((b) => b.name.slice(b.name.indexOf('/') + 1)).filter((n) => n !== head);
   const bases = [...new Set([defaultBranch ?? 'main', ...remoteBases])];
 
+  const localBaseExists = branches.some((b) => b.kind === 'local' && b.name === base);
+  const remoteBaseBranch = branches.find((b) => b.kind === 'remote' && b.name === `origin/${base}`);
+  const baseMissingLocally = !localBaseExists && !remoteBaseBranch;
+  const baseRefForDiff = localBaseExists ? base : (remoteBaseBranch?.name ?? null);
+
+  useEffect(() => {
+    setAheadCount(null);
+    if (!repo || !baseRefForDiff) return;
+    let cancelled = false;
+    void invoke('repo.compare', repo.path, baseRefForDiff, head)
+      .then((r) => {
+        if (!cancelled) setAheadCount(r.ahead.length);
+      })
+      .catch(() => {
+        if (!cancelled) setAheadCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, baseRefForDiff, head]);
+
+  const draftDisabledReason = baseMissingLocally ? 'The base branch must be fetched first; GitGood never fetches automatically.' : aheadCount === null ? 'Checking commits ahead of the base branch…' : aheadCount === 0 ? 'There are no commits ahead of the base branch to draft from.' : null;
+  const draftReady = !draftDisabledReason && !!baseRefForDiff;
+
+  const applyDraft = (d: PrDraft, mode: 'replace' | 'append') => {
+    if (mode === 'append') {
+      setBody((b) => (b.trim() ? `${b.trim()}\n\n${d.body}` : d.body));
+      setTitle((t) => (t.trim() ? t : d.title));
+    } else {
+      setTitle(d.title);
+      setBody(d.body);
+    }
+    setAiOrigin(true);
+    setRestored(d.restored);
+  };
+
+  const runDraft = async () => {
+    if (!repo || !baseRefForDiff || drafting) return;
+    try {
+      localStorage.setItem(NOTICE_KEY, '1');
+    } catch {
+      /* private mode */
+    }
+    setNoticeSeen(true);
+    setDrafting(true);
+    setError(null);
+    try {
+      const result = await invoke('ai.prDraft', repo.path, { base: baseRefForDiff, head, existingTitle: title, existingBody: body });
+      if (titleTouched || bodyTouched) setPendingDraft(result);
+      else applyDraft(result, 'replace');
+    } catch (err) {
+      if (errorInfo(err).code !== 'cancelled') setError(errorMessage(err));
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!autoDraft || autoDraftTriggered.current || !aiEnabled || drafting) return;
+    if (aheadCount === null) return; // still resolving eligibility
+    autoDraftTriggered.current = true;
+    if (draftDisabledReason) actions.showToast({ kind: 'info', title: 'Could not draft with AI', message: draftDisabledReason });
+    else void runDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoDraft, aiEnabled, aheadCount, draftDisabledReason]);
+
   const create = async (web: boolean) => {
     if (!repo) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await invoke('gh.pr.create', repo.path, { title: title.trim(), body, base, head, draft, web });
+      const bodyToSend = appendDraftFooter(body, aiOrigin && !pendingDraft && settings?.ai.reviewPostFooter ? PR_DRAFT_FOOTER : null);
+      const result = await invoke('gh.pr.create', repo.path, { title: title.trim(), body: bodyToSend, base, head, draft, web });
       closeDialog();
       if (result.url) actions.showToast({ kind: 'success', title: `Pull request created`, message: result.url, action: { label: 'Open', onClick: () => void actions.openExternal(result.url!) } }, 10000);
       void actions.loadCurrentPullRequest(true);
@@ -137,6 +235,8 @@ export function CreatePullRequestDialog(): React.JSX.Element {
     }
   };
 
+  const fieldsLocked = drafting || busy;
+
   return (
     <Dialog
       title="Create a pull request"
@@ -145,16 +245,21 @@ export function CreatePullRequestDialog(): React.JSX.Element {
       width="wide"
       footer={
         <>
-          <Button onClick={closeDialog}>Cancel</Button>
-          <Button icon="external" onClick={() => void create(true)} disabled={busy}>Create on GitHub.com</Button>
-          <Button variant="primary" onClick={() => void create(false)} disabled={!title.trim() || busy} loading={busy}>{draft ? 'Create draft pull request' : 'Create pull request'}</Button>
+          {aiEnabled ? (
+            <span className="left">
+              <Button variant="ghost" icon="sparkle" className="sparkle" title="Review this branch against the base branch with AI before opening the pull request" onClick={() => actions.reviewBranch(base)}>Review branch with AI</Button>
+            </span>
+          ) : null}
+          {drafting ? <Button onClick={() => void invoke('ai.cancel')}>Cancel draft</Button> : <Button onClick={closeDialog}>Cancel</Button>}
+          <Button icon="external" onClick={() => void create(true)} disabled={fieldsLocked}>Create on GitHub.com</Button>
+          <Button variant="primary" onClick={() => void create(false)} disabled={!title.trim() || fieldsLocked} loading={busy}>{draft ? 'Create draft pull request' : 'Create pull request'}</Button>
         </>
       }
     >
       <div className="form-grid">
         <div className="field">
           <label>Base branch</label>
-          <select value={base} onChange={(e) => setBase(e.target.value)}>
+          <select value={base} onChange={(e) => setBase(e.target.value)} disabled={fieldsLocked}>
             {bases.map((b) => (
               <option key={b} value={b}>{b}</option>
             ))}
@@ -166,10 +271,55 @@ export function CreatePullRequestDialog(): React.JSX.Element {
           <input value={head} readOnly />
         </div>
       </div>
-      <TextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+      <div className="field-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <TextField label="Title" value={title} onChange={(e) => { setTitle(e.target.value); setTitleTouched(true); setAiOrigin(false); }} autoFocus disabled={fieldsLocked} />
+        </div>
+        {aiEnabled ? (
+          <Button variant="ghost" icon="sparkle" className="sparkle" title={draftDisabledReason ?? 'Draft the title and body from the commits and diff ahead of the base branch'} disabled={!draftReady || fieldsLocked} loading={drafting} onClick={() => void runDraft()}>
+            Draft with AI
+          </Button>
+        ) : null}
+      </div>
+      {aiEnabled && !noticeSeen ? (
+        <Callout tone="info">
+          Drafting sends the commit messages and diff of this branch to {settings?.ai.provider === 'claude-cli' ? 'Claude Code' : 'the Anthropic API'}. Do not draft from changes you are not allowed to share with that service.
+          <div style={{ marginTop: 6 }}>
+            <Button
+              size="sm"
+              onClick={() => {
+                try {
+                  localStorage.setItem(NOTICE_KEY, '1');
+                } catch {
+                  /* private mode */
+                }
+                setNoticeSeen(true);
+              }}
+            >
+              Got it
+            </Button>
+          </div>
+        </Callout>
+      ) : null}
+      {drafting ? (
+        <p>
+          <Spinner /> {draftProgress?.message ?? 'Drafting…'}
+        </p>
+      ) : null}
+      {pendingDraft ? (
+        <Callout tone="info">
+          AI drafted a new title and body. Your current title/body has content — replace it, keep it, or append the draft?
+          <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
+            <Button size="sm" variant="primary" onClick={() => { applyDraft(pendingDraft, 'replace'); setPendingDraft(null); }}>Replace</Button>
+            <Button size="sm" onClick={() => setPendingDraft(null)}>Keep mine</Button>
+            <Button size="sm" onClick={() => { applyDraft(pendingDraft, 'append'); setPendingDraft(null); }}>Append</Button>
+          </div>
+        </Callout>
+      ) : null}
+      {aiOrigin && !pendingDraft ? <Callout tone="info">{restored ? 'Template structure restored. AI drafted, review before creating.' : 'AI drafted, review before creating.'}</Callout> : null}
       <div className="field">
         <label>Description</label>
-        <textarea rows={10} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Describe your changes (Markdown supported)" />
+        <textarea rows={10} value={body} onChange={(e) => { setBody(e.target.value); setBodyTouched(true); setAiOrigin(false); }} placeholder="Describe your changes (Markdown supported)" disabled={fieldsLocked} />
       </div>
       <Checkbox checked={draft} onChange={setDraft} label="Create as draft" />
       {error ? <Callout tone="danger">{error}</Callout> : null}
@@ -192,6 +342,7 @@ function bucketIcon(bucket: CheckRun['bucket']): { icon: 'check-circle' | 'x-cir
 
 export function PullRequestDetailsDialog({ pr: initial }: { pr: PullRequest }): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
+  const aiEnabled = useAppStore((s) => s.settings?.ai.provider !== 'disabled');
   const [pr, setPr] = useState(initial);
   const [checks, setChecks] = useState<CheckRun[] | null>(null);
   const [method, setMethod] = useState<'merge' | 'squash' | 'rebase'>('merge');
@@ -248,6 +399,7 @@ export function PullRequestDetailsDialog({ pr: initial }: { pr: PullRequest }): 
           <span className="left">
             <Button variant="ghost" icon="external" onClick={() => void actions.openExternal(pr.url)}>Open on GitHub</Button>
           </span>
+          {aiEnabled && pr.state === 'OPEN' ? <Button icon="sparkle" className="sparkle" onClick={() => actions.reviewPullRequest(pr)}>Review with AI</Button> : null}
           <Button onClick={() => void run('checkout', () => actions.checkoutPullRequest(pr), true)} loading={busy === 'checkout'} icon="branch">Checkout</Button>
           {pr.state === 'OPEN' ? (
             <>

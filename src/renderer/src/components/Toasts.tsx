@@ -1,12 +1,25 @@
 import React from 'react';
+import * as actions from '../state/actions';
 import { dismissToast, useAppStore } from '../state/store';
-import { Button, Icon } from './ui';
+import { Button, Icon, Spinner } from './ui';
 
 export function Toasts(): React.JSX.Element | null {
   const toasts = useAppStore((s) => s.toasts);
-  if (!toasts.length) return null;
+  const review = useAppStore((s) => s.review);
+  if (!toasts.length && !review.running) return null;
   return (
     <div className="toasts">
+      {review.running ? (
+        <div className="toast info review-progress-toast" role="status">
+          <Spinner />
+          <div className="toast-body">
+            <strong>Reviewing with AI{review.progress && review.progress.total ? ` · ${Math.min(review.progress.index, review.progress.total)}/${review.progress.total}` : ''}</strong>
+            <span>{review.progress?.message ?? 'Preparing…'}</span>
+          </div>
+          {!review.open ? <Button size="sm" onClick={() => actions.patchReviewOpen()}>Show</Button> : null}
+          <Button size="sm" variant="ghost" onClick={() => void actions.cancelReview()}>Cancel</Button>
+        </div>
+      ) : null}
       {toasts.map((t) => (
         <div key={t.id} className={`toast ${t.kind}`} role="status">
           <Icon className="toast-icon" name={t.kind === 'success' ? 'check-circle' : t.kind === 'error' ? 'x-circle' : t.kind === 'warning' ? 'alert' : 'info'} />

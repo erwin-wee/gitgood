@@ -304,6 +304,7 @@ export function AddRepoDialog(): React.JSX.Element {
 export function RemoveRepoDialog({ repo }: { repo: RepositoryInfo }): React.JSX.Element {
   const [trash, setTrash] = useState(false);
   const [busy, setBusy] = useState(false);
+  const worktrees = useAppStore((s) => s.repos.filter((r) => r.worktreeOf === repo.id));
   return (
     <Dialog
       title="Remove repository"
@@ -320,6 +321,11 @@ export function RemoveRepoDialog({ repo }: { repo: RepositoryInfo }): React.JSX.
         Remove <strong>{repo.alias ?? repo.name}</strong> from GitGood? The repository stays on disk unless you also move it to the {window.gitgoodBridge.platform === 'win32' ? 'Recycle Bin' : 'Trash'}.
       </p>
       <p className="mono muted" style={{ fontSize: 12 }}>{repo.path}</p>
+      {worktrees.length ? (
+        <Callout tone="warning">
+          This repository has {worktrees.length} worktree{worktrees.length === 1 ? '' : 's'} in the list ({worktrees.map((w) => w.alias ?? w.name).join(', ')}). They will be removed from the list too; their directories are left untouched.
+        </Callout>
+      ) : null}
       <Checkbox checked={trash} onChange={setTrash} label={`Also move this repository to the ${window.gitgoodBridge.platform === 'win32' ? 'Recycle Bin' : 'Trash'}`} />
     </Dialog>
   );

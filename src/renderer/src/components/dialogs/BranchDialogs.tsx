@@ -3,16 +3,17 @@ import type { Branch, Commit } from '@shared/types';
 import { compareStrings, isValidBranchName, sanitizeBranchName } from '@shared/util';
 import { errorMessage, invoke } from '../../api';
 import * as actions from '../../state/actions';
-import { closeDialog, useAppStore } from '../../state/store';
+import { closeDialog, openDialog, useAppStore } from '../../state/store';
 import { Button, Callout, Checkbox, Dialog, FilterInput, Icon, RelativeTime, Spinner, TextField, useFilter } from '../ui';
 
 const branchKeys = (b: Branch) => [b.name, b.lastCommitSubject];
 
-export function NewBranchDialog({ startPoint, startPointLabel }: { startPoint?: string | null; startPointLabel?: string }): React.JSX.Element {
+export function NewBranchDialog({ startPoint, startPointLabel, initialName }: { startPoint?: string | null; startPointLabel?: string; initialName?: string }): React.JSX.Element {
   const status = useAppStore((s) => s.status);
   const defaultBranch = useAppStore((s) => s.defaultBranch);
   const branches = useAppStore((s) => s.branches);
-  const [name, setName] = useState('');
+  const repo = useAppStore((s) => s.currentRepo);
+  const [name, setName] = useState(initialName ?? '');
   const [base, setBase] = useState<'current' | 'default' | 'commit'>(startPoint ? 'commit' : 'current');
   const [checkout, setCheckout] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -53,6 +54,11 @@ export function NewBranchDialog({ startPoint, startPointLabel }: { startPoint?: 
           error={exists ? 'A branch with this name already exists.' : name && !valid && sanitized ? 'That name is not a valid branch name.' : undefined}
         />
       </form>
+      {repo?.github ? (
+        <p className="muted" style={{ marginTop: -4 }}>
+          <Button variant="link" onClick={() => openDialog({ kind: 'issues' })}>Pick an issue…</Button> to name this branch after it.
+        </p>
+      ) : null}
       {startPoint ? (
         <Callout tone="info" icon="commit">
           Based on commit <span className="mono">{startPointLabel ?? startPoint.slice(0, 7)}</span>
@@ -142,7 +148,7 @@ export function DeleteBranchDialog({ branch }: { branch: Branch }): React.JSX.El
 // Branch picker (merge / rebase / cherry-pick target)
 // ---------------------------------------------------------------------------
 
-function BranchPicker({ branches, selected, onSelect, exclude }: { branches: Branch[]; selected: Branch | null; onSelect: (b: Branch) => void; exclude?: (b: Branch) => boolean }): React.JSX.Element {
+export function BranchPicker({ branches, selected, onSelect, exclude }: { branches: Branch[]; selected: Branch | null; onSelect: (b: Branch) => void; exclude?: (b: Branch) => boolean }): React.JSX.Element {
   const [query, setQuery] = useState('');
   const list = useMemo(() => branches.filter((b) => !exclude?.(b)).sort((a, b) => (a.kind === b.kind ? new Date(b.lastCommitDate).getTime() - new Date(a.lastCommitDate).getTime() : a.kind === 'local' ? -1 : 1)), [branches, exclude]);
   const filtered = useFilter(list, query, branchKeys);

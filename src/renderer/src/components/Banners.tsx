@@ -1,7 +1,58 @@
 import React, { useEffect, useState } from 'react';
+import type { UpdateState } from '@shared/types';
+import { formatRelativeTime } from '@shared/util';
 import * as actions from '../state/actions';
 import { openDialog, store, useAppStore } from '../state/store';
 import { Button, Icon, Spinner } from './ui';
+
+function lfsInstallHint(platform: string): string {
+  if (platform === 'darwin') return 'brew install git-lfs';
+  if (platform === 'win32') return 'winget install GitHub.GitLFS';
+  return 'sudo apt install git-lfs  (or see git-lfs.com for your distribution)';
+}
+
+/** The update-available banner, at the lowest priority (rendered last, after every repository-specific banner). Shown even with no repository open (e.g. the Welcome screen). */
+function updateBanner(updateState: UpdateState): React.JSX.Element | null {
+  if (updateState.status !== 'available' || updateState.dismissed) return null;
+  return (
+    <div key="update" className="banner info">
+      <Icon name="download" />
+      <span className="banner-text">
+        <strong>GitGood {updateState.version} is available.</strong>
+        {updateState.releaseDate ? ` Released ${formatRelativeTime(updateState.releaseDate)}.` : ' A new version has been published.'}
+      </span>
+      <span className="banner-actions">
+        <Button size="sm" variant="primary" icon="download" onClick={() => void actions.downloadUpdate()}>Download</Button>
+        <Button size="sm" onClick={() => actions.openUpdateNotes()}>Release notes</Button>
+        <Button size="sm" variant="ghost" onClick={() => void actions.dismissUpdate(updateState.version)}>Later</Button>
+      </span>
+    </div>
+  );
+}
+
+/** Post-resolution check failure banner: shows the command and a "Show output" toggle, plus a single "Ask AI to fix" retry (hidden after it has already been used once for this file). */
+function CheckFailedBanner(): React.JSX.Element | null {
+  const banner = useAppStore((s) => s.checkBanner);
+  const aiBusy = useAppStore((s) => s.aiBusy);
+  const [expanded, setExpanded] = useState(false);
+  if (!banner) return null;
+  const { path, result, retried } = banner;
+  return (
+    <div key="check-failed" className="banner danger">
+      <Icon name="alert" />
+      <span className="banner-text">
+        <strong>Post-resolution check failed for {path}</strong>
+        {result.timedOut ? 'The check timed out.' : `Exit code ${result.exitCode ?? 'unknown'}.`} {result.fromRepo ? 'Command came from this repository.' : ''} <code className="mono">{result.command}</code>
+        {expanded ? <pre className="details-block">{result.outputTail}</pre> : null}
+      </span>
+      <span className="banner-actions">
+        <Button size="sm" onClick={() => setExpanded((v) => !v)}>{expanded ? 'Hide output' : 'Show output'}</Button>
+        {!retried ? <Button size="sm" variant="accent" icon="sparkle" loading={aiBusy} onClick={() => void actions.retryResolutionWithCheckOutput(path)}>Ask AI to fix</Button> : null}
+        <Button size="sm" variant="ghost" iconOnly icon="x" onClick={() => actions.dismissCheckBanner()} />
+      </span>
+    </div>
+  );
+}
 
 export function Banners(): React.JSX.Element | null {
   const status = useAppStore((s) => s.status);
@@ -9,6 +60,11 @@ export function Banners(): React.JSX.Element | null {
   const tools = useAppStore((s) => s.tools);
   const merge = useAppStore((s) => s.lastSuccessfulMerge);
   const aiBusy = useAppStore((s) => s.aiBusy);
+  const submodules = useAppStore((s) => s.submodules);
+  const lfsStatus = useAppStore((s) => s.lfsStatus);
+  const submoduleBannerDismissed = useAppStore((s) => s.submoduleBannerDismissed);
+  const updateState = useAppStore((s) => s.updateState);
+  const checkBanner = useAppStore((s) => s.checkBanner);
   const [dismissedMerge, setDismissedMerge] = useState<number | null>(null);
 
   useEffect(() => {
@@ -17,7 +73,8 @@ export function Banners(): React.JSX.Element | null {
     return () => clearTimeout(t);
   }, [merge]);
 
-  if (!repo || !status) return null;
+  const update = updateBanner(updateState);
+  if (!repo || !status) return update;
   const banners: React.ReactNode[] = [];
   const op = status.operation;
 
@@ -42,6 +99,8 @@ export function Banners(): React.JSX.Element | null {
       </div>,
     );
   }
+
+  if (checkBanner) banners.push(<CheckFailedBanner key="check-failed" />);
 
   if (merge && dismissedMerge !== merge.at) {
     banners.push(
@@ -85,6 +144,34 @@ export function Banners(): React.JSX.Element | null {
     );
   }
 
+  const uninitializedSubmodules = submodules.filter((s) => s.state === 'uninitialized');
+  if (uninitializedSubmodules.length && !submoduleBannerDismissed) {
+    banners.push(
+      <div key="submodules" className="banner info">
+        <Icon name="folder" />
+        <span className="banner-text">
+          This repository has {uninitializedSubmodules.length} uninitialized submodule{uninitializedSubmodules.length === 1 ? '' : 's'}; {uninitializedSubmodules.length === 1 ? 'its directory is' : 'their directories are'} empty until initialized.
+        </span>
+        <span className="banner-actions">
+          <Button size="sm" variant="primary" onClick={() => void actions.initializeAndUpdateAllSubmodules()}>Initialize and update all</Button>
+          <Button size="sm" variant="ghost" iconOnly icon="x" onClick={() => store.set({ submoduleBannerDismissed: true })} />
+        </span>
+      </div>,
+    );
+  }
+
+  if (lfsStatus && lfsStatus.usedByRepo && !lfsStatus.installed) {
+    banners.push(
+      <div key="lfs" className="banner danger">
+        <Icon name="alert" />
+        <span className="banner-text">
+          <strong>This repository uses Git LFS, which is not installed.</strong>
+          Large files show as pointers only until it is installed. Install with <code className="mono">{lfsInstallHint(window.gitgoodBridge.platform)}</code>, then reopen this repository.
+        </span>
+      </div>,
+    );
+  }
+
   if (repo.github && tools && tools.gh.installed && !tools.ghAccount) {
     banners.push(
       <div key="signin" className="banner info">
@@ -97,5 +184,6 @@ export function Banners(): React.JSX.Element | null {
     );
   }
 
+  if (update) banners.push(update);
   return banners.length ? <>{banners}</> : null;
 }

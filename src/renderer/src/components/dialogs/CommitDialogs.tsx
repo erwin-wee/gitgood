@@ -1,8 +1,107 @@
 import React, { useEffect, useState } from 'react';
-import type { Commit, GitErrorInfo } from '@shared/types';
+import type { Commit, ErrorFix, GitErrorInfo } from '@shared/types';
 import * as actions from '../../state/actions';
-import { closeDialog, useAppStore } from '../../state/store';
-import { Button, Callout, Checkbox, Dialog, TextField } from '../ui';
+import { closeDialog, openDialog, useAppStore } from '../../state/store';
+import { Button, Callout, Checkbox, Dialog, Spinner, TextField } from '../ui';
+
+/** Codes with their own dedicated recovery flow elsewhere; the "Explain with AI" row never shows for them. */
+const DEDICATED_FLOW_CODES = new Set<GitErrorInfo['code']>(['conflicts', 'gh-not-authenticated', 'ai-not-configured', 'cancelled']);
+
+const RISK_LABEL: Record<string, string> = { safe: 'Safe', 'changes-history': 'Rewrites history', 'discards-work': 'Discards work', 'touches-remote': 'Touches the remote' };
+
+function looksOffline(message: string): boolean {
+  return /network|offline|could not reach|connection|ENOTFOUND|ECONNREFUSED/i.test(message);
+}
+
+/** One suggested fix inside the error dialog's "Explain with AI" section. */
+function ErrorFixRow({ fix, retry }: { fix: ErrorFix; retry?: () => void }): React.JSX.Element {
+  const repoPath = useAppStore((s) => s.currentRepo?.path ?? null);
+  return (
+    <div className="file-preview-list" style={{ marginBottom: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+        <strong style={{ fontSize: 12 }}>{fix.label}</strong>
+        <span className="muted" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{RISK_LABEL[fix.risk] ?? fix.risk}</span>
+      </div>
+      <p className="muted" style={{ fontSize: 12, margin: '2px 0 6px' }}>{fix.detail}</p>
+      {fix.action ? (
+        <Button size="sm" onClick={() => void actions.applyErrorFix(fix, retry)}>{fix.label}</Button>
+      ) : (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <span className="mono selectable" style={{ fontSize: 12 }}>{fix.command}</span>
+          <Button size="sm" variant="ghost" icon="copy" onClick={() => void actions.copyToClipboard(fix.command ?? '', 'Command copied')}>Copy</Button>
+          <Button size="sm" variant="ghost" icon="terminal" onClick={() => void actions.openInShellAt(repoPath ?? '')}>Run in terminal</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The collapsible "Explain with AI" section inside ErrorDialog. */
+function ErrorExplainSection({ info, retryable, retry }: { info: GitErrorInfo; retryable: boolean; retry?: () => void }): React.JSX.Element | null {
+  const settings = useAppStore((s) => s.settings);
+  const explain = useAppStore((s) => s.errorExplain);
+  const eligible = settings?.ai.provider !== 'disabled' && !DEDICATED_FLOW_CODES.has(info.code);
+  const automatic = eligible && settings?.ai.explainErrorsAutomatically === true && info.code === 'unknown';
+  const [expanded, setExpanded] = useState(automatic);
+
+  useEffect(() => {
+    if (!eligible) return;
+    actions.resetErrorExplanation();
+    if (automatic) void actions.requestErrorExplanation(info, retryable);
+    // Only ever runs once per mount (a fresh error dialog instance): automatic mode must never retry on its own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!eligible) return null;
+
+  const load = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !explain.result && !explain.loading && !explain.error) void actions.requestErrorExplanation(info, retryable);
+  };
+
+  return (
+    <div className="error-explain" style={{ marginTop: 8 }}>
+      <Button variant="ghost" size="sm" icon="sparkle" onClick={load}>{expanded ? 'Hide AI explanation' : 'Explain with AI'}</Button>
+      {expanded ? (
+        <div style={{ marginTop: 8 }}>
+          {explain.loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Spinner /> <span className="muted" style={{ fontSize: 12 }}>Asking AI what happened…</span>
+              <Button size="sm" variant="ghost" onClick={() => actions.cancelErrorExplanation()}>Cancel</Button>
+            </div>
+          ) : explain.error ? (
+            <Callout tone="warning">
+              {looksOffline(explain.error) ? 'GitGood appears to be offline.' : `Could not get an explanation: ${explain.error}`}
+              <div style={{ marginTop: 6 }}>
+                <Button size="sm" onClick={() => void actions.requestErrorExplanation(info, retryable)}>Retry</Button>
+              </div>
+            </Callout>
+          ) : explain.result ? (
+            <>
+              <p className="selectable" style={{ marginTop: 0 }}>{explain.result.whatHappened}</p>
+              {explain.result.likelyCause ? <p className="muted selectable" style={{ fontSize: 12 }}>{explain.result.likelyCause}</p> : null}
+              {explain.result.fixes.map((fix, i) => (
+                <ErrorFixRow key={i} fix={fix} retry={retry} />
+              ))}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                {explain.feedbackGiven ? (
+                  <span className="muted" style={{ fontSize: 11 }}>Thanks for the feedback.</span>
+                ) : (
+                  <>
+                    <span className="muted" style={{ fontSize: 11 }}>Was this helpful?</span>
+                    <Button size="sm" variant="ghost" onClick={() => actions.recordErrorExplanationFeedback(true)}>Yes</Button>
+                    <Button size="sm" variant="ghost" onClick={() => actions.recordErrorExplanationFeedback(false)}>No</Button>
+                  </>
+                )}
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function DiscardDialog({ paths, all }: { paths: string[]; all: boolean }): React.JSX.Element {
   const settings = useAppStore((s) => s.settings);
@@ -126,6 +225,63 @@ export function ErrorDialog({ title, error, retry }: { title: string; error: Git
     >
       <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} className="selectable">{message}</p>
       {hint ? <Callout tone="info">{hint}</Callout> : null}
+      {showDetails && details ? <pre className="details-block">{details}</pre> : null}
+      {info ? <ErrorExplainSection info={info} retryable={!!retry} retry={retry} /> : null}
+    </Dialog>
+  );
+}
+
+export function SigningFailedDialog({ error, onRetry, onUnsigned }: { error: GitErrorInfo; onRetry: () => void; onUnsigned: () => void }): React.JSX.Element {
+  const [showDetails, setShowDetails] = useState(false);
+  const details = [error.command ? `$ ${error.command}` : '', error.stderr, error.stdout].filter(Boolean).join('\n');
+  const keyMissing = error.code === 'signing-key-missing';
+  return (
+    <Dialog
+      title="Commit could not be signed"
+      icon="lock"
+      onClose={closeDialog}
+      footer={
+        <>
+          {details ? (
+            <span className="left">
+              <Button variant="ghost" size="sm" onClick={() => setShowDetails((v) => !v)}>{showDetails ? 'Hide details' : 'Show details'}</Button>
+            </span>
+          ) : null}
+          <Button
+            variant="ghost"
+            onClick={() => {
+              closeDialog();
+              openDialog({ kind: 'settings', tab: 'git' });
+            }}
+          >
+            Open signing settings
+          </Button>
+          <Button
+            onClick={() => {
+              closeDialog();
+              onUnsigned();
+            }}
+          >
+            Commit unsigned this time
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              closeDialog();
+              onRetry();
+            }}
+          >
+            Retry
+          </Button>
+        </>
+      }
+    >
+      <p className="selectable">{error.message}</p>
+      <Callout tone="info">
+        {keyMissing
+          ? 'The configured signing key could not be found. You can commit unsigned this time, or fix the key from signing settings.'
+          : 'Signing most likely failed because a passphrase is required and no agent has it cached. GitGood cannot show terminal prompts, so a graphical pinentry or a running agent with the passphrase already unlocked is needed.'}
+      </Callout>
       {showDetails && details ? <pre className="details-block">{details}</pre> : null}
     </Dialog>
   );
