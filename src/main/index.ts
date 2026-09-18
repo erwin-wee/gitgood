@@ -24,6 +24,7 @@ import { registerIpc, sendEvent, type AppContext } from './ipc';
 import { WatchedFolderScanner } from './repo/watched-folders';
 import { initLogger, log } from './logger';
 import { buildMenu } from './menu';
+import { parseProtocolUrl, protocolUrlFromArgv } from './protocol';
 import { RepositoryManager } from './repo/manager';
 import { Store } from './store';
 import { ToolLocator } from './tools';
@@ -50,31 +51,8 @@ if (process.platform === 'win32') app.setName('GitGood');
 // Test hook: isolate user data (settings, repository list) for automated runs.
 if (process.env.GITGOOD_USER_DATA) app.setPath('userData', process.env.GITGOOD_USER_DATA);
 
-/**
- * Parses GitHub's "Open with GitHub Desktop" links (x-github-client://openRepo/<url>?branch=..)
- * and our own gitgood:// equivalent.
- */
-export function parseProtocolUrl(raw: string): { url: string; branch: string | null; filepath: string | null } | null {
-  const m = /^(?:x-github-client|github-windows|github-mac|gitgood):\/\/openRepo\/(.+)$/i.exec(raw.trim());
-  if (!m) return null;
-  try {
-    const target = new URL(m[1]);
-    const branch = target.searchParams.get('branch');
-    const filepath = target.searchParams.get('filepath');
-    target.search = '';
-    target.hash = '';
-    return { url: target.toString().replace(/\/$/, ''), branch, filepath };
-  } catch {
-    return null;
-  }
-}
-
 const PROTOCOLS = ['gitgood', 'x-github-client'];
 const pendingProtocolUrls: string[] = [];
-
-function protocolUrlFromArgv(argv: string[]): string | null {
-  return argv.find((a) => /^(gitgood|x-github-client|github-windows|github-mac):\/\//i.test(a)) ?? null;
-}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -93,7 +71,8 @@ if (!gotLock) {
     }
     if (win.isMinimized()) win.restore();
     win.focus();
-    sendEvent(win, 'menu.action', { action: 'protocol-open', args: parsed });
+    if (parsed.kind === 'review-rerun') sendEvent(win, 'menu.action', { action: 'protocol-review-rerun', args: { repoPath: parsed.repoPath } });
+    else sendEvent(win, 'menu.action', { action: 'protocol-open', args: { url: parsed.url, branch: parsed.branch, filepath: parsed.filepath } });
   };
 
   app.on('second-instance', (_event, argv) => {

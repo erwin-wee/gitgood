@@ -132,6 +132,8 @@ export function ChangesTab(): React.JSX.Element {
 function PrecommitFindingsStrip(): React.JSX.Element | null {
   const review = useAppStore((s) => s.precommitReview);
   const run = review.run;
+  // Subscribed so turning the AI provider off hides the Fix with agent action immediately.
+  useAppStore((s) => s.settings?.ai.provider);
   const findings = useMemo(() => liveFindings(run), [run]);
   if (!run && !review.running) return null;
 
@@ -173,6 +175,7 @@ function PrecommitFindingsStrip(): React.JSX.Element | null {
             {run.droppedInvalid ? <span className="muted" style={{ fontSize: 11 }}>{run.droppedInvalid} candidate{run.droppedInvalid === 1 ? '' : 's'} dropped by validation</span> : null}
             <span style={{ flex: 1 }} />
             {staleCount ? <Button size="sm" variant="ghost" icon="sync" onClick={() => void actions.rereviewStalePrecommitFindings()} disabled={review.running}>Re-review {staleCount} stale file{staleCount === 1 ? '' : 's'}</Button> : null}
+            {actions.agentHandoffAvailable(run) ? <Button size="sm" variant="ghost" icon="terminal" className="fix-with-agent" onClick={() => void actions.fixWithAgent(run)} disabled={review.running} title="Write the findings to .git/gitgood/review and open your terminal running the configured coding agent on them">Fix with agent</Button> : null}
           </div>
         </div>
       ) : null}

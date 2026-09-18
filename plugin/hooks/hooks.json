@@ -1,0 +1,16 @@
+{
+  "description": "Mentions open GitGood review findings when a session starts in a repository that has an export.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'r=\"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}\"; [ -n \"$r\" ] && [ -f \"$r/hooks/session-start.sh\" ] && exec sh \"$r/hooks/session-start.sh\"; exit 0'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

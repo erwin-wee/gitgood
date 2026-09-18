@@ -15,13 +15,17 @@ src/
                   pull request AND pre-commit review service (review.ts, worktree target) and its
                   pure validation helpers (review-core.ts, shared by both),
                   diff explanation service (explain.ts) and its pure validation helpers (explain-core.ts)
+                  agent handoff export (review-export.ts: JSON + Markdown written to <git-dir>/gitgood/review
+                  after every run, read by terminal coding agents; see plugin/)
     update/       auto-update: UpdateProvider seam, electron-updater-backed provider, pure
                   semver/channel/reducer/gate logic (update-core.ts), orchestration (updater.ts)
     repo/         repository list, file-system watcher (recursive fs.watch with polling fallback),
                   watched folders: a pure bounded directory walker (scan.ts) plus the scan
                   orchestration, exclusions and folder validation (watched-folders.ts); path
                   comparison with the platform's case rules lives in paths.ts
-    integrations/ external editors and terminals per platform
+    integrations/ external editors and terminals per platform (shell-command.ts: running a command in a
+                  new terminal window for "Fix with agent")
+    protocol.ts   gitgood:// and x-github-client:// URL parsing (openRepo, review/rerun deep link)
     ipc.ts        typed request handlers for every API method
   preload/        contextBridge exposing a single typed invoke/on bridge
   renderer/       React UI (no UI framework dependencies)

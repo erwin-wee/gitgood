@@ -12,6 +12,7 @@ import { handleRebaseProgress, tidyBranch } from './rebase';
 import { handleSplitProgress, openSplitDialog } from './split';
 import { initInbox, loadInboxState, openInboxItemById, toggleInboxPanel } from './inbox';
 import { openCommandPalette } from './nlPalette';
+import { handleProtocolReviewRerun } from './agentHandoff';
 
 export * from './review';
 export * from './precommitReview';
@@ -19,6 +20,7 @@ export * from './split';
 export * from './rebase';
 export * from './inbox';
 export * from './nlPalette';
+export * from './agentHandoff';
 
 const HISTORY_PAGE = 100;
 
@@ -80,6 +82,7 @@ export async function bootstrap(): Promise<void> {
   });
   on('menu.action', ({ action, args }) => {
     if (action === 'protocol-open') void handleProtocolOpen(args as { url: string; branch: string | null; filepath: string | null });
+    else if (action === 'protocol-review-rerun') void handleProtocolReviewRerun(args as { repoPath: string });
     else void handleMenuAction(action, args);
   });
   on('gh.auth.code', ({ code, url }) => store.set((s) => ({ login: { ...s.login, code, url } })));

@@ -1,0 +1,10 @@
+{
+  "name": "gitgood-review",
+  "version": "0.1.0",
+  "description": "Fix AI review findings exported by the GitGood desktop client: reads .git/gitgood/review/latest.json, fixes findings file by file, then asks GitGood to re-review.",
+  "author": { "name": "Erwin Wee" },
+  "homepage": "https://github.com/erwin-wee/gitgood",
+  "repository": "https://github.com/erwin-wee/gitgood",
+  "license": "MIT",
+  "keywords": ["gitgood", "code-review", "ai-review", "git"]
+}

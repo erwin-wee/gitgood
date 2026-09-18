@@ -18,6 +18,26 @@ export function extname(p: string): string {
   return idx <= 0 ? '' : base.slice(idx).toLowerCase();
 }
 
+/**
+ * Compares two filesystem paths for equality, ignoring separator style and a
+ * trailing slash. `caseInsensitive` should be true on Windows and macOS,
+ * whose default file systems ignore case, so a path that reaches GitGood from
+ * outside (a gitgood:// link, an import) still matches the repository list.
+ *
+ * Deliberately separate from `src/main/repo/paths.ts`: that one normalizes
+ * through `node:path` and is main-process only, and it folds case on Windows
+ * alone because repository ids must stay stable. This one runs in the
+ * renderer and also folds on macOS, where a hand-written link may differ from
+ * the stored path only by case.
+ */
+export function pathsEqual(a: string, b: string, caseInsensitive: boolean): boolean {
+  const norm = (p: string) => {
+    const out = p.replace(/\\/g, '/').replace(/\/+$/, '');
+    return caseInsensitive ? out.toLowerCase() : out;
+  };
+  return norm(a) === norm(b);
+}
+
 export function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }

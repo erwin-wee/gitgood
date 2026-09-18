@@ -10,7 +10,7 @@ import { languageFromPath } from '@shared/util';
 import { isUnborn } from '../git/commit';
 import { buildTextDiff, getPatchForFiles, getRangeFileDiff, looksBinary, readBlobText, readWorktree, toFsPath } from '../git/diff';
 import { EMPTY_TREE_SHA, GitError, type GitClient } from '../git/git';
-import { getStatus } from '../git/status';
+import { getGitDir, getStatus } from '../git/status';
 import type { GhClient } from '../gh/gh';
 import { splitPrDiff } from '../gh/prdiff';
 import { log } from '../logger';
@@ -19,6 +19,7 @@ import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { createBackend } from './provider';
+import { EXPORT_DIR_SEGMENTS, LATEST_JSON, RUNS_DIR, buildExportJson, exportFileNames, renderExportMarkdown, serializeExport, type ExportPlatform, type ReviewExport } from './review-export';
 import { buildPrecommitFilePrompt, buildPrecommitSummaryPrompt, buildReviewFilePrompt, buildReviewSummaryPrompt, PRECOMMIT_SUMMARY_SCHEMA, PRECOMMIT_SUMMARY_SYSTEM_PROMPT, precommitReviewSystemPrompt, REVIEW_FILE_SCHEMA, REVIEW_SUMMARY_SCHEMA, REVIEW_SUMMARY_SYSTEM_PROMPT, reviewSystemPrompt, type PrecommitPromptContext, type ReviewPromptContext } from './prompts';
 import { AI_FOOTER, annotateHunks, buildReviewPayload, changedLineCount, compareFindings, filterNearbyTestPaths, foldCommentsIntoBody, hashHunks, linkedIssueNumbers, replaceLinesInContent, skipReason, stableHash, validateFindings, verdictFloor } from './review-core';
 
@@ -123,6 +124,135 @@ export class ReviewService {
     const { rename } = await import('node:fs/promises');
     await rename(`${file}.tmp`, file);
     await this.prune(dir);
+    if (run.finishedAt) await this.exportRun(run);
+  }
+
+  // ---------- agent export ----------
+
+  /** `<git-dir>/gitgood/review`, per worktree (linked worktrees have their own git directory). */
+  private async exportDir(repoPath: string): Promise<string> {
+    return join(await getGitDir(this.git, repoPath), ...EXPORT_DIR_SEGMENTS);
+  }
+
+  private static exportPlatform(): ExportPlatform {
+    return process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux';
+  }
+
+  private async readExport(file: string): Promise<ReviewExport | null> {
+    try {
+      return JSON.parse(await readFile(file, 'utf8')) as ReviewExport;
+    } catch {
+      return null;
+    }
+  }
+
+  /** When a run happened, for ordering exports: its finish time, falling back to its start. */
+  private static exportTime(run: Pick<ReviewRun, 'startedAt' | 'finishedAt'>): string {
+    return run.finishedAt ?? run.startedAt;
+  }
+
+  /**
+   * The run this one supersedes: the newest earlier export of the same target.
+   * Read from the exported `runs/` directory rather than the review store,
+   * because the store keeps only one pre-commit run per repository and would
+   * lose the chain as soon as a second run replaced the first.
+   */
+  private async previousExportId(runsDir: string, run: ReviewRun): Promise<string | null> {
+    let best: ReviewExport | null = null;
+    const key = targetKey(run.target);
+    let entries: string[];
+    try {
+      entries = (await readdir(runsDir)).filter((f) => f.endsWith('.json'));
+    } catch {
+      return null;
+    }
+    for (const entry of entries) {
+      const doc = await this.readExport(join(runsDir, entry));
+      if (!doc || doc.runId === run.id || targetKey(doc.target) !== key) continue;
+      if (ReviewService.exportTime(doc) > ReviewService.exportTime(run)) continue;
+      if (!best || ReviewService.exportTime(doc) > ReviewService.exportTime(best)) best = doc;
+    }
+    return best?.runId ?? null;
+  }
+
+  private async writeExportFile(file: string, text: string): Promise<void> {
+    const { rename } = await import('node:fs/promises');
+    await writeFile(`${file}.tmp`, text, 'utf8');
+    await rename(`${file}.tmp`, file);
+  }
+
+  /**
+   * Writes the run as JSON and Markdown for terminal coding agents (see
+   * review-export.ts): one immutable pair under runs/, plus the latest.*
+   * copies when this run is the newest the repository has finished. Throws on
+   * failure; `saveRun` swallows it so a failed export never fails a review or
+   * a dismissal, while `exportPath` reports it rather than handing an agent a
+   * stale file.
+   */
+  private async writeExport(run: ReviewRun): Promise<void> {
+    const dir = await this.exportDir(run.repoPath);
+    const runsDir = join(dir, RUNS_DIR);
+    await mkdir(runsDir, { recursive: true });
+    const names = exportFileNames(run.id);
+    const previousRunId = await this.previousExportId(runsDir, run);
+    const platform = ReviewService.exportPlatform();
+    const json = serializeExport(buildExportJson(run, previousRunId, platform));
+    const md = renderExportMarkdown(run, previousRunId, platform);
+    await this.writeExportFile(join(dir, ...names.json.split('/')), json);
+    await this.writeExportFile(join(dir, ...names.md.split('/')), md);
+    // Dismissing a finding on an older run re-exports it; that must not make it
+    // the latest again, or an agent would be pointed at superseded findings.
+    const latest = await this.readExport(join(dir, LATEST_JSON));
+    if (!latest || latest.runId === run.id || ReviewService.exportTime(latest) <= ReviewService.exportTime(run)) {
+      await this.writeExportFile(join(dir, names.latestJson), json);
+      await this.writeExportFile(join(dir, names.latestMd), md);
+    }
+    await this.pruneExports(runsDir);
+  }
+
+  private async exportRun(run: ReviewRun): Promise<void> {
+    try {
+      await this.writeExport(run);
+    } catch (err) {
+      log.warn(`Could not export review ${run.id} for agents: ${(err as Error).message}`);
+    }
+  }
+
+  private async pruneExports(runsDir: string): Promise<void> {
+    const entries = (await readdir(runsDir)).filter((f) => f.endsWith('.json'));
+    if (entries.length <= MAX_RUNS_PER_REPO) return;
+    const stats = await Promise.all(entries.map(async (f) => ({ f, mtime: (await stat(join(runsDir, f))).mtimeMs })));
+    stats.sort((a, b) => b.mtime - a.mtime);
+    for (const s of stats.slice(MAX_RUNS_PER_REPO)) {
+      await rm(join(runsDir, s.f), { force: true });
+      await rm(join(runsDir, s.f.replace(/\.json$/, '.md')), { force: true });
+    }
+  }
+
+  /** The most recently finished run for the repository, any target; what the re-review deep link acts on. */
+  async latest(repoPath: string): Promise<ReviewRun | null> {
+    // loadRuns sorts by start time; a long pull request review can start before
+    // and finish after a quick pre-commit one, so order by finish time here.
+    const finished = (await this.loadRuns(repoPath)).filter((r) => r.finishedAt !== null);
+    return finished.sort((a, b) => b.finishedAt!.localeCompare(a.finishedAt!))[0] ?? null;
+  }
+
+  /** (Re)writes the agent export for `runId` so it is the `latest.*` pair, and returns the absolute path of latest.md. */
+  async exportPath(repoPath: string, runId: string): Promise<string> {
+    const run = await this.findRun(repoPath, runId);
+    if (!run) throw new AiError('The review run was not found. Run the review again.', 'other');
+    try {
+      await this.writeExport(run);
+    } catch (err) {
+      throw new AiError(`The review findings could not be written to the repository's git directory: ${(err as Error).message}`, 'other');
+    }
+    // The run is the newest one only when it was written as latest.*; an older
+    // run that is being re-exported keeps its own runs/ copy, which is what the
+    // agent must be pointed at.
+    const dir = await this.exportDir(repoPath);
+    const names = exportFileNames(runId);
+    const latest = await this.readExport(join(dir, LATEST_JSON));
+    return latest?.runId === runId ? join(dir, names.latestMd) : join(dir, ...names.md.split('/'));
   }
 
   private async prune(dir: string): Promise<void> {
