@@ -71,11 +71,18 @@ export function cmdEscapeArgument(arg: string): string {
  * directly (the fix for CVE-2024-27980) even though that is how npm installs
  * CLIs on Windows. Exported so the command line can be asserted from any host.
  *
- * The command is deliberately not wrapped in outer quotes: `^` is literal
- * inside a quoted section, so the escaping above only works unquoted.
+ * The escaped command is wrapped in one extra outer quote pair -- see the
+ * comment on the return statement for why.
  */
 export function buildWindowsCmdInvocation(file: string, args: string[], comSpec: string | undefined = process.env.ComSpec): { file: string; args: string[] } {
-  return { file: comSpec || 'cmd.exe', args: ['/d', '/s', '/c', [file, ...args].map(cmdEscapeArgument).join(' ')] };
+  // With /S, cmd strips the first char (if a quote) and the *last quote
+  // character anywhere in the remainder -- not the last character of the
+  // string. Without an outer wrapping pair, that second strip hits the
+  // closing quote of the last per-argument quote pair instead, desyncing
+  // every argument's quoting. Wrapping the whole thing in one extra pair
+  // makes the two stripped quotes exactly that wrapper (see startOnWindows
+  // and check-runner.ts's buildCheckInvocation, which already do this).
+  return { file: comSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${[file, ...args].map(cmdEscapeArgument).join(' ')}"`] };
 }
 
 /**
