@@ -1,0 +1,34 @@
+{
+  "name": "signing-config-save",
+  "repoKind": "uncommittedChanges",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); const before = await window.gitgoodBridge.invokeRaw('repo.signing.get', __REPO_PATH__); return JSON.stringify(before.value ? before.value.effective : before); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { await window.gitgoodBridge.invokeRaw('repo.signing.set', __REPO_PATH__, 'local', { format: 'ssh', key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBogusPublicKeyDataHere test@example.com', signCommits: true, signTags: false }); const after = await window.gitgoodBridge.invokeRaw('repo.signing.get', __REPO_PATH__); return JSON.stringify(after.value ? after.value.local : after); })()",
+      "dump": "after-save.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.bumpSigningConfigVersion(); window.__gitgood.actions.setView('changes'); await new Promise((r) => setTimeout(r, 400)); const titles = [...document.querySelectorAll('.commit-form svg title')].map((t) => t.textContent); return JSON.stringify({ hasSigningIndicator: titles.includes('Commits are signed') }); })()",
+      "dump": "indicator-on.json"
+    },
+    {
+      "js": "(async () => { await window.gitgoodBridge.invokeRaw('repo.signing.set', __REPO_PATH__, 'local', { signCommits: false }); const after = await window.gitgoodBridge.invokeRaw('repo.signing.get', __REPO_PATH__); window.__gitgood.actions.bumpSigningConfigVersion(); await new Promise((r) => setTimeout(r, 400)); const titles = [...document.querySelectorAll('.commit-form svg title')].map((t) => t.textContent); return JSON.stringify({ local: after.value ? after.value.local : after, hasSigningIndicator: titles.includes('Commits are signed') }); })()",
+      "dump": "after-off.json"
+    }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "format", "equals": null },
+    { "dump": "after-save.json", "jsonPath": "format", "equals": "ssh" },
+    { "dump": "after-save.json", "jsonPath": "signCommits", "equals": true },
+    { "dump": "after-save.json", "jsonPath": "scope", "equals": "local" },
+    { "dump": "indicator-on.json", "jsonPath": "hasSigningIndicator", "equals": true },
+    { "dump": "after-off.json", "jsonPath": "local.signCommits", "equals": false },
+    { "dump": "after-off.json", "jsonPath": "local.format", "equals": "ssh" },
+    { "dump": "after-off.json", "jsonPath": "local.key", "includes": "key::ssh-ed25519" },
+    { "dump": "after-off.json", "jsonPath": "hasSigningIndicator", "equals": false }
+  ]
+}

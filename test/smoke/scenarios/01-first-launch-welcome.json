@@ -1,0 +1,14 @@
+{
+  "name": "first-launch-welcome",
+  "repoKind": "none",
+  "steps": [
+    { "wait": 2000 },
+    { "js": "JSON.stringify({ hasStore: !!window.__gitgood, currentRepo: window.__gitgood.store.get().currentRepo, repoCount: window.__gitgood.store.get().repos.length })", "dump": "state.json" },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "hasStore", "equals": true },
+    { "dump": "state.json", "jsonPath": "currentRepo", "equals": null },
+    { "dump": "state.json", "jsonPath": "repoCount", "equals": 0 }
+  ]
+}

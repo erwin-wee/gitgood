@@ -1,0 +1,56 @@
+{
+  "name": "ai-precommit-review",
+  "repoKind": "precommitReviewFixture",
+  "settings": {},
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "reviewing changes a developer is about to commit",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "findings": [
+            { "line": 3, "endLine": null, "severity": "blocker", "category": "security", "title": "Hard-coded token committed", "detail": "This looks like a live API token; remove it before committing.", "suggestion": null, "confidence": "high" },
+            { "line": 2, "endLine": null, "severity": "warning", "category": "readability", "title": "Leftover debug log", "detail": "Remove the console.log before committing.", "suggestion": null, "confidence": "medium" }
+          ],
+          "fileSummary": "Adds a debug log and a hard-coded token."
+        }
+      }
+    },
+    {
+      "match": "changes about to be committed",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "summary": "Adds a hard-coded token and a leftover debug log; the token should not be committed.",
+          "verdict": "request-changes",
+          "commitMessageMatches": false,
+          "commitMessageNote": "The summary does not mention the added debug log or token."
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1000 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 900)); window.__gitgood.store.set((s) => ({ changes: { ...s.changes, summary: 'Update app value' } })); return JSON.stringify({ files: (window.__gitgood.store.get().status || { files: [] }).files.map((f) => f.path) }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.reviewChangesBeforeCommit(); for (let i = 0; i < 80; i++) { const s = window.__gitgood.store.get(); if (!s.precommitReview.running && s.precommitReview.run) break; await new Promise((r) => setTimeout(r, 150)); } await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); const run = s.precommitReview.run; const live = run ? run.findings.filter((f) => !f.dismissed) : []; return JSON.stringify({ findingCount: live.length, blockerCount: live.filter((f) => f.severity === 'blocker').length, commitMessageMatches: run ? run.commitMessageMatches : null, hasBlockerButton: !!document.querySelector('.commit-btn.has-blockers') }); })()",
+      "dump": "review.json"
+    },
+    { "shot": "review-screenshot.png" },
+    {
+      "js": "(async () => { await window.__gitgood.actions.commit(); for (let i = 0; i < 60; i++) { const s = window.__gitgood.store.get(); if (!s.changes.committing) break; await new Promise((r) => setTimeout(r, 100)); } await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); return JSON.stringify({ committed: !!s.status && s.status.files.length === 0, summary: s.changes.summary }); })()",
+      "dump": "after-commit.json"
+    }
+  ],
+  "expect": [
+    { "dump": "review.json", "jsonPath": "findingCount", "equals": 2 },
+    { "dump": "review.json", "jsonPath": "blockerCount", "equals": 1 },
+    { "dump": "review.json", "jsonPath": "commitMessageMatches", "equals": false },
+    { "dump": "review.json", "jsonPath": "hasBlockerButton", "equals": true },
+    { "dump": "after-commit.json", "jsonPath": "committed", "equals": true }
+  ]
+}

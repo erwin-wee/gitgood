@@ -1,0 +1,48 @@
+{
+  "name": "ai-resolve",
+  "repoKind": "conflictInProgressTwoFiles",
+  "settings": {},
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "-p",
+      "stdout": {
+        "is_error": false,
+        "structured_output": { "resolutions": [{ "id": 0, "resolved": "main\n// merged: kept the main branch value", "rationale": "Combined both sides, preferring the main branch change.", "confidence": "high" }] }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); const before = window.__gitgood.store.get().status; return JSON.stringify({ hasConflictsBefore: before.hasConflicts, conflictedBefore: before.files.filter((f) => f.conflict).map((f) => f.path) }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.selectWorkingFile('other.txt'); await new Promise((r) => setTimeout(r, 300)); await window.__gitgood.actions.useSide('other.txt', 'ours'); await window.__gitgood.actions.markResolved(['other.txt']); await new Promise((r) => setTimeout(r, 300)); const examples = await window.__gitgood.invoke('ai.resolve.examples', __REPO_PATH__); const s = window.__gitgood.store.get(); return JSON.stringify({ examples, conflictExamplesInStore: s.conflictExamples, otherStaged: s.status.files.find((f) => f.path === 'other.txt') ? s.status.files.find((f) => f.path === 'other.txt').conflict : null }); })()",
+      "dump": "manual.json"
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.resolveAllGuided(); await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); const file = s.status.files.find((f) => f.path === 'shared.txt'); const resolution = s.conflictResolutions['shared.txt']; return JSON.stringify({ hasConflictsAfter: s.status.hasConflicts, sharedFile: file || null, resolution, toastTitle: s.toasts[0] && s.toasts[0].title }); })()",
+      "dump": "after.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.selectWorkingFile('shared.txt'); await new Promise((r) => setTimeout(r, 500)); return 'ok'; })()",
+      "dump": "select.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "hasConflictsBefore", "equals": true },
+    { "dump": "before.json", "jsonPath": "conflictedBefore", "includes": "shared.txt" },
+    { "dump": "before.json", "jsonPath": "conflictedBefore", "includes": "other.txt" },
+    { "dump": "manual.json", "jsonPath": "otherStaged", "equals": null },
+    { "dump": "manual.json", "jsonPath": "examples", "includes": "other.txt" },
+    { "dump": "manual.json", "jsonPath": "conflictExamplesInStore", "includes": "other.txt" },
+    { "dump": "after.json", "jsonPath": "hasConflictsAfter", "equals": false },
+    { "dump": "after.json", "jsonPath": "sharedFile.staged", "equals": true },
+    { "dump": "after.json", "jsonPath": "resolution.guidedBy", "includes": "other.txt" },
+    { "dump": "after.json", "jsonPath": "resolution.blocks.0.confidence", "equals": "high" },
+    { "dump": "after.json", "jsonPath": "resolution.blocks.0.range.start", "equals": 0 }
+  ]
+}

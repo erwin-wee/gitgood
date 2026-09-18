@@ -1,0 +1,48 @@
+{
+  "name": "ai-error-explanation",
+  "repoKind": "unpublishedWithRemote",
+  "settings": { "ai": { "explainErrorsAutomatically": true } },
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "You explain a failed git or GitHub CLI command",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "whatHappened": "The push was rejected because the current branch has never been published to origin.",
+          "likelyCause": "main has no upstream branch configured yet.",
+          "fixes": [
+            { "label": "Push and set upstream", "detail": "Publish main and track it on origin.", "action": "push-set-upstream", "command": null, "retryAfter": false, "risk": "safe" }
+          ]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); let code = null; try { await window.__gitgood.invoke('git.push', __REPO_PATH__, { force: false, setUpstream: false, remote: null, branch: null, tags: false }); } catch (err) { window.__gitgood.actions.showError('Push failed', err); code = err && err.info ? err.info.code : null; } await new Promise((r) => setTimeout(r, 300)); const dialog = window.__gitgood.store.get().dialog; const explain = window.__gitgood.store.get().errorExplain; return JSON.stringify({ code, dialogKind: dialog ? dialog.kind : null, autoLoaded: !!(explain.result || explain.loading) }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { const dialog = window.__gitgood.store.get().dialog; const error = dialog && dialog.kind === 'error' ? dialog.error : null; await window.__gitgood.actions.requestErrorExplanation(error, false); for (let i = 0; i < 40 && window.__gitgood.store.get().errorExplain.loading; i++) await new Promise((r) => setTimeout(r, 150)); const s = window.__gitgood.store.get(); const fixes = s.errorExplain.result ? s.errorExplain.result.fixes : []; return JSON.stringify({ explainError: s.errorExplain.error, whatHappened: s.errorExplain.result ? s.errorExplain.result.whatHappened : null, fixActions: fixes.map((f) => f.action) }); })()",
+      "dump": "explain.json"
+    },
+    {
+      "js": "(async () => { const fixes = (window.__gitgood.store.get().errorExplain.result || {}).fixes || []; const fix = fixes.find((f) => f.action === 'push-set-upstream'); if (fix) await window.__gitgood.actions.applyErrorFix(fix); await new Promise((r) => setTimeout(r, 800)); const status = window.__gitgood.store.get().status; return JSON.stringify({ appliedFix: !!fix, branchName: status ? status.branch.name : null, upstream: status ? status.branch.upstream : null }); })()",
+      "dump": "after.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "code", "equals": "no-upstream" },
+    { "dump": "before.json", "jsonPath": "dialogKind", "equals": "error" },
+    { "dump": "before.json", "jsonPath": "autoLoaded", "equals": false },
+    { "dump": "explain.json", "jsonPath": "explainError", "equals": null },
+    { "dump": "explain.json", "jsonPath": "whatHappened", "includes": "published" },
+    { "dump": "explain.json", "jsonPath": "fixActions", "includes": "push-set-upstream" },
+    { "dump": "after.json", "jsonPath": "appliedFix", "equals": true },
+    { "dump": "after.json", "jsonPath": "branchName", "equals": "main" },
+    { "dump": "after.json", "jsonPath": "upstream", "truthy": true }
+  ]
+}

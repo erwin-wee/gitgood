@@ -1,0 +1,40 @@
+{
+  "name": "ai-pr-draft",
+  "repoKind": "prDraftReady",
+  "settings": {},
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "You draft a pull request title and body",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "title": "Add retry logic.",
+          "body": "## Summary\n\nAdds a retry helper and covers it with a test.\n\n## Testing\n\nRan the new unit test locally.\n\n## Checklist\n\n- [ ] Tests added\n",
+          "linkedIssues": [],
+          "templateSectionsFilled": ["## Summary", "## Testing", "## Checklist"]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 900)); const s = window.__gitgood.store.get(); return JSON.stringify({ branch: s.status && s.status.branch.name, defaultBranch: s.defaultBranch }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.openDialog({ kind: 'create-pr', autoDraft: true }); for (let i = 0; i < 60; i++) { const s = window.__gitgood.store.get(); const progress = s.ai['<pull request>']; if (progress && (progress.phase === 'done' || progress.phase === 'error')) break; await new Promise((r) => setTimeout(r, 150)); } await new Promise((r) => setTimeout(r, 400)); const s = window.__gitgood.store.get(); const bodyEl = document.querySelector('.dialog-body textarea'); const titleEl = document.querySelector('.dialog-body input:not([readonly])'); return JSON.stringify({ dialogKind: s.dialog && s.dialog.kind, title: titleEl ? titleEl.value : null, body: bodyEl ? bodyEl.value : null, calloutText: (document.querySelector('.dialog-body .callout') || {}).textContent || null }); })()",
+      "dump": "after.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "branch", "equals": "feature" },
+    { "dump": "after.json", "jsonPath": "dialogKind", "equals": "create-pr" },
+    { "dump": "after.json", "jsonPath": "title", "equals": "Add retry logic" },
+    { "dump": "after.json", "jsonPath": "body", "includes": "## Summary" },
+    { "dump": "after.json", "jsonPath": "body", "includes": "## Testing" },
+    { "dump": "after.json", "jsonPath": "body", "includes": "## Checklist" }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "name": "ai-command-palette",
+  "repoKind": "basic",
+  "settings": {},
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "translate a developer",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "clarifyingQuestion": null,
+          "steps": [{ "argv": ["reset", "--soft", "HEAD~1"], "explanation": "Undo the last commit but keep its changes staged.", "risk": "safe" }]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); window.__gitgood.actions.openCommandPalette('undo last commit keep changes'); for (let i = 0; i < 20 && !window.__gitgood.store.get().nlPalette.plan; i++) await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); const plan = s.nlPalette.plan; return JSON.stringify({ dialogKind: s.dialog && s.dialog.kind, stepCount: plan ? plan.steps.length : 0, mappedAction: plan ? plan.steps[0].mappedAction : null, risk: plan ? plan.steps[0].risk : null, executable: plan ? plan.steps[0].executable : null }); })()",
+      "dump": "plan.json"
+    },
+    { "shot": "plan.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.runPalettePlan(); await new Promise((r) => setTimeout(r, 300)); const dialog = window.__gitgood.store.get().dialog; if (dialog && dialog.kind === 'confirm') await dialog.onConfirm(); for (let i = 0; i < 20 && !window.__gitgood.store.get().nlPalette.completed.length; i++) await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); return JSON.stringify({ completed: s.nlPalette.completed, failedStep: s.nlPalette.failedStep, headSubject: (await window.__gitgood.invoke('repo.history', __REPO_PATH__, { ref: null, skip: 0, limit: 1, path: null, search: null, follow: false })).commits[0].summary, statusFiles: (await window.__gitgood.invoke('repo.status', __REPO_PATH__)).files.map((f) => f.path) }); })()",
+      "dump": "run.json"
+    },
+    {
+      "js": "(async () => { const h = window.__gitgood.store.get().nlPalette.history; return JSON.stringify(h.map((e) => ({ request: e.request, completed: e.completed, failedStep: e.failedStep }))); })()",
+      "dump": "history.json"
+    }
+  ],
+  "expect": [
+    { "dump": "plan.json", "jsonPath": "stepCount", "equals": 1 },
+    { "dump": "plan.json", "jsonPath": "mappedAction", "equals": "git.undoCommit" },
+    { "dump": "plan.json", "jsonPath": "risk", "equals": "changes-history" },
+    { "dump": "plan.json", "jsonPath": "executable", "equals": true },
+    { "dump": "run.json", "jsonPath": "failedStep", "equals": null },
+    { "dump": "run.json", "jsonPath": "headSubject", "equals": "Initial commit" },
+    { "dump": "run.json", "jsonPath": "statusFiles", "includes": "src/util.ts" },
+    { "dump": "history.json", "jsonPath": "0.request", "equals": "undo last commit keep changes" },
+    { "dump": "history.json", "jsonPath": "0.failedStep", "equals": null }
+  ]
+}

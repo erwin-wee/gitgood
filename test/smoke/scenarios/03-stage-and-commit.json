@@ -1,0 +1,22 @@
+{
+  "name": "stage-and-commit",
+  "repoKind": "uncommittedChanges",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); const before = window.__gitgood.store.get(); return JSON.stringify({ fileCountBefore: before.status.files.length }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { const cur = window.__gitgood.store.get(); window.__gitgood.store.set({ changes: { ...cur.changes, summary: 'Test commit from smoke' } }); await window.__gitgood.actions.commit(); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); await new Promise((r) => setTimeout(r, 300)); const after = window.__gitgood.store.get(); return JSON.stringify({ fileCountAfter: after.status.files.length, topCommitSummary: after.history.commits[0] && after.history.commits[0].summary, historyCount: after.history.commits.length }); })()",
+      "dump": "after.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "fileCountBefore", "equals": 2 },
+    { "dump": "after.json", "jsonPath": "fileCountAfter", "equals": 0 },
+    { "dump": "after.json", "jsonPath": "topCommitSummary", "equals": "Test commit from smoke" },
+    { "dump": "after.json", "jsonPath": "historyCount", "equals": 3 }
+  ]
+}

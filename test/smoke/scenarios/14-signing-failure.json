@@ -1,0 +1,28 @@
+{
+  "name": "signing-failure",
+  "repoKind": "signingKeyMissing",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); window.__gitgood.store.set({ dialog: { kind: 'settings', tab: 'git' } }); await new Promise((r) => setTimeout(r, 300)); return JSON.stringify({ dialogKind: window.__gitgood.store.get().dialog && window.__gitgood.store.get().dialog.kind }); })()",
+      "dump": "settings-open.json"
+    },
+    { "shot": "options-git.png" },
+    {
+      "js": "(async () => { window.__gitgood.store.set({ dialog: null, dialogStack: [] }); const cur = window.__gitgood.store.get(); window.__gitgood.store.set({ changes: { ...cur.changes, summary: 'Signed commit attempt' } }); await window.__gitgood.actions.commit(); await new Promise((r) => setTimeout(r, 500)); const after = window.__gitgood.store.get(); return JSON.stringify({ dialogKind: after.dialog ? after.dialog.kind : null, errorCode: after.dialog && after.dialog.error ? after.dialog.error.code : null, committing: after.changes.committing }); })()",
+      "dump": "commit-attempt.json"
+    },
+    { "shot": "signing-failed-dialog.png" },
+    {
+      "js": "(async () => { const onUnsigned = window.__gitgood.store.get().dialog.onUnsigned; window.__gitgood.store.set({ dialog: null, dialogStack: [] }); onUnsigned(); await new Promise((r) => setTimeout(r, 500)); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); const after = window.__gitgood.store.get(); return JSON.stringify({ dialog: after.dialog ? after.dialog.kind : null, historyTop: after.history.commits[0] && after.history.commits[0].summary }); })()",
+      "dump": "commit-unsigned.json"
+    }
+  ],
+  "expect": [
+    { "dump": "settings-open.json", "jsonPath": "dialogKind", "equals": "settings" },
+    { "dump": "commit-attempt.json", "jsonPath": "dialogKind", "equals": "signing-failed" },
+    { "dump": "commit-attempt.json", "jsonPath": "errorCode", "equals": "signing-key-missing" },
+    { "dump": "commit-unsigned.json", "jsonPath": "historyTop", "equals": "Signed commit attempt" },
+    { "dump": "commit-unsigned.json", "jsonPath": "dialog", "equals": null }
+  ]
+}

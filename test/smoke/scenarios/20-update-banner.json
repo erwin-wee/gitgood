@@ -1,0 +1,37 @@
+{
+  "name": "update-banner",
+  "repoKind": "none",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { window.__gitgood.actions.openDialog({ kind: 'about' }); await new Promise((r) => setTimeout(r, 400)); const text = document.body.textContent || ''; return JSON.stringify({ realStatus: window.__gitgood.store.get().updateState.status, hasUnavailableText: text.includes('Updates unavailable in this build') }); })()",
+      "dump": "about-disabled.json"
+    },
+    { "shot": "about-disabled.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); window.__gitgood.actions.setUpdateState({ status: 'available', version: '9.9.9', releaseDate: null, notes: 'Fixes a thing.\\nSee https://github.com/erwin-wee/gitgood for details.', url: 'https://github.com/erwin-wee/gitgood/releases/tag/v9.9.9', prerelease: false, dismissed: false }); await new Promise((r) => setTimeout(r, 400)); const text = document.body.textContent || ''; return JSON.stringify({ hasBanner: text.includes('GitGood 9.9.9 is available'), hasDownload: text.includes('Download'), hasLater: text.includes('Later') }); })()",
+      "dump": "banner.json"
+    },
+    { "shot": "banner.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.openUpdateNotes(); await new Promise((r) => setTimeout(r, 300)); const d = window.__gitgood.store.get().dialog; const text = document.body.textContent || ''; return JSON.stringify({ dialogKind: d && d.kind, hasNotes: text.includes('Fixes a thing.'), hasLink: text.includes('github.com/erwin-wee/gitgood') }); })()",
+      "dump": "notes.json"
+    },
+    { "shot": "notes.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); window.__gitgood.actions.setUpdateState({ status: 'available', version: '9.9.9', releaseDate: null, notes: null, url: 'https://x', prerelease: false, dismissed: true }); await new Promise((r) => setTimeout(r, 300)); const text = document.body.textContent || ''; return JSON.stringify({ bannerGone: !text.includes('GitGood 9.9.9 is available') }); })()",
+      "dump": "dismissed.json"
+    }
+  ],
+  "expect": [
+    { "dump": "about-disabled.json", "jsonPath": "realStatus", "equals": "disabled" },
+    { "dump": "about-disabled.json", "jsonPath": "hasUnavailableText", "equals": true },
+    { "dump": "banner.json", "jsonPath": "hasBanner", "equals": true },
+    { "dump": "banner.json", "jsonPath": "hasDownload", "equals": true },
+    { "dump": "banner.json", "jsonPath": "hasLater", "equals": true },
+    { "dump": "notes.json", "jsonPath": "dialogKind", "equals": "update-notes" },
+    { "dump": "notes.json", "jsonPath": "hasNotes", "equals": true },
+    { "dump": "notes.json", "jsonPath": "hasLink", "equals": true },
+    { "dump": "dismissed.json", "jsonPath": "bannerGone", "equals": true }
+  ]
+}

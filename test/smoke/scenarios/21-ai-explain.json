@@ -1,0 +1,47 @@
+{
+  "name": "ai-explain",
+  "repoKind": "basic",
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "You explain a Git change",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "whatChanged": "Added a second file, src/util.ts, exporting a small helper function.",
+          "why": "Likely groundwork so the helper can be reused elsewhere in the codebase.",
+          "impact": "A new export becomes available to import; nothing existing is changed.",
+          "watchOutFor": ["Confirm the helper's naming matches the project's conventions"],
+          "references": [
+            { "path": "src/util.ts", "line": 1, "label": "the new helper export" },
+            { "path": "not-in-this-commit.ts", "line": 1, "label": "a file outside the commit (should be dropped)" }
+          ]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); window.__gitgood.actions.setView('history'); await new Promise((r) => setTimeout(r, 300)); const commits = window.__gitgood.store.get().history.commits; const sha = commits[0].sha; window.__gitgood.actions.selectCommit(sha); await window.__gitgood.actions.loadCommitDetails(sha); window.__gitgood.actions.explainCommit(sha); for (let i = 0; i < 40 && window.__gitgood.store.get().explain.loading; i++) await new Promise((r) => setTimeout(r, 150)); const s = window.__gitgood.store.get(); const e = s.explain; return JSON.stringify({ open: e.open, error: e.error, whatChanged: e.result ? e.result.whatChanged : null, why: e.result ? e.result.why : null, impact: e.result ? e.result.impact : null, watchOutForCount: e.result ? e.result.watchOutFor.length : 0, referencesCount: e.result ? e.result.references.length : 0, droppedReferences: e.result ? e.result.droppedReferences : null }); })()",
+      "dump": "explain.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.focusExplainReference('src/util.ts', 1); await new Promise((r) => setTimeout(r, 400)); const row = document.querySelector('tr[data-new-line=\"1\"]'); return JSON.stringify({ selectedFile: window.__gitgood.store.get().history.selectedFile, rowFound: !!row, rowFlashed: !!(row && row.classList.contains('flash-highlight')) }); })()",
+      "dump": "reference-click.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "explain.json", "jsonPath": "open", "equals": true },
+    { "dump": "explain.json", "jsonPath": "error", "equals": null },
+    { "dump": "explain.json", "jsonPath": "whatChanged", "includes": "util.ts" },
+    { "dump": "explain.json", "jsonPath": "why", "truthy": true },
+    { "dump": "explain.json", "jsonPath": "impact", "truthy": true },
+    { "dump": "explain.json", "jsonPath": "watchOutForCount", "atLeast": 1 },
+    { "dump": "explain.json", "jsonPath": "referencesCount", "equals": 1 },
+    { "dump": "explain.json", "jsonPath": "droppedReferences", "equals": 1 },
+    { "dump": "reference-click.json", "jsonPath": "selectedFile", "equals": "src/util.ts" },
+    { "dump": "reference-click.json", "jsonPath": "rowFound", "equals": true }
+  ]
+}

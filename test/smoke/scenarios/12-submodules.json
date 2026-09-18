@@ -1,0 +1,42 @@
+{
+  "name": "submodules",
+  "repoKind": "withSubmodule",
+  "steps": [
+    { "wait": 1200 },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; await window.__gitgood.actions.addLocalRepository(repoPath); await new Promise((r) => setTimeout(r, 800)); const s = window.__gitgood.store.get(); return JSON.stringify({ hasCurrentRepo: !!(s.currentRepo && s.currentRepo.path === repoPath), submoduleCount: s.submodules.length, firstState: s.submodules[0] ? s.submodules[0].state : null, firstPath: s.submodules[0] ? s.submodules[0].path : null, bannerDismissed: s.submoduleBannerDismissed }); })()",
+      "dump": "initial.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.handleMenuAction('show-submodules'); await new Promise((r) => setTimeout(r, 700)); const s = window.__gitgood.store.get(); return JSON.stringify({ dialogKind: s.dialog ? s.dialog.kind : null }); })()",
+      "dump": "dialog.json"
+    },
+    { "shot": "dialog.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); return JSON.stringify({ bannerVisible: s.submodules.some((sub) => sub.state === 'uninitialized') && !s.submoduleBannerDismissed }); })()",
+      "dump": "banner.json"
+    },
+    { "shot": "banner.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.handleMenuAction('show-lfs'); await new Promise((r) => setTimeout(r, 700)); const s = window.__gitgood.store.get(); const dialogKind = s.dialog ? s.dialog.kind : null; window.__gitgood.actions.closeAllDialogs(); return JSON.stringify({ dialogKind, lfsUsedByRepo: s.lfsStatus ? s.lfsStatus.usedByRepo : null }); })()",
+      "dump": "lfs-dialog.json"
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.initializeAndUpdateAllSubmodules(); await new Promise((r) => setTimeout(r, 1200)); const s = window.__gitgood.store.get(); return JSON.stringify({ state: s.submodules[0] ? s.submodules[0].state : null, recordedEqualsCheckedOut: !!(s.submodules[0] && s.submodules[0].recordedSha && s.submodules[0].recordedSha === s.submodules[0].checkedOutSha), anyUninitialized: s.submodules.some((sub) => sub.state === 'uninitialized') }); })()",
+      "dump": "updated.json"
+    }
+  ],
+  "expect": [
+    { "dump": "initial.json", "jsonPath": "hasCurrentRepo", "equals": true },
+    { "dump": "initial.json", "jsonPath": "submoduleCount", "equals": 1 },
+    { "dump": "initial.json", "jsonPath": "firstState", "equals": "uninitialized" },
+    { "dump": "initial.json", "jsonPath": "firstPath", "equals": "vendor/lib" },
+    { "dump": "dialog.json", "jsonPath": "dialogKind", "equals": "submodules" },
+    { "dump": "banner.json", "jsonPath": "bannerVisible", "equals": true },
+    { "dump": "lfs-dialog.json", "jsonPath": "dialogKind", "equals": "lfs" },
+    { "dump": "lfs-dialog.json", "jsonPath": "lfsUsedByRepo", "equals": false },
+    { "dump": "updated.json", "jsonPath": "state", "equals": "up-to-date" },
+    { "dump": "updated.json", "jsonPath": "recordedEqualsCheckedOut", "equals": true },
+    { "dump": "updated.json", "jsonPath": "anyUninitialized", "equals": false }
+  ]
+}

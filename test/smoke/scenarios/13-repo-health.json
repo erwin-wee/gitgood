@@ -1,0 +1,46 @@
+{
+  "name": "repo-health",
+  "repoKind": "repoHealth",
+  "steps": [
+    { "wait": 1200 },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; await window.__gitgood.actions.addLocalRepository(repoPath); await new Promise((r) => setTimeout(r, 500)); window.__gitgood.actions.handleMenuAction('show-health'); await new Promise((r) => setTimeout(r, 600)); const s = window.__gitgood.store.get(); return JSON.stringify({ view: s.view }); })()",
+      "dump": "view.json"
+    },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; const large = await window.gitgoodBridge.invokeRaw('repo.health.largeFiles', repoPath, 25); const stale = await window.gitgoodBridge.invokeRaw('repo.health.staleBranches', repoPath, 90); const housekeeping = await window.gitgoodBridge.invokeRaw('repo.health.housekeeping', repoPath); const work = await window.gitgoodBridge.invokeRaw('repos.work'); const bigFile = large.ok ? large.value.find((b) => b.path === 'assets/big-file.bin') : null; const staleByName = stale.ok ? Object.fromEntries(stale.value.map((b) => [b.name, { reason: b.reason, protected: b.protected }])) : null; return JSON.stringify({ largeOk: large.ok, bigFileSize: bigFile ? bigFile.size : null, bigFileAtHead: bigFile ? bigFile.atHead : null, staleOk: stale.ok, staleByName, housekeepingOk: housekeeping.ok, looseObjectCount: housekeeping.ok ? housekeeping.value.looseObjectCount : null, workOk: work.ok, workHasEntry: work.ok ? work.value.some((w) => w.repoPath === repoPath) : null }); })()",
+      "dump": "data.json"
+    },
+    { "shot": "screenshot.png" },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; const names = ['merged-feature', 'inactive-feature']; const before = await window.gitgoodBridge.invokeRaw('repo.branches', repoPath); const beforeHasBoth = before.ok && names.every((n) => before.value.some((b) => b.name === n)); const result = await window.__gitgood.actions.bulkDeleteStaleBranches(names, false); await new Promise((r) => setTimeout(r, 300)); const afterDelete = await window.gitgoodBridge.invokeRaw('repo.branches', repoPath); const afterDeleteHasNone = afterDelete.ok && names.every((n) => !afterDelete.value.some((b) => b.name === n)); const s1 = window.__gitgood.store.get(); const toast = s1.toasts[s1.toasts.length - 1]; const toastTitle = toast ? toast.title : null; const hasUndo = !!(toast && toast.action && toast.action.label === 'Undo'); if (hasUndo) toast.action.onClick(); await new Promise((r) => setTimeout(r, 500)); const afterUndo = await window.gitgoodBridge.invokeRaw('repo.branches', repoPath); const afterUndoHasBoth = afterUndo.ok && names.every((n) => afterUndo.value.some((b) => b.name === n)); return JSON.stringify({ beforeHasBoth, deletedCount: result ? result.deleted.length : 0, failedCount: result ? result.failed.length : null, afterDeleteHasNone, toastTitle, hasUndo, afterUndoHasBoth }); })()",
+      "dump": "bulk-delete.json"
+    },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; const names = ['merged-feature', 'does-not-exist']; const result = await window.__gitgood.actions.bulkDeleteStaleBranches(names, false); return JSON.stringify({ deletedCount: result ? result.deleted.length : null, failedNames: result ? result.failed.map((f) => f.name).join(',') : null }); })()",
+      "dump": "partial-failure.json"
+    }
+  ],
+  "expect": [
+    { "dump": "view.json", "jsonPath": "view", "equals": "health" },
+    { "dump": "data.json", "jsonPath": "largeOk", "equals": true },
+    { "dump": "data.json", "jsonPath": "bigFileSize", "equals": 1048576 },
+    { "dump": "data.json", "jsonPath": "bigFileAtHead", "equals": false },
+    { "dump": "data.json", "jsonPath": "staleOk", "equals": true },
+    { "dump": "data.json", "jsonPath": "staleByName.merged-feature.reason", "includes": "merged" },
+    { "dump": "data.json", "jsonPath": "staleByName.inactive-feature.reason", "includes": "inactive" },
+    { "dump": "data.json", "jsonPath": "staleByName.gone-feature.protected", "equals": false },
+    { "dump": "data.json", "jsonPath": "staleByName.gone-feature.reason", "includes": "gone" },
+    { "dump": "data.json", "jsonPath": "housekeepingOk", "equals": true },
+    { "dump": "data.json", "jsonPath": "looseObjectCount", "atLeast": 1 },
+    { "dump": "data.json", "jsonPath": "workOk", "equals": true },
+    { "dump": "data.json", "jsonPath": "workHasEntry", "equals": true },
+    { "dump": "bulk-delete.json", "jsonPath": "beforeHasBoth", "equals": true },
+    { "dump": "bulk-delete.json", "jsonPath": "deletedCount", "equals": 2 },
+    { "dump": "bulk-delete.json", "jsonPath": "afterDeleteHasNone", "equals": true },
+    { "dump": "bulk-delete.json", "jsonPath": "hasUndo", "equals": true },
+    { "dump": "bulk-delete.json", "jsonPath": "afterUndoHasBoth", "equals": true },
+    { "dump": "partial-failure.json", "jsonPath": "deletedCount", "equals": 1 },
+    { "dump": "partial-failure.json", "jsonPath": "failedNames", "equals": "does-not-exist" }
+  ]
+}

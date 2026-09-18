@@ -1,0 +1,18 @@
+{
+  "name": "conflicts-dialog",
+  "repoKind": "divergedForConflict",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); await window.__gitgood.actions.mergeBranch('feature', false); await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); return JSON.stringify({ dialogKind: s.dialog && s.dialog.kind, hasConflicts: s.status && s.status.hasConflicts, operationKind: s.status && s.status.operation.kind, conflictedFiles: (s.status ? s.status.files : []).filter((f) => f.conflict).map((f) => f.path) }); })()",
+      "dump": "state.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "dialogKind", "equals": "conflicts" },
+    { "dump": "state.json", "jsonPath": "hasConflicts", "equals": true },
+    { "dump": "state.json", "jsonPath": "operationKind", "equals": "merge" },
+    { "dump": "state.json", "jsonPath": "conflictedFiles", "includes": "shared.txt" }
+  ]
+}

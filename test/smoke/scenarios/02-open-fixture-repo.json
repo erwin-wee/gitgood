@@ -1,0 +1,18 @@
+{
+  "name": "open-fixture-repo",
+  "repoKind": "basic",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); return JSON.stringify({ name: s.currentRepo && s.currentRepo.name, branch: s.status && s.status.branch.name, fileCount: s.status && s.status.files.length, historyCount: s.history.commits.length }); })()",
+      "dump": "state.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "name", "equals": "repo" },
+    { "dump": "state.json", "jsonPath": "branch", "equals": "main" },
+    { "dump": "state.json", "jsonPath": "fileCount", "equals": 0 },
+    { "dump": "state.json", "jsonPath": "historyCount", "equals": 2 }
+  ]
+}

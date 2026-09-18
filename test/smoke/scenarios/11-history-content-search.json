@@ -1,0 +1,50 @@
+{
+  "name": "history-content-search",
+  "repoKind": "needleHistory",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); window.__gitgood.actions.setView('history'); await new Promise((r) => setTimeout(r, 300)); window.__gitgood.actions.setHistorySearch('content:needle'); await new Promise((r) => setTimeout(r, 700)); const s = window.__gitgood.store.get(); return JSON.stringify({ summaries: s.history.commits.map((c) => c.summary).sort().join(','), queryError: s.history.queryError, contentField: s.history.query.content }); })()",
+      "dump": "content-search.json"
+    },
+    { "shot": "screenshot-content.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.setHistorySearch('regex:needle'); await new Promise((r) => setTimeout(r, 700)); const s = window.__gitgood.store.get(); return JSON.stringify({ summaries: s.history.commits.map((c) => c.summary).sort().join(','), diffRegexField: s.history.query.diffRegex }); })()",
+      "dump": "regex-search.json"
+    },
+    {
+      "js": "(async () => { const s = window.__gitgood.store.get(); const commit = s.history.commits.find((c) => c.summary === 'change needle line'); window.__gitgood.actions.selectCommit(commit.sha); await window.__gitgood.actions.loadCommitDetails(commit.sha); await new Promise((r) => setTimeout(r, 300)); const after = window.__gitgood.store.get(); return JSON.stringify({ matchingFiles: (after.history.matchingFiles || []).join(','), highlightText: after.diff.highlightTerm && after.diff.highlightTerm.text, diffKind: after.diff.diff && after.diff.diff.kind }); })()",
+      "dump": "matching-files.json"
+    },
+    { "shot": "screenshot-match.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.setHistorySearch('regex:('); await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); return JSON.stringify({ hasError: !!s.history.queryError, loading: s.history.loading }); })()",
+      "dump": "invalid-regex.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.clearHistoryFilter(); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); return JSON.stringify({ search: s.history.search, commitCount: s.history.commits.length }); })()",
+      "dump": "cleared.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.setView('changes'); window.__gitgood.actions.searchHistoryForSelection('computeTotal'); await new Promise((r) => setTimeout(r, 700)); const s = window.__gitgood.store.get(); return JSON.stringify({ view: s.view, search: s.history.search, content: s.history.query.content }); })()",
+      "dump": "search-for-selection.json"
+    }
+  ],
+  "expect": [
+    { "dump": "content-search.json", "jsonPath": "summaries", "equals": "add needle,remove needle" },
+    { "dump": "content-search.json", "jsonPath": "queryError", "equals": null },
+    { "dump": "content-search.json", "jsonPath": "contentField", "equals": "needle" },
+    { "dump": "regex-search.json", "jsonPath": "summaries", "equals": "add needle,change needle line,remove needle" },
+    { "dump": "regex-search.json", "jsonPath": "diffRegexField", "equals": "needle" },
+    { "dump": "matching-files.json", "jsonPath": "matchingFiles", "equals": "a.txt" },
+    { "dump": "matching-files.json", "jsonPath": "diffKind", "equals": "text" },
+    { "dump": "matching-files.json", "jsonPath": "highlightText", "equals": "needle" },
+    { "dump": "invalid-regex.json", "jsonPath": "hasError", "equals": true },
+    { "dump": "invalid-regex.json", "jsonPath": "loading", "equals": false },
+    { "dump": "cleared.json", "jsonPath": "search", "equals": "" },
+    { "dump": "cleared.json", "jsonPath": "commitCount", "equals": 3 },
+    { "dump": "search-for-selection.json", "jsonPath": "view", "equals": "history" },
+    { "dump": "search-for-selection.json", "jsonPath": "content", "equals": "computeTotal" },
+    { "dump": "search-for-selection.json", "jsonPath": "search", "equals": "content:computeTotal" }
+  ]
+}

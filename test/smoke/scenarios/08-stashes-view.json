@@ -1,0 +1,39 @@
+{
+  "name": "stashes-view",
+  "repoKind": "twoStashes",
+  "settings": { "confirmDiscardStash": false },
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); window.__gitgood.actions.setView('stashes'); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); return JSON.stringify({ view: s.view, stashCount: s.stashes.length, stashes: s.stashes.map((st) => ({ message: st.message, untracked: st.untracked, fileCount: st.fileCount, createdByApp: st.createdByApp })), selectedSha: s.stashesView.selectedSha, selectedFileCount: s.stashesView.files.length }); })()",
+      "dump": "state.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.selectStashViewFile('src/stash-untracked.ts'); await new Promise((r) => setTimeout(r, 400)); const s = window.__gitgood.store.get(); return JSON.stringify({ selectedFile: s.stashesView.selectedFile, diffKind: s.diff.diff && s.diff.diff.kind, newContent: s.diff.diff && s.diff.diff.kind === 'text' ? s.diff.diff.newContent : null }); })()",
+      "dump": "diff.json"
+    },
+    { "shot": "screenshot.png" },
+    {
+      "js": "(async () => { const top = window.__gitgood.store.get().stashes[0]; await window.__gitgood.actions.applyStash(top); await new Promise((r) => setTimeout(r, 400)); const s = window.__gitgood.store.get(); const app = s.status.files.find((f) => f.path === 'src/app.ts'); const untracked = s.status.files.find((f) => f.path === 'src/stash-untracked.ts'); await window.__gitgood.actions.copyToClipboard(top.sha, 'SHA copied'); await new Promise((r) => setTimeout(r, 50)); const toastTitle = s2 => s2.toasts.length ? s2.toasts[s2.toasts.length - 1].title : null; return JSON.stringify({ stashCountAfterApply: s.stashes.length, appStatus: app ? app.status : null, untrackedStatus: untracked ? untracked.status : null, toastTitle: toastTitle(window.__gitgood.store.get()) }); })()",
+      "dump": "apply.json"
+    },
+    {
+      "js": "(async () => { const before = window.__gitgood.store.get().stashes; const top = before[0]; const bottom = before[1]; await window.__gitgood.actions.dropStashView(top); await new Promise((r) => setTimeout(r, 400)); const afterFirstDrop = window.__gitgood.store.get().stashes; await window.__gitgood.actions.dropStashView(bottom); await new Promise((r) => setTimeout(r, 400)); const afterSecondDrop = window.__gitgood.store.get().stashes; return JSON.stringify({ topMessage: top.message, bottomMessage: bottom.message, afterFirstDropCount: afterFirstDrop.length, afterFirstDropMessage: afterFirstDrop[0] ? afterFirstDrop[0].message : null, afterSecondDropCount: afterSecondDrop.length }); })()",
+      "dump": "drop.json"
+    }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "view", "equals": "stashes" },
+    { "dump": "state.json", "jsonPath": "stashCount", "equals": 2 },
+    { "dump": "state.json", "jsonPath": "selectedFileCount", "atLeast": 1 },
+    { "dump": "diff.json", "jsonPath": "diffKind", "equals": "text" },
+    { "dump": "diff.json", "jsonPath": "newContent", "includes": "brandNewInStash" },
+    { "dump": "apply.json", "jsonPath": "stashCountAfterApply", "equals": 2 },
+    { "dump": "apply.json", "jsonPath": "appStatus", "equals": "modified" },
+    { "dump": "apply.json", "jsonPath": "untrackedStatus", "equals": "untracked" },
+    { "dump": "apply.json", "jsonPath": "toastTitle", "equals": "SHA copied" },
+    { "dump": "drop.json", "jsonPath": "afterFirstDropCount", "equals": 1 },
+    { "dump": "drop.json", "jsonPath": "afterFirstDropMessage", "equals": "first stash" },
+    { "dump": "drop.json", "jsonPath": "afterSecondDropCount", "equals": 0 }
+  ]
+}

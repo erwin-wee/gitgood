@@ -1,0 +1,61 @@
+{
+  "name": "issues-dialog",
+  "repoKind": "withGithubRemote",
+  "settings": { "confirmCloseIssue": false },
+  "needsGhStub": true,
+  "ghStubRules": [
+    { "match": "issue list", "stdout": "[{\"number\":42,\"title\":\"Fix login timeout\",\"url\":\"https://github.com/octo/repo/issues/42\",\"state\":\"OPEN\",\"author\":{\"login\":\"octocat\"},\"labels\":[{\"name\":\"bug\",\"color\":\"d73a4a\"}],\"assignees\":[{\"login\":\"octocat\"}],\"milestone\":null,\"createdAt\":\"2026-01-01T00:00:00Z\",\"updatedAt\":\"2026-01-02T00:00:00Z\",\"comments\":2,\"body\":\"Users are logged out too quickly. See https://example.com/ticket/99 for details.\"}]\n" },
+    { "match": "issue view", "stdout": "{\"number\":42,\"title\":\"Fix login timeout\",\"url\":\"https://github.com/octo/repo/issues/42\",\"state\":\"OPEN\",\"author\":{\"login\":\"octocat\"},\"labels\":[{\"name\":\"bug\",\"color\":\"d73a4a\"}],\"assignees\":[{\"login\":\"octocat\"}],\"milestone\":null,\"createdAt\":\"2026-01-01T00:00:00Z\",\"updatedAt\":\"2026-01-02T00:00:00Z\",\"body\":\"Users are logged out too quickly. See https://example.com/ticket/99 for details.\",\"comments\":[{\"author\":{\"login\":\"hubot\"},\"createdAt\":\"2026-01-01T12:00:00Z\",\"body\":\"Can reproduce.\",\"url\":\"https://github.com/octo/repo/issues/42#issuecomment-1\"},{\"author\":{\"login\":\"octocat\"},\"createdAt\":\"2026-01-01T13:00:00Z\",\"body\":\"Looking into it.\",\"url\":\"https://github.com/octo/repo/issues/42#issuecomment-2\"}]}\n" },
+    { "match": "label list", "stdout": "[{\"name\":\"bug\",\"color\":\"d73a4a\",\"description\":\"Something isn't working\"}]\n" },
+    { "match": "milestones", "stdout": "[]\n" },
+    { "match": "issue close", "stdout": "\n" },
+    { "match": "repo view", "stdout": "{\"nameWithOwner\":\"octo/repo\",\"url\":\"https://github.com/octo/repo\",\"defaultBranchRef\":{\"name\":\"main\"},\"isPrivate\":false,\"isFork\":false,\"parent\":null,\"description\":\"Fixture repo\",\"viewerCanAdminister\":true,\"hasIssuesEnabled\":true}\n" },
+    { "match": "auth status", "stdout": "{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"host\":\"github.com\",\"login\":\"octocat\",\"scopes\":\"repo, read:org\",\"gitProtocol\":\"https\"}]}}\n" },
+    { "match": "api user", "stdout": "{\"login\":\"octocat\",\"name\":\"The Octocat\",\"avatar_url\":null}\n" },
+    { "match": "--version", "stdout": "gh version 2.40.0 (2024-01-01)\n" }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.refreshTools(); await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 400)); return JSON.stringify({ signedIn: !!window.__gitgood.store.get().tools?.ghAccount, hasGithubRemote: !!window.__gitgood.store.get().currentRepo?.github }); })()",
+      "dump": "opened.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.openIssuesDialog(); await new Promise((r) => setTimeout(r, 900)); const s = window.__gitgood.store.get(); return JSON.stringify({ dialogKind: s.dialog && s.dialog.kind, listRowCount: document.querySelectorAll('.dialog-body .list-row').length, filterBarVisible: !!document.querySelector('.issues-filter-bar') }); })()",
+      "dump": "list.json"
+    },
+    { "shot": "list-and-detail.png" },
+    {
+      "js": "(async () => { const body = document.querySelector('.dialog-body'); const title = body ? body.querySelector('h3') : null; const badge = body ? body.querySelector('.badge') : null; const chips = Array.from(document.querySelectorAll('.label-chip')).map((el) => el.textContent); return JSON.stringify({ title: title ? title.textContent : null, badge: badge ? badge.textContent : null, chips }); })()",
+      "dump": "detail.json"
+    },
+    {
+      "js": "(async () => { const find = (t) => Array.from(document.querySelectorAll('.dialog-body button')).find((b) => b.textContent.trim() === t); find('Reference in commit').click(); await new Promise((r) => setTimeout(r, 200)); return JSON.stringify({ description: window.__gitgood.store.get().changes.description }); })()",
+      "dump": "reference.json"
+    },
+    {
+      "js": "(async () => { const find = (t) => Array.from(document.querySelectorAll('.dialog-body button')).find((b) => b.textContent.trim() === t); const before = document.querySelectorAll('.dialog-body .list-row').length; find('Close').click(); await new Promise((r) => setTimeout(r, 700)); const body = document.querySelector('.dialog-body'); const badge = body ? body.querySelector('.badge') : null; return JSON.stringify({ rowsBefore: before, rowsAfter: document.querySelectorAll('.dialog-body .list-row').length, badgeAfterClose: badge ? badge.textContent : null }); })()",
+      "dump": "close.json"
+    },
+    {
+      "js": "(async () => { const find = (t) => Array.from(document.querySelectorAll('.dialog-body button')).find((b) => b.textContent.trim() === t); find('Create branch for issue').click(); await new Promise((r) => setTimeout(r, 300)); const d = window.__gitgood.store.get().dialog; return JSON.stringify({ dialogKind: d && d.kind, initialName: d && d.kind === 'new-branch' ? d.initialName : null }); })()",
+      "dump": "branch.json"
+    }
+  ],
+  "expect": [
+    { "dump": "opened.json", "jsonPath": "signedIn", "equals": true },
+    { "dump": "opened.json", "jsonPath": "hasGithubRemote", "equals": true },
+    { "dump": "list.json", "jsonPath": "dialogKind", "equals": "issues" },
+    { "dump": "list.json", "jsonPath": "listRowCount", "equals": 1 },
+    { "dump": "list.json", "jsonPath": "filterBarVisible", "equals": true },
+    { "dump": "detail.json", "jsonPath": "title", "equals": "Fix login timeout" },
+    { "dump": "detail.json", "jsonPath": "badge", "equals": "Open" },
+    { "dump": "detail.json", "jsonPath": "chips", "includes": "bug" },
+    { "dump": "reference.json", "jsonPath": "description", "equals": "Fixes #42" },
+    { "dump": "close.json", "jsonPath": "rowsBefore", "equals": 1 },
+    { "dump": "close.json", "jsonPath": "rowsAfter", "equals": 1 },
+    { "dump": "close.json", "jsonPath": "badgeAfterClose", "equals": "Closed" },
+    { "dump": "branch.json", "jsonPath": "dialogKind", "equals": "new-branch" },
+    { "dump": "branch.json", "jsonPath": "initialName", "equals": "42-fix-login-timeout" }
+  ]
+}

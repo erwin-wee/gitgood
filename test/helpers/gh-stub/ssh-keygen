@@ -1,0 +1,2 @@
+#!/usr/bin/env node
+require('./engine.js').runStub('SSH_KEYGEN');

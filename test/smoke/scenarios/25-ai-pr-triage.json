@@ -1,0 +1,62 @@
+{
+  "name": "ai-pr-triage",
+  "repoKind": "withGithubRemote",
+  "settings": {},
+  "needsGhStub": true,
+  "needsClaudeStub": true,
+  "ghStubRules": [
+    { "match": "--version", "stdout": "gh version 2.40.0 (2024-01-01)\n" },
+    { "match": "auth status", "stdout": "{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"host\":\"github.com\",\"login\":\"octocat\",\"scopes\":\"repo, read:org\",\"gitProtocol\":\"https\"}]}}\n" },
+    { "match": "api user", "stdout": "{\"login\":\"octocat\",\"name\":\"The Octocat\",\"avatar_url\":null}\n" },
+    {
+      "match": "pr list",
+      "stdout": "[{\"number\":1,\"title\":\"Add caching layer\",\"url\":\"https://github.com/octo/repo/pull/1\",\"author\":{\"login\":\"alice\"},\"headRefName\":\"add-cache\",\"baseRefName\":\"main\",\"headRefOid\":\"aaa111\",\"headRepository\":null,\"headRepositoryOwner\":null,\"isCrossRepository\":false,\"isDraft\":false,\"state\":\"OPEN\",\"createdAt\":\"2026-01-01T00:00:00Z\",\"updatedAt\":\"2026-01-05T00:00:00Z\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"SUCCESS\"}],\"reviewDecision\":null,\"body\":\"Adds a cache in front of the slow lookup.\",\"additions\":40,\"deletions\":2,\"changedFiles\":2,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"CLEAN\",\"labels\":[],\"assignees\":[],\"reviewRequests\":[{\"login\":\"octocat\"}]},{\"number\":2,\"title\":\"WIP: new dashboard\",\"url\":\"https://github.com/octo/repo/pull/2\",\"author\":{\"login\":\"octocat\"},\"headRefName\":\"wip-dashboard\",\"baseRefName\":\"main\",\"headRefOid\":\"bbb222\",\"headRepository\":null,\"headRepositoryOwner\":null,\"isCrossRepository\":false,\"isDraft\":true,\"state\":\"OPEN\",\"createdAt\":\"2026-01-02T00:00:00Z\",\"updatedAt\":\"2026-01-06T00:00:00Z\",\"statusCheckRollup\":[],\"reviewDecision\":null,\"body\":\"\",\"additions\":10,\"deletions\":0,\"changedFiles\":1,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"DRAFT\",\"labels\":[],\"assignees\":[],\"reviewRequests\":[]},{\"number\":3,\"title\":\"Fix flaky test\",\"url\":\"https://github.com/octo/repo/pull/3\",\"author\":{\"login\":\"octocat\"},\"headRefName\":\"fix-flaky\",\"baseRefName\":\"main\",\"headRefOid\":\"ccc333\",\"headRepository\":null,\"headRepositoryOwner\":null,\"isCrossRepository\":false,\"isDraft\":false,\"state\":\"OPEN\",\"createdAt\":\"2026-01-03T00:00:00Z\",\"updatedAt\":\"2026-01-07T00:00:00Z\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"FAILURE\"}],\"reviewDecision\":null,\"body\":\"\",\"additions\":5,\"deletions\":5,\"changedFiles\":1,\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"CLEAN\",\"labels\":[],\"assignees\":[],\"reviewRequests\":[]}]\n"
+    },
+    { "match": "pr checks", "stdout": "[{\"name\":\"build\",\"state\":\"FAILURE\",\"bucket\":\"fail\",\"link\":\"\",\"workflow\":\"CI\",\"description\":\"\",\"startedAt\":\"\",\"completedAt\":\"\"}]\n" }
+  ],
+  "claudeStubRules": [
+    {
+      "match": "You triage a batch of open pull requests",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "items": [
+            { "number": 1, "summary": "Adds a caching layer in front of the slow lookup.", "state": "waiting-on-others", "reason": "Review requested from octocat.", "nextAction": "review" },
+            { "number": 2, "summary": "Work-in-progress redesign of the dashboard.", "state": "ready-to-merge", "reason": "Still a draft.", "nextAction": "none" },
+            { "number": 3, "summary": "Attempts to fix a flaky test but the build check is failing.", "state": "checks-failing", "reason": "The build check is failing.", "nextAction": "view-checks" }
+          ]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.refreshTools(); await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 400)); const s = window.__gitgood.store.get(); return JSON.stringify({ hasGithubRemote: !!s.currentRepo?.github, login: s.tools?.ghAccount?.login ?? null }); })()",
+      "dump": "opened.json"
+    },
+    {
+      "js": "(async () => { document.querySelector('.toolbar-button.branch').click(); await new Promise((r) => setTimeout(r, 150)); const tab = Array.from(document.querySelectorAll('.popover-tabs .tab')).find((b) => b.textContent.trim().startsWith('Pull requests')); tab.click(); for (let i = 0; i < 50; i++) { if (window.__gitgood.store.get().prs.list.length >= 3) break; await new Promise((r) => setTimeout(r, 100)); } await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); const summarizeBtn = Array.from(document.querySelectorAll('.popover button')).find((b) => b.textContent.trim().startsWith('Summarize')); return JSON.stringify({ prCount: s.prs.list.length, rowCount: document.querySelectorAll('.popover .pr-row').length, summarizeLabel: summarizeBtn ? summarizeBtn.textContent.trim() : null }); })()",
+      "dump": "list.json"
+    },
+    {
+      "js": "(async () => { const login = window.__gitgood.store.get().tools?.ghAccount?.login ?? null; const before = window.__gitgood.actions.waitingOnYouPrs(window.__gitgood.store.get().prs.list, window.__gitgood.store.get().triage.byNumber, login).length; const btn = Array.from(document.querySelectorAll('.popover button')).find((b) => b.textContent.trim().startsWith('Summarize')); btn.click(); for (let i = 0; i < 100; i++) { if (!window.__gitgood.store.get().triage.loading) break; await new Promise((r) => setTimeout(r, 100)); } await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); const cache = s.triage.byNumber; const after = window.__gitgood.actions.waitingOnYouPrs(s.prs.list, cache, login).length; const chips = Array.from(document.querySelectorAll('.popover .triage-line .badge')).map((el) => el.textContent.trim()); return JSON.stringify({ waitingBeforeSummarize: before, waitingAfterSummarize: after, state1: cache[1] && cache[1].state, state2: cache[2] && cache[2].state, state3: cache[3] && cache[3].state, nextAction1: cache[1] && cache[1].nextAction, chipCount: chips.length }); })()",
+      "dump": "triage.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "opened.json", "jsonPath": "hasGithubRemote", "equals": true },
+    { "dump": "opened.json", "jsonPath": "login", "equals": "octocat" },
+    { "dump": "list.json", "jsonPath": "prCount", "equals": 3 },
+    { "dump": "list.json", "jsonPath": "rowCount", "equals": 3 },
+    { "dump": "list.json", "jsonPath": "summarizeLabel", "equals": "Summarize 3 pull requests" },
+    { "dump": "triage.json", "jsonPath": "waitingBeforeSummarize", "equals": 1 },
+    { "dump": "triage.json", "jsonPath": "waitingAfterSummarize", "equals": 1 },
+    { "dump": "triage.json", "jsonPath": "state1", "equals": "waiting-on-you" },
+    { "dump": "triage.json", "jsonPath": "state2", "equals": "draft" },
+    { "dump": "triage.json", "jsonPath": "state3", "equals": "waiting-on-author" },
+    { "dump": "triage.json", "jsonPath": "nextAction1", "equals": "review" },
+    { "dump": "triage.json", "jsonPath": "chipCount", "equals": 3 }
+  ]
+}

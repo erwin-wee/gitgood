@@ -1,0 +1,52 @@
+{
+  "name": "notifications-inbox",
+  "repoKind": "withGithubRemote",
+  "needsGhStub": true,
+  "ghStubRules": [
+    { "match": "--version", "stdout": "gh version 2.40.0 (2024-01-01)\n" },
+    { "match": "auth status", "stdout": "{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"host\":\"github.com\",\"login\":\"octocat\",\"scopes\":\"repo, notifications\",\"gitProtocol\":\"https\"}]}}\n" },
+    { "match": "api user", "stdout": "{\"login\":\"octocat\",\"name\":\"The Octocat\",\"avatar_url\":null}\n" },
+    { "match": "pr list", "stdout": "[]\n" },
+    { "match": "api notifications", "stdout": "HTTP/2.0 200 OK\r\nX-Poll-Interval: 60\r\nLast-Modified: Thu, 25 Oct 2018 16:32:53 GMT\r\n\r\n[{\"id\":\"1\",\"unread\":true,\"reason\":\"review_requested\",\"updated_at\":\"2026-01-03T00:00:00Z\",\"last_read_at\":null,\"subject\":{\"title\":\"Add feature\",\"url\":\"https://api.github.com/repos/octo/repo/pulls/5\",\"type\":\"PullRequest\"},\"repository\":{\"name\":\"repo\",\"owner\":{\"login\":\"octo\"},\"html_url\":\"https://github.com/octo/repo\"}},{\"id\":\"2\",\"unread\":true,\"reason\":\"mention\",\"updated_at\":\"2026-01-02T00:00:00Z\",\"last_read_at\":null,\"subject\":{\"title\":\"You were mentioned\",\"url\":\"https://api.github.com/repos/octo/other/issues/9\",\"type\":\"Issue\"},\"repository\":{\"name\":\"other\",\"owner\":{\"login\":\"octo\"},\"html_url\":\"https://github.com/octo/other\"}},{\"id\":\"3\",\"unread\":true,\"reason\":\"ci_activity\",\"updated_at\":\"2026-01-01T00:00:00Z\",\"last_read_at\":null,\"subject\":{\"title\":\"CI failed on main\",\"url\":null,\"type\":\"CheckSuite\"},\"repository\":{\"name\":\"repo\",\"owner\":{\"login\":\"octo\"},\"html_url\":\"https://github.com/octo/repo\"}}]\r\n" },
+    { "match": "pr view", "stdout": "{\"number\":5,\"title\":\"Add feature\",\"url\":\"https://github.com/octo/repo/pull/5\",\"author\":{\"login\":\"octocat\"},\"headRefName\":\"feature\",\"baseRefName\":\"main\",\"state\":\"OPEN\",\"createdAt\":\"2026-01-01T00:00:00Z\",\"updatedAt\":\"2026-01-03T00:00:00Z\",\"isDraft\":false}\n" },
+    { "match": "pr checks", "stdout": "[]\n" },
+    { "match": "notifications/threads", "stdout": "" },
+    { "match": "last_read_at", "stdout": "" }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.refreshTools(); await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 400)); await window.__gitgood.actions.refreshInbox(); await new Promise((r) => setTimeout(r, 400)); const s = window.__gitgood.store.get(); return JSON.stringify({ signedIn: !!s.tools?.ghAccount, hasGithubRemote: !!s.currentRepo?.github, unreadCount: s.inbox.unreadCount, itemCount: s.inbox.items.length }); })()",
+      "dump": "state.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.toggleInboxPanel(); await new Promise((r) => setTimeout(r, 300)); const groups = Array.from(document.querySelectorAll('.inbox-panel .list-group-header')).map((el) => el.textContent); const chips = Array.from(document.querySelectorAll('.inbox-panel .badge')).map((el) => el.textContent); return JSON.stringify({ open: window.__gitgood.store.get().inboxUi.open, groups, chips }); })()",
+      "dump": "panel.json"
+    },
+    { "shot": "bell-and-panel.png" },
+    {
+      "js": "(async () => { const rows = Array.from(document.querySelectorAll('.inbox-item')); const row = rows.find((r) => r.textContent.includes('Add feature')); row.click(); await new Promise((r) => setTimeout(r, 600)); const s = window.__gitgood.store.get(); return JSON.stringify({ dialogKind: s.dialog && s.dialog.kind, prNumber: s.dialog && s.dialog.kind === 'pr-details' ? s.dialog.pr.number : null, unreadCountAfterOpen: s.inbox.unreadCount }); })()",
+      "dump": "open-pr.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeDialog(); await window.__gitgood.actions.markAllInboxRead(); await new Promise((r) => setTimeout(r, 300)); return JSON.stringify({ unreadCount: window.__gitgood.store.get().inbox.unreadCount }); })()",
+      "dump": "mark-all.json"
+    }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "signedIn", "equals": true },
+    { "dump": "state.json", "jsonPath": "hasGithubRemote", "equals": true },
+    { "dump": "state.json", "jsonPath": "unreadCount", "equals": 3 },
+    { "dump": "state.json", "jsonPath": "itemCount", "equals": 3 },
+    { "dump": "panel.json", "jsonPath": "open", "equals": true },
+    { "dump": "panel.json", "jsonPath": "groups", "includes": "octo/repo" },
+    { "dump": "panel.json", "jsonPath": "groups", "includes": "octo/other" },
+    { "dump": "panel.json", "jsonPath": "chips", "includes": "Review requested" },
+    { "dump": "panel.json", "jsonPath": "chips", "includes": "Mention" },
+    { "dump": "panel.json", "jsonPath": "chips", "includes": "Checks" },
+    { "dump": "open-pr.json", "jsonPath": "dialogKind", "equals": "pr-details" },
+    { "dump": "open-pr.json", "jsonPath": "prNumber", "equals": 5 },
+    { "dump": "open-pr.json", "jsonPath": "unreadCountAfterOpen", "equals": 2 },
+    { "dump": "mark-all.json", "jsonPath": "unreadCount", "equals": 0 }
+  ]
+}

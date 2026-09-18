@@ -1,0 +1,48 @@
+{
+  "name": "worktrees",
+  "repoKind": "withBranch",
+  "steps": [
+    { "wait": 1200 },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; const wtPath = repoPath + '-wt'; await window.__gitgood.actions.addLocalRepository(repoPath); await new Promise((r) => setTimeout(r, 400)); const ok = await window.__gitgood.actions.addWorktree({ path: wtPath, branch: null, newBranch: 'wt-branch', startPoint: null, detach: false }); await new Promise((r) => setTimeout(r, 600)); const s = window.__gitgood.store.get(); const main = s.repos.find((r) => r.path === repoPath); const child = s.repos.find((r) => r.path === wtPath); return JSON.stringify({ ok, hasMain: !!main, childWorktreeOf: child ? child.worktreeOf : null, mainId: main ? main.id : null, currentIsChild: !!(s.currentRepo && s.currentRepo.path === wtPath), branchName: s.status ? s.status.branch.name : null }); })()",
+      "dump": "add.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.openDialog({ kind: 'worktrees' }); await new Promise((r) => setTimeout(r, 700)); const s = window.__gitgood.store.get(); return JSON.stringify({ dialogKind: s.dialog ? s.dialog.kind : null }); })()",
+      "dump": "dialog.json"
+    },
+    { "shot": "screenshot.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); window.__gitgood.actions.handleMenuAction('show-worktrees'); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); return JSON.stringify({ dialogKindFromShortcut: s.dialog ? s.dialog.kind : null }); })()",
+      "dump": "shortcut.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); const wtPath = __REPO_PATH__ + '-wt'; await window.gitgoodBridge.invokeRaw('repo.writeFile', wtPath, 'new-file.txt', 'hello from worktree\\n'); await window.__gitgood.actions.refreshStatus(); await new Promise((r) => setTimeout(r, 300)); window.__gitgood.store.set((s) => ({ changes: { ...s.changes, summary: 'Commit in worktree' } })); await window.__gitgood.actions.commit(); await new Promise((r) => setTimeout(r, 500)); const history = await window.gitgoodBridge.invokeRaw('repo.history', wtPath, { ref: null, skip: 0, limit: 1, path: null, search: null }); return JSON.stringify({ committed: history.ok ? history.value.commits[0].summary : null }); })()",
+      "dump": "commit.json"
+    },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; const main = window.__gitgood.store.get().repos.find((r) => r.path === repoPath); await window.__gitgood.actions.openRepository(main); await new Promise((r) => setTimeout(r, 500)); await window.__gitgood.actions.refreshBranches(); await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); return JSON.stringify({ onMain: !!(s.currentRepo && s.currentRepo.path === repoPath), hasNewBranch: s.branches.some((b) => b.name === 'wt-branch') }); })()",
+      "dump": "switch-back.json"
+    },
+    {
+      "js": "(async () => { const repoPath = __REPO_PATH__; const wtPath = repoPath + '-wt'; const s0 = window.__gitgood.store.get(); const child = s0.repos.find((r) => r.path === wtPath); const existedBefore = (await window.gitgoodBridge.invokeRaw('app.pathExists', wtPath)).value; await window.__gitgood.actions.removeWorktree(child, false); await new Promise((r) => setTimeout(r, 600)); const s = window.__gitgood.store.get(); const existsAfter = (await window.gitgoodBridge.invokeRaw('app.pathExists', wtPath)).value; return JSON.stringify({ existedBefore, existsAfter, stillThere: s.repos.some((r) => r.path === wtPath), switchedBackToMain: !!(s.currentRepo && s.currentRepo.path === repoPath) }); })()",
+      "dump": "remove.json"
+    }
+  ],
+  "expect": [
+    { "dump": "add.json", "jsonPath": "ok", "equals": true },
+    { "dump": "add.json", "jsonPath": "hasMain", "equals": true },
+    { "dump": "add.json", "jsonPath": "currentIsChild", "equals": true },
+    { "dump": "add.json", "jsonPath": "branchName", "equals": "wt-branch" },
+    { "dump": "add.json", "jsonPath": "childWorktreeOf", "truthy": true },
+    { "dump": "dialog.json", "jsonPath": "dialogKind", "equals": "worktrees" },
+    { "dump": "shortcut.json", "jsonPath": "dialogKindFromShortcut", "equals": "worktrees" },
+    { "dump": "commit.json", "jsonPath": "committed", "equals": "Commit in worktree" },
+    { "dump": "switch-back.json", "jsonPath": "onMain", "equals": true },
+    { "dump": "switch-back.json", "jsonPath": "hasNewBranch", "equals": true },
+    { "dump": "remove.json", "jsonPath": "existedBefore", "equals": true },
+    { "dump": "remove.json", "jsonPath": "existsAfter", "equals": false },
+    { "dump": "remove.json", "jsonPath": "stillThere", "equals": false },
+    { "dump": "remove.json", "jsonPath": "switchedBackToMain", "equals": true }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "switch-branch",
+  "repoKind": "withBranch",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); const before = window.__gitgood.store.get().status.branch.name; const branch = window.__gitgood.store.get().branches.find((b) => b.kind === 'local' && b.name === 'feature'); if (!branch) return JSON.stringify({ error: 'feature branch not found', before }); await window.__gitgood.actions.checkoutBranch(branch); await new Promise((r) => setTimeout(r, 300)); const after = window.__gitgood.store.get().status.branch.name; return JSON.stringify({ before, after }); })()",
+      "dump": "state.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "before", "equals": "main" },
+    { "dump": "state.json", "jsonPath": "after", "equals": "feature" }
+  ]
+}

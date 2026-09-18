@@ -1,0 +1,80 @@
+{
+  "name": "ai-split-commits",
+  "repoKind": "splitCommitsFixture",
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "group a developer's uncommitted changes into a small, ordered set of coherent commits",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "commits": [
+            { "summary": "Update a.ts", "description": "", "hunkIds": ["a33e17680cfa", "07dca80fab14"], "wholeFiles": [], "rationale": "Both hunks touch a.ts." },
+            { "summary": "Update b.ts", "description": "", "hunkIds": ["480d9fa10acc"], "wholeFiles": [], "rationale": "Unrelated change in b.ts." }
+          ]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1000 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); return JSON.stringify({ fileCount: (s.status || { files: [] }).files.length, entryVisible: window.__gitgood.actions.splitEntryVisible(), entryEnabled: window.__gitgood.actions.splitEntryEnabled() }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.openSplitDialog(); for (let i = 0; i < 60; i++) { const s = window.__gitgood.store.get(); if (s.split.preflight && !s.split.preflightLoading) break; await new Promise((r) => setTimeout(r, 100)); } const s = window.__gitgood.store.get(); return JSON.stringify({ hunkCount: s.split.preflight ? s.split.preflight.hunkCount : null, fileCount: s.split.preflight ? s.split.preflight.fileCount : null, dialogOpen: s.dialog ? s.dialog.kind : null }); })()",
+      "dump": "preflight.json"
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.proposeSplit(); for (let i = 0; i < 80; i++) { const s = window.__gitgood.store.get(); if (!s.split.planLoading && (s.split.plan || s.split.planError)) break; await new Promise((r) => setTimeout(r, 150)); } const s = window.__gitgood.store.get(); const plan = s.split.plan; return JSON.stringify({ planError: s.split.planError, commitCount: plan ? plan.commits.length : null, summaries: plan ? plan.commits.map((c) => c.summary) : null, unassignedCount: plan ? plan.unassigned.length : null, canApply: window.__gitgood.actions.canApplySplit(plan) }); })()",
+      "dump": "plan.json"
+    },
+    {
+      "js": "(async () => { const before = window.__gitgood.store.get().split.plan; const c1 = before.commits[0].id; const c2 = before.commits[1].id; const movedHunk = before.commits[0].hunkIds[0]; window.__gitgood.actions.moveHunkTo(movedHunk, c2); const afterMove = window.__gitgood.store.get().split.plan; window.__gitgood.actions.moveHunkTo(movedHunk, 'unassigned'); const afterUnassign = window.__gitgood.store.get().split.plan; window.__gitgood.actions.moveHunkTo(movedHunk, c1); const afterRestore = window.__gitgood.store.get().split.plan; window.__gitgood.actions.updateCommitMessage(c2, { summary: 'Edited summary' }); const afterEdit = window.__gitgood.store.get().split.plan; window.__gitgood.actions.mergeCommitInto(c1, c2); const afterMerge = window.__gitgood.store.get().split.plan; return JSON.stringify({ c1CountAfterMove: afterMove.commits.find((c) => c.id === c1).hunkIds.length, c2CountAfterMove: afterMove.commits.find((c) => c.id === c2).hunkIds.length, unassignedAfterUnassign: afterUnassign.unassigned.length, c1CountAfterRestore: afterRestore.commits.find((c) => c.id === c1).hunkIds.length, unassignedAfterRestore: afterRestore.unassigned.length, editedSummary: afterEdit.commits.find((c) => c.id === c2).summary, commitCountAfterMerge: afterMerge.commits.length, mergedHunkCount: afterMerge.commits[0].hunkIds.length }); })()",
+      "dump": "edit.json"
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.proposeSplit(); for (let i = 0; i < 80; i++) { const s = window.__gitgood.store.get(); if (!s.split.planLoading && (s.split.plan || s.split.planError)) break; await new Promise((r) => setTimeout(r, 150)); } const s = window.__gitgood.store.get(); const plan = s.split.plan; return JSON.stringify({ commitCount: plan ? plan.commits.length : null, summaries: plan ? plan.commits.map((c) => c.summary) : null }); })()",
+      "dump": "replan.json"
+    },
+    { "shot": "plan-screenshot.png" },
+    {
+      "js": "(async () => { await window.__gitgood.actions.applySplit(); for (let i = 0; i < 60; i++) { const s = window.__gitgood.store.get(); if (!s.split.applying) break; await new Promise((r) => setTimeout(r, 100)); } await new Promise((r) => setTimeout(r, 300)); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); return JSON.stringify({ applyError: s.split.applyError, dialogClosed: !s.dialog, historyCount: s.history.commits.length, topTwoSummaries: s.history.commits.slice(0, 2).map((c) => c.summary), fileCountAfter: (s.status || { files: [] }).files.length }); })()",
+      "dump": "after-apply.json"
+    },
+    { "shot": "after-apply-screenshot.png" },
+    {
+      "js": "(async () => { await window.__gitgood.actions.undoSplit(); await new Promise((r) => setTimeout(r, 300)); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); return JSON.stringify({ historyCount: s.history.commits.length, topSummary: s.history.commits[0] && s.history.commits[0].summary, fileCount: (s.status || { files: [] }).files.length, aChanged: (s.status || { files: [] }).files.some((f) => f.path === 'a.ts'), bChanged: (s.status || { files: [] }).files.some((f) => f.path === 'b.ts') }); })()",
+      "dump": "after-undo.json"
+    }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "fileCount", "equals": 2 },
+    { "dump": "before.json", "jsonPath": "entryVisible", "equals": true },
+    { "dump": "before.json", "jsonPath": "entryEnabled", "equals": true },
+    { "dump": "preflight.json", "jsonPath": "hunkCount", "equals": 3 },
+    { "dump": "preflight.json", "jsonPath": "dialogOpen", "equals": "split-plan" },
+    { "dump": "plan.json", "jsonPath": "commitCount", "equals": 2 },
+    { "dump": "plan.json", "jsonPath": "canApply", "truthy": true },
+    { "dump": "edit.json", "jsonPath": "c1CountAfterMove", "equals": 1 },
+    { "dump": "edit.json", "jsonPath": "c2CountAfterMove", "equals": 2 },
+    { "dump": "edit.json", "jsonPath": "unassignedAfterUnassign", "equals": 1 },
+    { "dump": "edit.json", "jsonPath": "c1CountAfterRestore", "equals": 2 },
+    { "dump": "edit.json", "jsonPath": "unassignedAfterRestore", "equals": 0 },
+    { "dump": "edit.json", "jsonPath": "editedSummary", "equals": "Edited summary" },
+    { "dump": "edit.json", "jsonPath": "commitCountAfterMerge", "equals": 1 },
+    { "dump": "edit.json", "jsonPath": "mergedHunkCount", "equals": 3 },
+    { "dump": "replan.json", "jsonPath": "commitCount", "equals": 2 },
+    { "dump": "after-apply.json", "jsonPath": "dialogClosed", "equals": true },
+    { "dump": "after-apply.json", "jsonPath": "historyCount", "equals": 3 },
+    { "dump": "after-apply.json", "jsonPath": "fileCountAfter", "equals": 0 },
+    { "dump": "after-apply.json", "jsonPath": "topTwoSummaries.0", "equals": "Update b.ts" },
+    { "dump": "after-apply.json", "jsonPath": "topTwoSummaries.1", "equals": "Update a.ts" },
+    { "dump": "after-undo.json", "jsonPath": "historyCount", "equals": 1 },
+    { "dump": "after-undo.json", "jsonPath": "topSummary", "equals": "Initial commit" },
+    { "dump": "after-undo.json", "jsonPath": "fileCount", "equals": 2 },
+    { "dump": "after-undo.json", "jsonPath": "aChanged", "equals": true },
+    { "dump": "after-undo.json", "jsonPath": "bChanged", "equals": true }
+  ]
+}

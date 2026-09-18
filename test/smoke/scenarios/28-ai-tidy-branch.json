@@ -1,0 +1,72 @@
+{
+  "name": "ai-tidy-branch",
+  "repoKind": "tidyBranchFixture",
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "You propose a minimal, safe interactive-rebase cleanup",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "rows": [
+            { "sha": "__SHA_REAL__", "action": "pick", "squashInto": null, "message": "Add real feature", "rationale": "" },
+            { "sha": "__SHA_WIP__", "action": "squash", "squashInto": "__SHA_REAL__", "message": "Add real feature", "rationale": "Fixup for the previous commit." },
+            { "sha": "__SHA_TYPO__", "action": "reword", "squashInto": null, "message": "Fix a typo in the docs", "rationale": "The original message did not say what was fixed." }
+          ]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1000 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); return JSON.stringify({ branch: s.status ? s.status.branch.name : null, defaultBranch: s.defaultBranch, visible: window.__gitgood.actions.tidyBranchVisible(), reason: window.__gitgood.actions.tidyBranchDisabledReason(null) }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.tidyBranch(); for (let i = 0; i < 60; i++) { const s = window.__gitgood.store.get(); if (s.rebase.preflight && !s.rebase.preflightLoading) break; await new Promise((r) => setTimeout(r, 100)); } const s = window.__gitgood.store.get(); return JSON.stringify({ dialogOpen: s.dialog ? s.dialog.kind : null, count: s.rebase.preflight ? s.rebase.preflight.count : null, pushedCount: s.rebase.preflight ? s.rebase.preflight.pushedCount : null, hasMergeCommit: s.rebase.preflight ? s.rebase.preflight.hasMergeCommit : null, resolvedBase: s.rebase.preflight ? s.rebase.preflight.resolvedBase : null }); })()",
+      "dump": "preflight.json"
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.proposeRebasePlan(); for (let i = 0; i < 80; i++) { const s = window.__gitgood.store.get(); if (!s.rebase.planLoading && (s.rebase.plan || s.rebase.planError)) break; await new Promise((r) => setTimeout(r, 150)); } const s = window.__gitgood.store.get(); const plan = s.rebase.plan; return JSON.stringify({ planError: s.rebase.planError, rowCount: plan ? plan.rows.length : null, rowActions: plan ? plan.rows.map((r) => r.action) : null, alreadyTidy: window.__gitgood.actions.rebaseAlreadyTidy(plan), canApply: window.__gitgood.actions.canApplyRebasePlan(plan) }); })()",
+      "dump": "plan.json"
+    },
+    { "shot": "plan-screenshot.png" },
+    {
+      "js": "(async () => { await window.__gitgood.actions.applyRebasePlan(); for (let i = 0; i < 60; i++) { const s = window.__gitgood.store.get(); if (!s.rebase.applying) break; await new Promise((r) => setTimeout(r, 100)); } await new Promise((r) => setTimeout(r, 300)); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); return JSON.stringify({ applyError: s.rebase.applyError, dialogClosed: !s.dialog, historyCount: s.history.commits.length, summaries: s.history.commits.map((c) => c.summary) }); })()",
+      "dump": "after-apply.json"
+    },
+    { "shot": "after-apply-screenshot.png" },
+    {
+      "js": "(async () => { await window.__gitgood.actions.undoRebasePlan(); await new Promise((r) => setTimeout(r, 300)); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); return JSON.stringify({ historyCount: s.history.commits.length, summaries: s.history.commits.map((c) => c.summary) }); })()",
+      "dump": "after-undo.json"
+    }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "branch", "equals": "feature" },
+    { "dump": "before.json", "jsonPath": "defaultBranch", "equals": "main" },
+    { "dump": "before.json", "jsonPath": "visible", "equals": true },
+    { "dump": "before.json", "jsonPath": "reason", "equals": null },
+    { "dump": "preflight.json", "jsonPath": "dialogOpen", "equals": "tidy-branch" },
+    { "dump": "preflight.json", "jsonPath": "count", "equals": 3 },
+    { "dump": "preflight.json", "jsonPath": "pushedCount", "equals": 0 },
+    { "dump": "preflight.json", "jsonPath": "hasMergeCommit", "equals": false },
+    { "dump": "preflight.json", "jsonPath": "resolvedBase", "equals": "main" },
+    { "dump": "plan.json", "jsonPath": "rowCount", "equals": 3 },
+    { "dump": "plan.json", "jsonPath": "rowActions.0", "equals": "pick" },
+    { "dump": "plan.json", "jsonPath": "rowActions.1", "equals": "squash" },
+    { "dump": "plan.json", "jsonPath": "rowActions.2", "equals": "reword" },
+    { "dump": "plan.json", "jsonPath": "alreadyTidy", "equals": false },
+    { "dump": "plan.json", "jsonPath": "canApply", "equals": true },
+    { "dump": "after-apply.json", "jsonPath": "applyError", "equals": null },
+    { "dump": "after-apply.json", "jsonPath": "dialogClosed", "equals": true },
+    { "dump": "after-apply.json", "jsonPath": "historyCount", "equals": 3 },
+    { "dump": "after-apply.json", "jsonPath": "summaries.0", "equals": "Fix a typo in the docs" },
+    { "dump": "after-apply.json", "jsonPath": "summaries.1", "equals": "Add real feature" },
+    { "dump": "after-apply.json", "jsonPath": "summaries.2", "equals": "Initial commit on main" },
+    { "dump": "after-undo.json", "jsonPath": "historyCount", "equals": 4 },
+    { "dump": "after-undo.json", "jsonPath": "summaries.0", "equals": "fix typo" },
+    { "dump": "after-undo.json", "jsonPath": "summaries.1", "equals": "wip" },
+    { "dump": "after-undo.json", "jsonPath": "summaries.2", "equals": "Add real feature" }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "ai-release-notes",
+  "repoKind": "releaseNotesReady",
+  "settings": {},
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "You write release notes for a desktop Git client",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "sections": [{ "title": "Fixes", "items": [{ "text": "Fixed a crash on startup", "refs": ["#12"] }] }]
+        }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 900)); const s = window.__gitgood.store.get(); return JSON.stringify({ branch: s.status && s.status.branch.name }); })()",
+      "dump": "before.json"
+    },
+    {
+      "js": "(async () => { window.__gitgood.actions.openReleaseNotes(); const find = (t) => Array.from(document.querySelectorAll('.dialog button')).find((b) => b.textContent.trim() === t); for (let i = 0; i < 60; i++) { const btn = find('Generate'); if (btn && !btn.disabled) break; await new Promise((r) => setTimeout(r, 150)); } find('Generate').click(); for (let i = 0; i < 80; i++) { const s = window.__gitgood.store.get(); const p = s.ai['<release notes>']; if (p && (p.phase === 'done' || p.phase === 'error')) break; await new Promise((r) => setTimeout(r, 150)); } await new Promise((r) => setTimeout(r, 400)); const ta = document.querySelector('.dialog-body textarea'); const dialog = window.__gitgood.store.get().dialog; return JSON.stringify({ dialogKind: dialog && dialog.kind, markdown: ta ? ta.value : null }); })()",
+      "dump": "generated.json"
+    },
+    { "shot": "generated.png" },
+    {
+      "js": "(async () => { const find = (t) => Array.from(document.querySelectorAll('.dialog button')).find((b) => b.textContent.trim() === t); find('Insert into CHANGELOG.md').click(); await new Promise((r) => setTimeout(r, 700)); const s = window.__gitgood.store.get(); return JSON.stringify({ dialogKind: s.dialog && s.dialog.kind, files: (s.status ? s.status.files.map((f) => f.path) : []), selected: s.changes.selectedPaths }); })()",
+      "dump": "inserted.json"
+    }
+  ],
+  "expect": [
+    { "dump": "before.json", "jsonPath": "branch", "equals": "main" },
+    { "dump": "generated.json", "jsonPath": "dialogKind", "equals": "release-notes" },
+    { "dump": "generated.json", "jsonPath": "markdown", "includes": "## " },
+    { "dump": "generated.json", "jsonPath": "markdown", "includes": "### Fixes" },
+    { "dump": "generated.json", "jsonPath": "markdown", "includes": "Fixed a crash on startup (#12)" },
+    { "dump": "inserted.json", "jsonPath": "dialogKind", "equals": null },
+    { "dump": "inserted.json", "jsonPath": "files", "includes": "CHANGELOG.md" },
+    { "dump": "inserted.json", "jsonPath": "selected", "includes": "CHANGELOG.md" }
+  ]
+}

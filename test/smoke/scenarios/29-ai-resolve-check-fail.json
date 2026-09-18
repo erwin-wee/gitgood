@@ -1,0 +1,37 @@
+{
+  "name": "ai-resolve-check-fail",
+  "repoKind": "conflictInProgress",
+  "settings": { "ai": { "postResolveCheck": "node -e \"process.exit(2)\"" } },
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "-p",
+      "stdout": {
+        "is_error": false,
+        "structured_output": { "resolutions": [{ "id": 0, "resolved": "main\n// merged: kept the main branch value", "rationale": "Combined both sides, preferring the main branch change.", "confidence": "high" }] }
+      }
+    }
+  ],
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 300)); await window.__gitgood.actions.resolveWithAi('shared.txt'); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); const file = s.status.files.find((f) => f.path === 'shared.txt'); return JSON.stringify({ sharedFile: file || null, checkBanner: s.checkBanner, hasConflicts: s.status.hasConflicts }); })()",
+      "dump": "after.json"
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.retryResolutionWithCheckOutput('shared.txt'); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); return JSON.stringify({ checkBanner: s.checkBanner }); })()",
+      "dump": "retried.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "after.json", "jsonPath": "sharedFile.staged", "equals": false },
+    { "dump": "after.json", "jsonPath": "sharedFile.conflict", "truthy": true },
+    { "dump": "after.json", "jsonPath": "hasConflicts", "equals": true },
+    { "dump": "after.json", "jsonPath": "checkBanner.path", "equals": "shared.txt" },
+    { "dump": "after.json", "jsonPath": "checkBanner.result.ok", "equals": false },
+    { "dump": "after.json", "jsonPath": "checkBanner.result.exitCode", "equals": 2 },
+    { "dump": "after.json", "jsonPath": "checkBanner.retried", "equals": false },
+    { "dump": "retried.json", "jsonPath": "checkBanner.retried", "equals": true }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "history-selection",
+  "repoKind": "basic",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); window.__gitgood.actions.setView('history'); await new Promise((r) => setTimeout(r, 300)); const commits = window.__gitgood.store.get().history.commits; const sha = commits[0] && commits[0].sha; window.__gitgood.actions.selectCommit(sha); await window.__gitgood.actions.loadCommitDetails(sha); await new Promise((r) => setTimeout(r, 200)); const s = window.__gitgood.store.get(); const details = s.history.details; return JSON.stringify({ commitCount: commits.length, view: s.view, selectedShas: s.history.selectedShas, detailsSummary: details && details.commit.summary, detailsFiles: details && details.files.map((f) => f.path) }); })()",
+      "dump": "state.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "commitCount", "atLeast": 2 },
+    { "dump": "state.json", "jsonPath": "view", "equals": "history" },
+    { "dump": "state.json", "jsonPath": "detailsSummary", "equals": "Add a second file" },
+    { "dump": "state.json", "jsonPath": "detailsFiles", "includes": "src/util.ts" }
+  ]
+}

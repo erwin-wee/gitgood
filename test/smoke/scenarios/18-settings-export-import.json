@@ -1,0 +1,20 @@
+{
+  "name": "settings-export-import",
+  "repoKind": "basic",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { const jp = async (...parts) => { const r = await window.gitgoodBridge.invokeRaw('app.joinPath', ...parts); return r.value; }; const inv = async (method, ...args) => { const r = await window.gitgoodBridge.invokeRaw(method, ...args); if (!r.ok) throw new Error(r.error.message); return r.value; }; await window.__gitgood.actions.updateSettings({ theme: 'light' }); await new Promise((r) => setTimeout(r, 200)); const exportPath = await jp(__REPO_PATH__, 'gitgood-settings-export.json'); await inv('settings.exportToFile', exportPath, ['preferences']); const text = await inv('repo.readFile', __REPO_PATH__, 'gitgood-settings-export.json'); const parsed = JSON.parse(text); const forbidden = ['hasApiKey', 'claudeCliPath', 'gitPath', 'ghPath', 'gistId', '\"window\"'].some((k) => text.includes(k)); await window.__gitgood.actions.updateSettings({ theme: 'dark' }); await new Promise((r) => setTimeout(r, 200)); const themeBeforeImport = window.__gitgood.store.get().settings.theme; await inv('settings.import', exportPath, 'merge', ['preferences']); await new Promise((r) => setTimeout(r, 300)); const themeAfterImport = window.__gitgood.store.get().settings.theme; return JSON.stringify({ hasSchema: parsed.schema === 1, hasApp: parsed.app === 'gitgood', hasPreferencesTheme: parsed.preferences && parsed.preferences.theme === 'light', containsForbidden: forbidden, themeBeforeImport, themeAfterImport }); })()",
+      "dump": "state.json"
+    },
+    { "shot": "screenshot.png" }
+  ],
+  "expect": [
+    { "dump": "state.json", "jsonPath": "hasSchema", "equals": true },
+    { "dump": "state.json", "jsonPath": "hasApp", "equals": true },
+    { "dump": "state.json", "jsonPath": "hasPreferencesTheme", "equals": true },
+    { "dump": "state.json", "jsonPath": "containsForbidden", "equals": false },
+    { "dump": "state.json", "jsonPath": "themeBeforeImport", "equals": "dark" },
+    { "dump": "state.json", "jsonPath": "themeAfterImport", "equals": "light" }
+  ]
+}

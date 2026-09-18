@@ -1,0 +1,45 @@
+{
+  "name": "blame-and-file-history",
+  "repoKind": "renamedFile",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); window.__gitgood.actions.setView('history'); await new Promise((r) => setTimeout(r, 300)); const commits = window.__gitgood.store.get().history.commits; const top = commits[0]; window.__gitgood.actions.selectCommit(top.sha); await window.__gitgood.actions.loadCommitDetails(top.sha); await new Promise((r) => setTimeout(r, 200)); window.__gitgood.actions.selectCommitFile('src/new-name.ts'); await new Promise((r) => setTimeout(r, 200)); window.__gitgood.actions.toggleBlame(); await new Promise((r) => setTimeout(r, 400)); const s = window.__gitgood.store.get(); return JSON.stringify({ diffKind: s.diff.diff && s.diff.diff.kind, blameHunkCount: s.diff.blame ? s.diff.blame.hunks.length : null, blameShas: s.diff.blame ? s.diff.blame.hunks.map((h) => h.sha.slice(0, 7)) : null }); })()",
+      "dump": "blame.json"
+    },
+    { "shot": "screenshot-blame.png" },
+    {
+      "js": "(async () => { await window.__gitgood.actions.updateSettings({ diffViewMode: 'split' }); await new Promise((r) => setTimeout(r, 300)); const s = window.__gitgood.store.get(); return JSON.stringify({ viewMode: s.settings.diffViewMode, diffKind: s.diff.diff && s.diff.diff.kind, blameOn: s.diff.blameOn }); })()",
+      "dump": "blame-split.json"
+    },
+    { "shot": "screenshot-blame-split.png" },
+    {
+      "js": "(async () => { await window.__gitgood.actions.updateSettings({ diffViewMode: 'unified' }); window.__gitgood.actions.openFileHistory('src/new-name.ts'); await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); return JSON.stringify({ path: s.history.path, commitSummaries: s.history.commits.map((c) => c.summary), pathHistory: s.history.pathHistory ? s.history.pathHistory.map((e) => e.path) : null }); })()",
+      "dump": "file-history.json"
+    },
+    { "shot": "screenshot-file-history.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.clearFileHistory(); await new Promise((r) => setTimeout(r, 400)); const s = window.__gitgood.store.get(); return JSON.stringify({ path: s.history.path, commitCount: s.history.commits.length }); })()",
+      "dump": "cleared.json"
+    },
+    {
+      "js": "(async () => { const s = window.__gitgood.store.get(); const renameCommit = s.history.commits.find((c) => c.summary === 'Rename to new-name.ts'); window.__gitgood.actions.openFileAtCommit('src/new-name.ts', renameCommit.sha); await new Promise((r) => setTimeout(r, 200)); const dialogKind = window.__gitgood.store.get().dialog && window.__gitgood.store.get().dialog.kind; window.__gitgood.actions.closeDialog(); await window.__gitgood.actions.restoreFileVersion('src/new-name.ts', renameCommit.sha, false); await new Promise((r) => setTimeout(r, 400)); const after = window.__gitgood.store.get(); const file = after.status.files.find((f) => f.path === 'src/new-name.ts'); return JSON.stringify({ dialogKind, restoredFileStatus: file ? file.status : null }); })()",
+      "dump": "restore.json"
+    }
+  ],
+  "expect": [
+    { "dump": "blame.json", "jsonPath": "diffKind", "equals": "text" },
+    { "dump": "blame.json", "jsonPath": "blameHunkCount", "atLeast": 1 },
+    { "dump": "blame-split.json", "jsonPath": "viewMode", "equals": "split" },
+    { "dump": "blame-split.json", "jsonPath": "diffKind", "equals": "text" },
+    { "dump": "blame-split.json", "jsonPath": "blameOn", "equals": true },
+    { "dump": "file-history.json", "jsonPath": "path", "equals": "src/new-name.ts" },
+    { "dump": "file-history.json", "jsonPath": "commitSummaries", "includes": "Add old-name.ts" },
+    { "dump": "file-history.json", "jsonPath": "commitSummaries", "includes": "Rename to new-name.ts" },
+    { "dump": "file-history.json", "jsonPath": "commitSummaries", "includes": "Update new-name.ts" },
+    { "dump": "cleared.json", "jsonPath": "path", "equals": null },
+    { "dump": "cleared.json", "jsonPath": "commitCount", "atLeast": 3 },
+    { "dump": "restore.json", "jsonPath": "dialogKind", "equals": "file-at-commit" },
+    { "dump": "restore.json", "jsonPath": "restoredFileStatus", "equals": "modified" }
+  ]
+}

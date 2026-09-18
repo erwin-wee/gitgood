@@ -1,0 +1,31 @@
+{
+  "name": "settings-sync-dialogs-render",
+  "repoKind": "basic",
+  "steps": [
+    { "wait": 1500 },
+    {
+      "js": "(async () => { window.__gitgood.actions.openDialog({ kind: 'export-settings' }); await new Promise((r) => setTimeout(r, 300)); const text = document.body.textContent || ''; const d = window.__gitgood.store.get().dialog; return JSON.stringify({ dialogKind: d && d.kind, hasChecklist: text.includes('Repository list') && text.includes('Integrations'), hasExclusionNote: text.includes('never includes your API key') }); })()",
+      "dump": "export-dialog.json"
+    },
+    { "shot": "export-dialog.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); window.__gitgood.actions.openDialog({ kind: 'import-settings' }); await new Promise((r) => setTimeout(r, 300)); const text = document.body.textContent || ''; const d = window.__gitgood.store.get().dialog; return JSON.stringify({ dialogKind: d && d.kind, hasChooseButton: text.includes('Choose') }); })()",
+      "dump": "import-dialog.json"
+    },
+    { "shot": "import-dialog.png" },
+    {
+      "js": "(async () => { window.__gitgood.actions.closeAllDialogs(); window.__gitgood.actions.openDialog({ kind: 'settings', tab: 'advanced' }); await new Promise((r) => setTimeout(r, 500)); const text = document.body.textContent || ''; return JSON.stringify({ hasSyncSection: text.includes('Sync with GitHub gist'), degraded: text.includes('Sign in to GitHub to sync settings') || text.includes('Install the GitHub CLI to sync settings') }); })()",
+      "dump": "advanced-tab.json"
+    },
+    { "shot": "advanced-tab.png" }
+  ],
+  "expect": [
+    { "dump": "export-dialog.json", "jsonPath": "dialogKind", "equals": "export-settings" },
+    { "dump": "export-dialog.json", "jsonPath": "hasChecklist", "equals": true },
+    { "dump": "export-dialog.json", "jsonPath": "hasExclusionNote", "equals": true },
+    { "dump": "import-dialog.json", "jsonPath": "dialogKind", "equals": "import-settings" },
+    { "dump": "import-dialog.json", "jsonPath": "hasChooseButton", "equals": true },
+    { "dump": "advanced-tab.json", "jsonPath": "hasSyncSection", "equals": true },
+    { "dump": "advanced-tab.json", "jsonPath": "degraded", "equals": true }
+  ]
+}
