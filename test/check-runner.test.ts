@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { resolveCheckCommand, runPostResolveCheck } from '../src/main/ai/check-runner';
+import { buildCheckInvocation, resolveCheckCommand, runPostResolveCheck } from '../src/main/ai/check-runner';
 
 const SCRIPT_DIR = mkdtempSync(join(tmpdir(), 'gitgood-check-'));
 
@@ -49,6 +49,32 @@ describe('resolveCheckCommand (trust gate)', () => {
 
   it('treats a blank user command as unconfigured', () => {
     expect(resolveCheckCommand({ userCommand: '   ', repoCommand: null, fromRepoEnabled: true, trusted: undefined })).toBeNull();
+  });
+});
+
+describe('buildCheckInvocation (cross-platform, asserted from any host)', () => {
+  /** What `cmd.exe /s /c` does to its command string: strip the first and last character when both are quotes. */
+  const cmdStrip = (s: string) => (s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s);
+
+  it('survives cmd.exe quote-stripping for a command that is itself quoted', () => {
+    // The regression: `"node.exe" "script.js"` both starts and ends with a
+    // quote, so without the extra wrapping pair cmd strips those two and the
+    // command arrives broken.
+    const command = '"C:\\Program Files\\nodejs\\node.exe" "C:\\Temp\\check.js"';
+    const { file, args, windowsVerbatimArguments } = buildCheckInvocation(command, 'win32');
+    expect(file.toLowerCase()).toContain('cmd.exe');
+    expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+    expect(windowsVerbatimArguments).toBe(true);
+    expect(cmdStrip(args[3])).toBe(command);
+  });
+
+  it('survives the same stripping for an ordinary unquoted command', () => {
+    const { args } = buildCheckInvocation('npm run typecheck', 'win32');
+    expect(cmdStrip(args[3])).toBe('npm run typecheck');
+  });
+
+  it('uses /bin/sh -c unchanged off Windows', () => {
+    expect(buildCheckInvocation('npm run typecheck', 'linux')).toEqual({ file: '/bin/sh', args: ['-c', 'npm run typecheck'], windowsVerbatimArguments: false });
   });
 });
 

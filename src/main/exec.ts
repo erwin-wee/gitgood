@@ -12,6 +12,12 @@ export interface ExecOptions {
   maxBuffer?: number;
   /** Exit codes other than 0 that should not be treated as failure. */
   okExitCodes?: number[];
+  /**
+   * Pass `args` to Windows exactly as given, instead of letting Node quote and
+   * backslash-escape them. Required when invoking `cmd.exe /c`, which does not
+   * understand Node's escaping and applies its own quote-stripping rule.
+   */
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface ExecResult {
@@ -72,7 +78,7 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
         // spawned rather than only the wrapper. Never on Windows, where it would
         // open a console window.
         detached: process.platform !== 'win32',
-        windowsVerbatimArguments: viaCmd,
+        windowsVerbatimArguments: viaCmd || opts.windowsVerbatimArguments === true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {

@@ -43,11 +43,28 @@ export function resolveCheckCommand(inputs: CheckCommandInputs): { command: stri
  * override exists only for tests), and reports only the last 4,000
  * characters of combined output.
  */
+/**
+ * The shell invocation for `command`. Exported so the Windows form can be
+ * asserted from any platform.
+ *
+ * `cmd /s /c` strips the first and last character of its command string when
+ * both are quotes, so a command that merely starts and ends with a quoted path
+ * (`"node.exe" "script.js"`) arrives mangled. Wrapping the whole thing in one
+ * more pair gives cmd something to strip, and verbatim passing stops Node
+ * applying its own backslash-escaping on top, which cmd does not understand.
+ */
+export function buildCheckInvocation(command: string, platform: NodeJS.Platform): { file: string; args: string[]; windowsVerbatimArguments: boolean } {
+  if (platform === 'win32') {
+    return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${command}"`], windowsVerbatimArguments: true };
+  }
+  return { file: '/bin/sh', args: ['-c', command], windowsVerbatimArguments: false };
+}
+
 export async function runPostResolveCheck(command: string, repoPath: string, env: NodeJS.ProcessEnv, fromRepo: boolean, signal?: AbortSignal, timeoutMs: number = TIMEOUT_MS): Promise<PostResolveCheckResult> {
   const started = Date.now();
-  const [file, args] = process.platform === 'win32' ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command]] : ['/bin/sh', ['-c', command]];
+  const { file, args, windowsVerbatimArguments } = buildCheckInvocation(command, process.platform);
   try {
-    const result = await exec(file, args, { cwd: repoPath, env, timeoutMs, signal, maxBuffer: 8 * 1024 * 1024 });
+    const result = await exec(file, args, { cwd: repoPath, env, timeoutMs, signal, maxBuffer: 8 * 1024 * 1024, windowsVerbatimArguments });
     return { command, fromRepo, ok: true, exitCode: result.exitCode, timedOut: false, outputTail: tail(`${result.stdout}${result.stderr}`, OUTPUT_TAIL_CHARS), durationMs: Date.now() - started };
   } catch (err) {
     if (err instanceof ExecError) {
