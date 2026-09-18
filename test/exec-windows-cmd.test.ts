@@ -64,7 +64,10 @@ describe('buildWindowsCmdInvocation', () => {
     expect(unescapedMetaCharsRemain(args[3])).toBe(false);
   });
 
-  it('falls back to cmd.exe when ComSpec is unset', () => {
-    expect(buildWindowsCmdInvocation('x.cmd', [], undefined).file).toBe('cmd.exe');
+  it('falls back to cmd.exe when ComSpec is empty', () => {
+    // Not `undefined`: that triggers the `= process.env.ComSpec` default, which
+    // makes the assertion depend on the host (it is set on Windows, unset on
+    // Linux). An empty string exercises the fallback the same way everywhere.
+    expect(buildWindowsCmdInvocation('x.cmd', [], '').file).toBe('cmd.exe');
   });
 });
