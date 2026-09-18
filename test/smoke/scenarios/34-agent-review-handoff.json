@@ -1,0 +1,177 @@
+{
+  "name": "agent-review-handoff",
+  "repoKind": "precommitReviewFixture",
+  "settings": {},
+  "needsClaudeStub": true,
+  "claudeStubRules": [
+    {
+      "match": "reviewing changes a developer is about to commit",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "findings": [
+            {
+              "line": 3,
+              "endLine": null,
+              "severity": "blocker",
+              "category": "security",
+              "title": "Hard-coded token committed",
+              "detail": "This looks like a live API token; remove it before committing.",
+              "suggestion": null,
+              "confidence": "high"
+            },
+            {
+              "line": 2,
+              "endLine": null,
+              "severity": "warning",
+              "category": "readability",
+              "title": "Leftover debug log",
+              "detail": "Remove the console.log before committing.",
+              "suggestion": null,
+              "confidence": "medium"
+            }
+          ],
+          "fileSummary": "Adds a debug log and a hard-coded token."
+        }
+      }
+    },
+    {
+      "match": "changes about to be committed",
+      "stdout": {
+        "is_error": false,
+        "structured_output": {
+          "summary": "Adds a hard-coded token and a leftover debug log; the token should not be committed.",
+          "verdict": "request-changes",
+          "commitMessageMatches": false,
+          "commitMessageNote": "The summary does not mention the added debug log or token."
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "wait": 1000
+    },
+    {
+      "js": "(async () => { await window.__gitgood.actions.addLocalRepository(__REPO_PATH__); await new Promise((r) => setTimeout(r, 900)); window.__gitgood.store.set((s) => ({ changes: { ...s.changes, summary: 'Update app value' } })); await window.__gitgood.actions.reviewChangesBeforeCommit(); for (let i = 0; i < 80; i++) { const s = window.__gitgood.store.get(); if (!s.precommitReview.running && s.precommitReview.run) break; await new Promise((r) => setTimeout(r, 150)); } await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); const run = s.precommitReview.run; const base = __REPO_PATH__ + '/.git/gitgood/review/'; const exists = (p) => window.__gitgood.invoke('app.pathExists', p); return JSON.stringify({ runId: run ? run.id : null, findingCount: run ? run.findings.filter((f) => !f.dismissed).length : 0, latestJson: await exists(base + 'latest.json'), latestMd: await exists(base + 'latest.md'), runJson: run ? await exists(base + 'runs/' + run.id + '.json') : false, available: window.__gitgood.actions.agentHandoffAvailable(run), hasButton: !!document.querySelector('.fix-with-agent'), exportPath: run ? await window.__gitgood.invoke('ai.review.exportPath', __REPO_PATH__, run.id) : null, noticeShown: s.settings.ai.agentHandoffNoticeShown }); })()",
+      "dump": "export.json"
+    },
+    {
+      "shot": "findings.png"
+    },
+    {
+      "js": "(async () => { const before = window.__gitgood.store.get().precommitReview.run.id; await window.__gitgood.actions.handleProtocolReviewRerun({ repoPath: __REPO_PATH__ }); for (let i = 0; i < 80; i++) { const s = window.__gitgood.store.get(); if (!s.precommitReview.running && s.precommitReview.run && s.precommitReview.run.id !== before) break; await new Promise((r) => setTimeout(r, 150)); } await new Promise((r) => setTimeout(r, 500)); const s = window.__gitgood.store.get(); const run = s.precommitReview.run; const latest = await window.__gitgood.invoke('ai.review.latest', __REPO_PATH__); const base = __REPO_PATH__ + '/.git/gitgood/review/'; const exists = (p) => window.__gitgood.invoke('app.pathExists', p); return JSON.stringify({ changed: !!run && run.id !== before, latestMatches: !!latest && !!run && latest.id === run.id, oldRunJson: await exists(base + 'runs/' + before + '.json'), newRunJson: run ? await exists(base + 'runs/' + run.id + '.json') : false, findingCount: run ? run.findings.filter((f) => !f.dismissed).length : 0 }); })()",
+      "dump": "rerun.json"
+    },
+    {
+      "js": "(async () => { const n = window.__gitgood.store.get().toasts.length; await window.__gitgood.actions.handleProtocolReviewRerun({ repoPath: '/nonexistent/repo' }); await new Promise((r) => setTimeout(r, 300)); const toasts = window.__gitgood.store.get().toasts; return JSON.stringify({ toastAdded: toasts.length > n, title: toasts.length ? toasts[toasts.length - 1].title : null, stillNotRunning: !window.__gitgood.store.get().precommitReview.running }); })()",
+      "dump": "unknown.json"
+    },
+    {
+      "js": "(async () => { const run = window.__gitgood.store.get().precommitReview.run; window.__gitgood.actions.fixWithAgent(run); await new Promise((r) => setTimeout(r, 200)); const d = window.__gitgood.store.get().dialog; return JSON.stringify({ dialogKind: d ? d.kind : null, title: d ? d.title : null }); })()",
+      "dump": "notice.json"
+    },
+    {
+      "shot": "notice.png"
+    },
+    {
+      "js": "(async () => { const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); window.__gitgood.store.set({ dialog: null }); const ai = window.__gitgood.store.get().settings.ai; await window.__gitgood.actions.updateSettings({ ai: { ...ai, agentCommand: 'custom', agentCustomCommand: '' } }); window.__gitgood.store.set({ dialog: { kind: 'settings', tab: 'ai' } }); await sleep(400); const label = Array.from(document.querySelectorAll('.field label')).find((l) => l.textContent === 'Command'); const input = label && label.parentElement.querySelector('input'); if (!input) return JSON.stringify({ error: 'no Command input' }); const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; const type = (v) => { set.call(input, v); input.dispatchEvent(new Event('input', { bubbles: true })); }; type('aider --fix'); await sleep(400); const afterInvalid = window.__gitgood.store.get().settings.ai.agentCustomCommand; const errorText = (label.parentElement.querySelector('.error') || {}).textContent || null; type('aider --file {file}'); await sleep(400); const afterValid = window.__gitgood.store.get().settings.ai.agentCustomCommand; return JSON.stringify({ afterInvalid, errorText, afterValid }); })()",
+      "dump": "settings.json"
+    },
+    {
+      "shot": "settings.png"
+    }
+  ],
+  "expect": [
+    {
+      "dump": "export.json",
+      "jsonPath": "findingCount",
+      "equals": 2
+    },
+    {
+      "dump": "export.json",
+      "jsonPath": "latestJson",
+      "equals": true
+    },
+    {
+      "dump": "export.json",
+      "jsonPath": "latestMd",
+      "equals": true
+    },
+    {
+      "dump": "export.json",
+      "jsonPath": "runJson",
+      "equals": true
+    },
+    {
+      "dump": "export.json",
+      "jsonPath": "available",
+      "equals": true
+    },
+    {
+      "dump": "export.json",
+      "jsonPath": "hasButton",
+      "equals": true
+    },
+    {
+      "dump": "export.json",
+      "jsonPath": "noticeShown",
+      "equals": false
+    },
+    {
+      "dump": "rerun.json",
+      "jsonPath": "changed",
+      "equals": true
+    },
+    {
+      "dump": "rerun.json",
+      "jsonPath": "latestMatches",
+      "equals": true
+    },
+    {
+      "dump": "rerun.json",
+      "jsonPath": "oldRunJson",
+      "equals": true
+    },
+    {
+      "dump": "rerun.json",
+      "jsonPath": "newRunJson",
+      "equals": true
+    },
+    {
+      "dump": "rerun.json",
+      "jsonPath": "findingCount",
+      "equals": 2
+    },
+    {
+      "dump": "unknown.json",
+      "jsonPath": "toastAdded",
+      "equals": true
+    },
+    {
+      "dump": "unknown.json",
+      "jsonPath": "stillNotRunning",
+      "equals": true
+    },
+    {
+      "dump": "notice.json",
+      "jsonPath": "dialogKind",
+      "equals": "confirm"
+    },
+    {
+      "dump": "settings.json",
+      "jsonPath": "afterInvalid",
+      "equals": ""
+    },
+    {
+      "dump": "settings.json",
+      "jsonPath": "errorText",
+      "equals": "The command must contain {file}"
+    },
+    {
+      "dump": "settings.json",
+      "jsonPath": "afterValid",
+      "equals": "aider --file {file}"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "gitgood-review",
+  "version": "0.1.0",
+  "description": "Fix AI review findings exported by the GitGood desktop client: reads .git/gitgood/review/latest.json, fixes findings file by file, then asks GitGood to re-review.",
+  "license": "MIT",
+  "author": "Erwin Wee",
+  "repository": { "type": "git", "url": "https://github.com/erwin-wee/gitgood", "directory": "plugin" },
+  "keywords": ["omp-plugin", "gitgood", "code-review"],
+  "omp": { "extensions": [] }
+}

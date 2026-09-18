@@ -1,0 +1,14 @@
+{
+  "name": "gitgood",
+  "owner": { "name": "Erwin Wee" },
+  "metadata": { "description": "Plugins that connect terminal coding agents to the GitGood desktop Git client." },
+  "plugins": [
+    {
+      "name": "gitgood-review",
+      "source": "./plugin",
+      "description": "Fix AI review findings exported by GitGood, then ask GitGood to re-review.",
+      "version": "0.1.0",
+      "category": "development"
+    }
+  ]
+}

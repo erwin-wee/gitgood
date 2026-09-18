@@ -64,7 +64,7 @@ describe('buildSettingsExport / the allowlist', () => {
   it('portable preferences carry only the allowlisted ai fields', () => {
     const settings: AppSettings = { ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, hasApiKey: true, claudeCliPath: '/bin/claude', provider: 'claude-cli', model: 'x', effort: 'max' } };
     const prefs = buildPortablePreferences(settings);
-    expect(prefs.ai).toEqual({ provider: 'claude-cli', model: 'x', effort: 'max', autoStageAfterResolve: settings.ai.autoStageAfterResolve, reviewStrictness: settings.ai.reviewStrictness, reviewMaxFiles: settings.ai.reviewMaxFiles, reviewPostFooter: settings.ai.reviewPostFooter });
+    expect(prefs.ai).toEqual({ provider: 'claude-cli', model: 'x', effort: 'max', autoStageAfterResolve: settings.ai.autoStageAfterResolve, reviewStrictness: settings.ai.reviewStrictness, reviewMaxFiles: settings.ai.reviewMaxFiles, reviewPostFooter: settings.ai.reviewPostFooter, agentCommand: settings.ai.agentCommand, agentCustomCommand: settings.ai.agentCustomCommand });
     expect((prefs.ai as unknown as Record<string, unknown>).hasApiKey).toBeUndefined();
     expect((prefs.ai as unknown as Record<string, unknown>).claudeCliPath).toBeUndefined();
   });

@@ -35,6 +35,8 @@ export function ReviewView(): React.JSX.Element {
   const review = useAppStore((s) => s.review);
   const run = review.run;
   const repo = useAppStore((s) => s.currentRepo);
+  // Subscribed so turning the AI provider off hides the Fix with agent action immediately.
+  useAppStore((s) => s.settings?.ai.provider);
   const findings = useMemo(() => liveFindings(run), [run]);
   const countByPath = useMemo(() => {
     const map = new Map<string, { n: number; worst: ReviewSeverity }>();
@@ -189,6 +191,7 @@ function ReviewPanel({ run, findings }: { run: ReviewRun; findings: ReviewFindin
         </span>
         <span style={{ flex: 1 }} />
         <Button size="sm" variant="ghost" icon="sync" onClick={() => actions.rereview()} disabled={review.running} title="Run the review again; unchanged files keep their findings">Re-review</Button>
+        {actions.agentHandoffAvailable(run) ? <Button size="sm" variant="ghost" icon="terminal" className="fix-with-agent" onClick={() => void actions.fixWithAgent(run)} disabled={review.running} title="Write the findings to .git/gitgood/review and open your terminal running the configured coding agent on them">Fix with agent</Button> : null}
         {canPost ? <Button size="sm" variant="primary" icon="github" onClick={() => actions.openPostReview()}>Post review…</Button> : null}
       </div>
     </aside>

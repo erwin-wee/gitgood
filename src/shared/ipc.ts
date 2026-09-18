@@ -382,6 +382,12 @@ export interface ApiMethods {
   'ai.review.worktreeStale': (repoPath: string, runId: string) => Promise<string[]>;
   /** Writes a finding's suggestion into the working tree, replacing [line, endLine]. Refuses when the file's content hash has changed since the review or the finding's file was partially selected. */
   'ai.review.applySuggestion': (repoPath: string, runId: string, findingId: string) => Promise<void>;
+  /** Most recently finished review run for the repository, any target (pre-commit, pull request or branch); null when none. */
+  'ai.review.latest': (repoPath: string) => Promise<ReviewRun | null>;
+  /** Rewrites the agent export (`<git-dir>/gitgood/review/latest.*`) for the run and returns the absolute path of latest.md. */
+  'ai.review.exportPath': (repoPath: string, runId: string) => Promise<string>;
+  /** Writes the export, then opens the repository in the configured terminal running the configured agent command. `launched` is false when the terminal could not run a command and the command was copied to the clipboard instead. */
+  'ai.review.fixWithAgent': (repoPath: string, runId: string) => Promise<{ launched: boolean; command: string }>;
   'ai.explain': (repoPath: string, target: ExplainTarget) => Promise<Explanation>;
   'ai.explain.followUp': (repoPath: string, target: ExplainTarget, history: ExplainFollowUp[], question: string) => Promise<string>;
   'ai.explainError': (repoPath: string | null, error: GitErrorInfo, retryable: boolean) => Promise<ErrorExplanation>;

@@ -3,6 +3,7 @@ import type { AppSettings, FoundEditor, FoundShell, SigningConfig, SigningConfig
 import { errorMessage, invoke, isMac, modKey } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type SettingsTab } from '../../state/store';
+import { AGENT_PRESETS, agentTemplate, validateAgentTemplate } from '@shared/agent-presets';
 import { Avatar, Button, Callout, Checkbox, Dialog, Icon, Spinner, TextField, type IconName } from '../ui';
 import { LinkifiedText } from './IssueDialogs';
 import { SettingsSyncCard } from './SettingsSyncDialogs';
@@ -561,8 +562,10 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [customModel, setCustomModel] = useState(!MODELS.some((m) => m.id === settings.ai.model));
+  const [agentDraft, setAgentDraft] = useState(settings.ai.agentCustomCommand);
   const ai = settings.ai;
   const updateAi = (patch: Partial<AppSettings['ai']>) => update({ ai: { ...ai, ...patch } });
+  const agentDraftError = ai.agentCommand === 'custom' ? validateAgentTemplate(agentDraft) : null;
   const saveKey = async () => {
     setSavingKey(true);
     try {
@@ -661,6 +664,31 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
           <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Pre-commit review</h4>
           <Checkbox checked={ai.reviewBeforeCommit} onChange={(v) => updateAi({ reviewBeforeCommit: v })} label="Review before every commit" />
           <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Runs the AI review on the exact patch Commit would apply. If it finds anything, a dialog lets you commit anyway or go back; committing is never blocked.</p>
+          <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Agent for fixes</h4>
+          <div className="settings-row">
+            <label>Fix with agent runs</label>
+            <select value={ai.agentCommand} onChange={(e) => updateAi({ agentCommand: e.target.value as AppSettings['ai']['agentCommand'] })}>
+              {AGENT_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label} ({p.binary})</option>)}
+              <option value="custom">Custom command…</option>
+            </select>
+          </div>
+          {ai.agentCommand === 'custom' ? (
+            <TextField
+              label="Command"
+              value={agentDraft}
+              error={agentDraftError ?? undefined}
+              hint={agentDraftError ? undefined : '{file} is replaced by the exported findings file, escaped to sit inside double quotes — keep it in a "…" argument.'}
+              spellCheck={false}
+              onChange={(e) => {
+                const v = e.target.value;
+                setAgentDraft(v);
+                if (!validateAgentTemplate(v)) updateAi({ agentCustomCommand: v });
+              }}
+            />
+          ) : null}
+          <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            The <b>Fix with agent</b> button on review findings writes them to <span className="mono">gitgood/review/latest.md</span> inside the repository's git directory and opens your terminal (Options → Integrations → Shell) running <span className="mono">{agentTemplate({ agentCommand: ai.agentCommand, agentCustomCommand: agentDraftError ? ai.agentCustomCommand : agentDraft })}</span>. Terminals GitGood cannot start a command in get the command on the clipboard instead. Install the <span className="mono">gitgood-review</span> plugin in your agent for a slash command and a session-start reminder.
+          </p>
           <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Command palette</h4>
           <Checkbox checked={ai.nlPaletteEnabled} onChange={(v) => updateAi({ nlPaletteEnabled: v })} label="Show the “Ask AI” row in the command palette (Ctrl+K)" />
           <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Translates a plain-language request into an exact, previewed plan of git commands. Only repository metadata (branch state, names, recent commits, stashes, remotes, tags) is sent, never file contents; every command is checked against an allowlist before it can run, and destructive steps still open their normal confirmation dialogs.</p>

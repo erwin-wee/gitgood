@@ -78,6 +78,8 @@ const AI_PREFERENCE_KEYS = {
   reviewStrictness: true,
   reviewMaxFiles: true,
   reviewPostFooter: true,
+  agentCommand: true,
+  agentCustomCommand: true,
 } satisfies Record<keyof PortableAiSettings, true>;
 
 const INTEGRATION_KEYS = {
@@ -128,8 +130,9 @@ const AI_ENUM_KEYS: Partial<Record<keyof PortableAiSettings, readonly string[]>>
   provider: ['anthropic', 'claude-cli', 'disabled'],
   effort: ['low', 'medium', 'high', 'xhigh', 'max'],
   reviewStrictness: ['strict', 'balanced', 'thorough'],
+  agentCommand: ['claude', 'codex', 'omp', 'custom'],
 };
-const AI_STRING_KEYS = new Set<keyof PortableAiSettings>(['model']);
+const AI_STRING_KEYS = new Set<keyof PortableAiSettings>(['model', 'agentCustomCommand']);
 const AI_BOOLEAN_KEYS = new Set<keyof PortableAiSettings>(['autoStageAfterResolve', 'reviewPostFooter']);
 const AI_NUMBER_KEYS = new Set<keyof PortableAiSettings>(['reviewMaxFiles']);
 

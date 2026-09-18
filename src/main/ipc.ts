@@ -37,12 +37,13 @@ import { addWorktree, listWorktrees, lockWorktree, pruneWorktrees, removeWorktre
 import { repoSelector, type GhClient } from './gh/gh';
 import { findPullRequestTemplate } from './gh/pr-template';
 import { findEditors, openInEditor } from './integrations/editors';
-import { findShells, openShell } from './integrations/shells';
+import { findShells, openShell, openShellWithCommand } from './integrations/shells';
 import { getLogPath, log } from './logger';
 import { readRepoConfig } from './repo/config';
 import type { RepositoryManager } from './repo/manager';
 import type { Store } from './store';
 import type { ToolLocator } from './tools';
+import { agentTemplate, expandAgentCommand, validateAgentTemplate } from '@shared/agent-presets';
 import { canInstall } from './update/update-core';
 import type { Updater } from './update/updater';
 
@@ -829,6 +830,19 @@ export function registerIpc(ctx: AppContext): void {
     'ai.review.startWorktree': async (repoPath, opts) => review.startWorktree(repoPath, opts, (e) => send('ai.review.progress', e)),
     'ai.review.worktreeStale': async (repoPath, runId) => review.worktreeStale(repoPath, runId),
     'ai.review.applySuggestion': async (repoPath, runId, findingId) => review.applySuggestion(repoPath, runId, findingId),
+    'ai.review.latest': async (repoPath) => review.latest(repoPath),
+    'ai.review.exportPath': async (repoPath, runId) => review.exportPath(repoPath, runId),
+    'ai.review.fixWithAgent': async (repoPath, runId) => {
+      const settings = store.getSettings();
+      const template = agentTemplate(settings.ai);
+      const invalid = validateAgentTemplate(template);
+      if (invalid) throw new AiError(`${invalid} Set the agent command under Options → AI → Agent for fixes.`, 'not-configured');
+      const file = await review.exportPath(repoPath, runId);
+      // The path is quoted for whichever shell the chosen terminal parses the command with.
+      const { launched, command } = await openShellWithCommand(settings.shell, settings.shell === 'custom' ? settings.customShellPath : null, repoPath, (quoting) => expandAgentCommand(template, file, quoting), (await tools.env()).PATH);
+      if (!launched) clipboard.writeText(command);
+      return { launched, command };
+    },
     'ai.explain': async (repoPath, target) => explain.explain(repoPath, target),
     'ai.explain.followUp': async (repoPath, target, history, question) => explain.followUp(repoPath, target, history, question),
     'ai.test': async () => resolver.test(),

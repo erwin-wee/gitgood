@@ -31,6 +31,12 @@ export interface AiSettings {
   explainErrorsAutomatically: boolean;
   /** Run the AI review automatically when Commit is clicked, and confirm with a dialog when it finds anything. Never blocks the commit. Default off. */
   reviewBeforeCommit: boolean;
+  /** Terminal coding agent launched by "Fix with agent" on review findings; `custom` uses `agentCustomCommand`. Default 'claude'. */
+  agentCommand: 'claude' | 'codex' | 'omp' | 'custom';
+  /** Command template for `agentCommand: 'custom'`; `{file}` is replaced by the exported latest.md path. */
+  agentCustomCommand: string;
+  /** True once the one-time "findings are handed to the agent" notice was accepted. Not portable. */
+  agentHandoffNoticeShown: boolean;
   /** Automatically refresh triage lines for pull requests whose cache went stale, instead of waiting for a manual Summarize click. Default off. */
   triageAutoRefresh: boolean;
   /** Include per-file addition/deletion counts (capped at 50 files) in pull request triage requests. Default on. */
@@ -1646,7 +1652,7 @@ export interface Housekeeping {
 export type SettingsSection = 'preferences' | 'repositories' | 'integrations';
 
 /** Fields of AppSettings['ai'] that are safe to export: never the stored-key flag or the CLI path (both machine/secret specific). */
-export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter'>;
+export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter' | 'agentCommand' | 'agentCustomCommand'>;
 
 /**
  * Explicit allowlist of AppSettings fields that may leave the machine (a
@@ -1805,6 +1811,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     reviewPostFooter: true,
     explainErrorsAutomatically: false,
     reviewBeforeCommit: false,
+    agentCommand: 'claude',
+    agentCustomCommand: '',
+    agentHandoffNoticeShown: false,
     triageAutoRefresh: false,
     triageIncludeDiffStat: true,
     releaseNotesAudience: 'users',
