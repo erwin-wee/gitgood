@@ -209,7 +209,7 @@ describe.skipIf(!hasGitSync())('RepositoryWatcher cross-worktree refs', () => {
     expect(worktreeGitDir).not.toBe(commonDir);
 
     const events: string[] = [];
-    // The change-detection debounce is 350ms and resets on every poll tick, so
+    // The change-detection debounce (watcher.ts DEBOUNCE_MS, 120ms) resets on every poll tick, so
     // the poll interval must be longer than that for a change to ever surface.
     const watcherB = new RepositoryWatcher(dir, worktreeGitDir, (reason) => events.push(reason), { commonDir, forcePolling: true, pollIntervalMs: 500 });
     watcherB.start();

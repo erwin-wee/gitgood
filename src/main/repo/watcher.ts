@@ -6,6 +6,10 @@ import { log } from '../logger';
 export type ChangeReason = 'worktree' | 'refs' | 'both';
 
 const IGNORED_GIT_SEGMENTS = new Set(['objects', 'lfs', 'gitgood-rebase', 'modules']);
+/** Top-level working-tree directories whose churn (installs, caches) never changes `git status` output worth a refresh. */
+const IGNORED_WORKTREE_SEGMENTS = new Set(['node_modules', '__pycache__', '.cache', '.venv', '.idea']);
+/** Trailing quiet time before one change notification; fs.watch already delivers ~250 ms late on Linux, so this stays short. */
+const DEBOUNCE_MS = 120;
 
 export interface RepositoryWatcherOptions {
   /**
@@ -108,6 +112,8 @@ export class RepositoryWatcher {
       this.classifyGit(normalized.replace(/^\.git\/?/, ''));
       return;
     }
+    const slash = normalized.indexOf('/');
+    if (IGNORED_WORKTREE_SEGMENTS.has(slash === -1 ? normalized : normalized.slice(0, slash))) return;
     this.schedule('worktree');
   }
 
@@ -136,7 +142,7 @@ export class RepositoryWatcher {
       this.pending = null;
       this.timer = null;
       this.onChange(r);
-    }, 350);
+    }, DEBOUNCE_MS);
   }
 
   private startPolling(): void {
