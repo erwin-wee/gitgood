@@ -1,0 +1,2 @@
+# The plugin hook is run by sh (Git Bash on Windows), which fails on CR characters.
+*.sh text eol=lf

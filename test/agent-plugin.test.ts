@@ -15,6 +15,12 @@ async function json(path: string): Promise<Record<string, unknown>> {
 }
 
 describe('agent plugin folder', () => {
+  it('keeps the session-start hook LF-only, because sh fails on a CR', async () => {
+    // .gitattributes pins *.sh to eol=lf so a Windows checkout does not break the hook.
+    expect(await readFile(join(PLUGIN, 'hooks', 'session-start.sh'), 'utf8')).not.toContain('\r');
+    expect(await readFile(join(ROOT, '.gitattributes'), 'utf8')).toMatch(/^\*\.sh text eol=lf$/m);
+  });
+
   it('has manifests for Claude Code, Codex and omp that agree on the name and version', async () => {
     const claude = await json(join(PLUGIN, '.claude-plugin', 'plugin.json'));
     const codex = await json(join(PLUGIN, 'plugin.json'));
@@ -30,14 +36,16 @@ describe('agent plugin folder', () => {
   });
 
   it('ships a skill whose frontmatter names review findings from GitGood as the trigger', async () => {
-    const skill = await readFile(join(PLUGIN, 'skills', 'gitgood-review', 'SKILL.md'), 'utf8');
+    // Read through a line-ending normalisation: a Windows checkout with
+    // core.autocrlf on hands back CRLF, which the anchors below would not match.
+    const skill = (await readFile(join(PLUGIN, 'skills', 'gitgood-review', 'SKILL.md'), 'utf8')).replace(/\r\n/g, '\n');
     const fm = /^---\n([\s\S]*?)\n---/.exec(skill);
     expect(fm).not.toBeNull();
     expect(fm![1]).toMatch(/^name: gitgood-review$/m);
     expect(fm![1]).toMatch(/^description: .*GitGood.*/m);
     expect(fm![1]).toMatch(/^description: .*review findings/m);
     for (const phrase of ['one file at a time', 'trust the finding\'s `title` and `detail` over its `line`', 'Do not commit', 'rerun.command', 'Re-read `latest.json`', 'compare by `path` and `title`']) expect(skill).toContain(phrase);
-    const command = await readFile(join(PLUGIN, 'commands', 'gitgood-review.md'), 'utf8');
+    const command = (await readFile(join(PLUGIN, 'commands', 'gitgood-review.md'), 'utf8')).replace(/\r\n/g, '\n');
     expect(command).toContain('gitgood-review');
   });
 
@@ -47,7 +55,7 @@ describe('agent plugin folder', () => {
     expect(text).toContain('SessionStart');
     expect(text).toContain('hooks/session-start.sh');
     expect(text).toContain('CLAUDE_PLUGIN_ROOT');
-    const omp = await readFile(join(PLUGIN, 'hooks', 'pre', 'session-start.ts'), 'utf8');
+    const omp = (await readFile(join(PLUGIN, 'hooks', 'pre', 'session-start.ts'), 'utf8')).replace(/\r\n/g, '\n');
     expect(omp).toContain('export default function');
     expect(omp).toContain("pi.on('before_agent_start'");
   });
