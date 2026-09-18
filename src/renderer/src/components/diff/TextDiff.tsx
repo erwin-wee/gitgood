@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BlameHunk, DiffHunk, DiffLine, FileDiff } from '@shared/types';
 import { ZERO_SHA } from '@shared/types';
 import { intralineDiff, type CharRange } from '@shared/diff/intraline';
 import { escapeHtml } from '@shared/util';
 import { highlightToLines } from '../../lib/highlight';
+import { useWindowedRows } from '../../lib/windowing';
 import { Icon, openContextMenu } from '../ui';
 
 type TextDiffData = Extract<FileDiff, { kind: 'text' }>;
@@ -50,6 +51,16 @@ export interface TextDiffProps {
 }
 
 const EXPAND_STEP = 20;
+
+/**
+ * Syntax highlighting runs lazily per block of file lines as rows scroll into
+ * view, so opening a diff never pays for lines that are not on screen.
+ * ponytail: block boundaries can split a multi-line token (a block comment),
+ * mis-colouring a few lines at the seam; highlight whole files in a worker if that matters.
+ */
+const HIGHLIGHT_BLOCK_LINES = 400;
+/** Blocks with a longer line than this (minified code) are shown unhighlighted: hljs is superlinear on them. */
+const HIGHLIGHT_MAX_LINE_CHARS = 5000;
 
 /** Applies character ranges as <span class=cls> marks onto highlighted HTML, keeping tags balanced. */
 export function markHtml(html: string, ranges: CharRange[], cls: string): string {
@@ -122,7 +133,6 @@ interface HunkView {
   below: ExtraLine[];
   canExpandUp: number;
   canExpandDown: number;
-  /** Lines in the gap after this hunk (before the next), shown only for the last hunk's bottom. */
 }
 
 function splitContent(content: string | null): string[] | null {
@@ -167,9 +177,15 @@ function buildViews(hunks: DiffHunk[], newLines: string[] | null, expansions: Re
   return views;
 }
 
+interface Entry {
+  line: DiffLine;
+  key: string;
+  index: number;
+}
+
 interface Pair {
-  left: { line: DiffLine; key: string; index: number } | null;
-  right: { line: DiffLine; key: string; index: number } | null;
+  left: Entry | null;
+  right: Entry | null;
 }
 
 function pairLines(hunk: DiffHunk, hunkIndex: number): Pair[] {
@@ -183,8 +199,8 @@ function pairLines(hunk: DiffHunk, hunkIndex: number): Pair[] {
       i++;
       continue;
     }
-    const dels: { line: DiffLine; key: string; index: number }[] = [];
-    const adds: { line: DiffLine; key: string; index: number }[] = [];
+    const dels: Entry[] = [];
+    const adds: Entry[] = [];
     while (i < lines.length && lines[i].type === 'delete') {
       dels.push({ line: lines[i], key: `${hunkIndex}:${i}`, index: i });
       i++;
@@ -200,10 +216,43 @@ function pairLines(hunk: DiffHunk, hunkIndex: number): Pair[] {
   return pairs;
 }
 
+/** One table row of the flattened diff; the windowed renderer only materialises the rows in view. */
+type Row =
+  | { kind: 'hunk'; v: HunkView }
+  | { kind: 'extra'; x: ExtraLine; hunkIndex: number }
+  | { kind: 'line'; line: DiffLine; key: string; hunkIndex: number }
+  | { kind: 'pair'; p: Pair; hunkIndex: number; idx: number }
+  | { kind: 'card'; what: 'annotation' | 'blame'; newNo: number }
+  | { kind: 'expander'; v: HunkView };
+
+function rowKey(r: Row): string {
+  switch (r.kind) {
+    case 'hunk': return `h${r.v.hunkIndex}`;
+    case 'extra': return `x${r.x.newNo}`;
+    case 'line': return r.key;
+    case 'pair': return `p${r.hunkIndex}:${r.idx}`;
+    case 'card': return `${r.what}${r.newNo}`;
+    case 'expander': return 'expander';
+  }
+}
+
+function rowNewNo(r: Row): number | null {
+  switch (r.kind) {
+    case 'extra': return r.x.newNo;
+    case 'line': return r.line.newLineNumber;
+    case 'pair': return r.p.right?.line.newLineNumber ?? null;
+    default: return null;
+  }
+}
+
+const ROW_ESTIMATES = { hunk: 28, extra: 20, line: 20, pair: 20, card: 140, expander: 28 };
+
 export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange, annotations, activeAnnotationId, onAnnotationClick, renderAnnotationCard, blame, activeBlameId, onBlameBlockClick, renderBlameCard, highlightTerm, onExplainRange }: TextDiffProps): React.JSX.Element {
   const [expansions, setExpansions] = useState<Record<string, number>>({});
   useEffect(() => setExpansions({}), [diff]);
   const tableRef = useRef<HTMLTableElement>(null);
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => setContainer(tableRef.current?.parentElement ?? null), []);
 
   const annotationsByLine = useMemo(() => {
     const map = new Map<number, LineAnnotation[]>();
@@ -215,11 +264,6 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     return map;
   }, [annotations]);
   const activeLine = useMemo(() => (activeAnnotationId ? annotations?.find((a) => a.id === activeAnnotationId)?.line ?? null : null), [annotations, activeAnnotationId]);
-  useEffect(() => {
-    if (activeLine === null || !tableRef.current) return;
-    const row = tableRef.current.querySelector<HTMLElement>(`tr[data-new-line="${activeLine}"]`);
-    row?.scrollIntoView({ block: 'center' });
-  }, [activeLine, diff]);
 
   // First add/delete/context line (in diff order) whose text matches the active History content/regex search.
   const highlightKey = useMemo(() => {
@@ -243,11 +287,6 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     }
     return null;
   }, [diff.hunks, highlightTerm]);
-  useEffect(() => {
-    if (!highlightKey || !tableRef.current) return;
-    const row = tableRef.current.querySelector<HTMLElement>(`tr[data-key="${highlightKey}"]`);
-    row?.scrollIntoView({ block: 'center' });
-  }, [highlightKey, diff]);
 
   const TONE_RANK = { danger: 0, attention: 1, neutral: 2 } as const;
   const annotationMarker = (newNo: number | null) => {
@@ -269,16 +308,6 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
         <Icon name="sparkle" size={11} />
         {list.length > 1 ? <span className="annotation-count">{list.length}</span> : null}
       </button>
-    );
-  };
-  const annotationRow = (newNo: number | null, colSpan: number) => {
-    if (newNo === null || activeLine !== newNo || !renderAnnotationCard) return null;
-    const ids = (annotationsByLine.get(newNo) ?? []).map((a) => a.id);
-    if (!ids.length) return null;
-    return (
-      <tr className="annotation-row" key={`ann-${newNo}`}>
-        <td colSpan={colSpan}>{renderAnnotationCard(ids)}</td>
-      </tr>
     );
   };
 
@@ -321,10 +350,6 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     const hunk = blame.find((h) => blameBlockId(h) === activeBlameId);
     return hunk ? hunk.startLine + hunk.lineCount - 1 : null;
   }, [blame, activeBlameId]);
-  useEffect(() => {
-    if (blameActiveLine === null || !tableRef.current) return;
-    tableRef.current.querySelector<HTMLElement>(`tr[data-new-line="${blameActiveLine}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [blameActiveLine]);
   const blameCell = (newNo: number | null) => {
     if (!blame) return null;
     const hunk = newNo === null ? undefined : blameByLine.get(newNo);
@@ -347,67 +372,86 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
       </td>
     );
   };
-  const blameCardRow = (newNo: number | null, colSpan: number) => {
-    if (newNo === null || newNo !== blameActiveLine || !renderBlameCard || !activeBlameId || !blame) return null;
-    const hunk = blame.find((h) => blameBlockId(h) === activeBlameId);
-    if (!hunk) return null;
-    return (
-      <tr className="blame-card-row" key={`blame-${newNo}`}>
-        <td colSpan={colSpan}>{renderBlameCard(hunk)}</td>
-      </tr>
-    );
-  };
 
   const newLines = useMemo(() => splitContent(diff.newContent), [diff.newContent]);
   const oldLines = useMemo(() => splitContent(diff.oldContent), [diff.oldContent]);
-  const hlNew = useMemo(() => (syntax && diff.newContent !== null ? highlightToLines(diff.newContent, diff.language) : null), [syntax, diff.newContent, diff.language]);
-  const hlOld = useMemo(() => (syntax && diff.oldContent !== null ? highlightToLines(diff.oldContent, diff.language) : null), [syntax, diff.oldContent, diff.language]);
   const views = useMemo(() => buildViews(diff.hunks, newLines, expansions), [diff.hunks, newLines, expansions]);
+
+  // Lazy highlighting: per-side blocks of file lines, computed the first time a row in the block renders.
+  const hlCache = useRef(new Map<string, string[] | null>());
+  useMemo(() => hlCache.current.clear(), [syntax, diff.newContent, diff.oldContent, diff.language]);
+  const highlighted = useCallback(
+    (side: 'old' | 'new', lineNo: number): string | undefined => {
+      const lines = side === 'new' ? newLines : oldLines;
+      if (!syntax || !lines || lineNo < 1 || lineNo > lines.length) return undefined;
+      const block = Math.floor((lineNo - 1) / HIGHLIGHT_BLOCK_LINES);
+      const cacheKey = `${side}:${block}`;
+      let html = hlCache.current.get(cacheKey);
+      if (html === undefined) {
+        const from = block * HIGHLIGHT_BLOCK_LINES;
+        const chunk = lines.slice(from, from + HIGHLIGHT_BLOCK_LINES);
+        html = chunk.some((l) => l.length > HIGHLIGHT_MAX_LINE_CHARS) ? null : highlightToLines(chunk.join('\n'), diff.language);
+        if (html && html.length !== chunk.length) html = null;
+        hlCache.current.set(cacheKey, html);
+      }
+      return html ? html[(lineNo - 1) % HIGHLIGHT_BLOCK_LINES] : undefined;
+    },
+    [syntax, newLines, oldLines, diff.language],
+  );
 
   const allKeys = useMemo(() => {
     const keys: string[] = [];
     diff.hunks.forEach((h, hi) => h.lines.forEach((l, li) => (l.type === 'add' || l.type === 'delete') && keys.push(`${hi}:${li}`)));
     return keys;
   }, [diff.hunks]);
+  const keysByHunk = useMemo(() => {
+    const by: string[][] = diff.hunks.map(() => []);
+    for (const k of allKeys) by[Number(k.slice(0, k.indexOf(':')))].push(k);
+    return by;
+  }, [allKeys, diff.hunks]);
   const selected = useMemo(() => (selectedLines === null ? new Set(allKeys) : new Set(selectedLines)), [selectedLines, allKeys]);
 
-  // Intraline ranges per line key (computed for paired delete/add lines).
-  const intralineMap = useMemo(() => {
-    const map = new Map<string, CharRange[]>();
-    if (!intraline) return map;
-    diff.hunks.forEach((h, hi) => {
-      for (const pair of pairLines(h, hi)) {
-        if (pair.left && pair.right && pair.left.line.type === 'delete' && pair.right.line.type === 'add') {
-          const r = intralineDiff(pair.left.line.text, pair.right.line.text);
-          if (r) {
-            map.set(pair.left.key, r.old);
-            map.set(pair.right.key, r.new);
+  // Split-view pairs per hunk, and lazily computed intraline ranges per line key.
+  const pairsCache = useRef(new Map<number, Pair[]>());
+  const intralineCache = useRef(new Map<string, CharRange[]>());
+  useMemo(() => {
+    pairsCache.current.clear();
+    intralineCache.current.clear();
+  }, [diff.hunks, intraline]);
+  const pairsOf = useCallback((hunkIndex: number): Pair[] => {
+    let pairs = pairsCache.current.get(hunkIndex);
+    if (!pairs) {
+      pairs = pairLines(diff.hunks[hunkIndex], hunkIndex);
+      pairsCache.current.set(hunkIndex, pairs);
+      if (intraline) {
+        for (const pair of pairs) {
+          if (pair.left && pair.right && pair.left.line.type === 'delete' && pair.right.line.type === 'add') {
+            const r = intralineDiff(pair.left.line.text, pair.right.line.text);
+            if (r) {
+              intralineCache.current.set(pair.left.key, r.old);
+              intralineCache.current.set(pair.right.key, r.new);
+            }
           }
         }
       }
-    });
-    return map;
+    }
+    return pairs;
   }, [diff.hunks, intraline]);
 
   const renderCode = useCallback(
-    (line: DiffLine, key: string): string => {
-      let html: string | null = null;
-      if (line.type === 'delete' && line.oldLineNumber !== null && hlOld && hlOld[line.oldLineNumber - 1] !== undefined && oldLines && oldLines[line.oldLineNumber - 1] === line.text) html = hlOld[line.oldLineNumber - 1];
-      else if (line.type !== 'delete' && line.newLineNumber !== null && hlNew && hlNew[line.newLineNumber - 1] !== undefined && newLines && newLines[line.newLineNumber - 1] === line.text) html = hlNew[line.newLineNumber - 1];
-      if (html === null) html = escapeHtml(line.text);
-      const ranges = intralineMap.get(key);
-      if (ranges && ranges.length) html = markHtml(html, ranges, line.type === 'add' ? 'word-add' : 'word-del');
+    (line: DiffLine, key: string, hunkIndex: number): string => {
+      let html: string | undefined;
+      if (line.type === 'delete' && line.oldLineNumber !== null && oldLines && oldLines[line.oldLineNumber - 1] === line.text) html = highlighted('old', line.oldLineNumber);
+      else if (line.type !== 'delete' && line.newLineNumber !== null && newLines && newLines[line.newLineNumber - 1] === line.text) html = highlighted('new', line.newLineNumber);
+      if (html === undefined) html = escapeHtml(line.text);
+      if (intraline) {
+        pairsOf(hunkIndex);
+        const ranges = intralineCache.current.get(key);
+        if (ranges && ranges.length) html = markHtml(html, ranges, line.type === 'add' ? 'word-add' : 'word-del');
+      }
       return html || ' ';
     },
-    [hlNew, hlOld, newLines, oldLines, intralineMap],
-  );
-
-  const renderExtra = useCallback(
-    (text: string, newNo: number): string => {
-      if (hlNew && hlNew[newNo - 1] !== undefined) return hlNew[newNo - 1] || ' ';
-      return escapeHtml(text) || ' ';
-    },
-    [hlNew],
+    [highlighted, newLines, oldLines, intraline, pairsOf],
   );
 
   // Selection interactions
@@ -479,7 +523,7 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
   }, []);
 
   const toggleHunk = (hunkIndex: number) => {
-    const keys = allKeys.filter((k) => k.startsWith(`${hunkIndex}:`));
+    const keys = keysByHunk[hunkIndex];
     const allOn = keys.every((k) => selected.has(k));
     const next = new Set(selected);
     for (const k of keys) {
@@ -504,36 +548,37 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     );
   };
 
-  const hunkHeaderRow = (v: HunkView, colSpan: number) => {
-    const keys = allKeys.filter((k) => k.startsWith(`${v.hunkIndex}:`));
+  const split = mode === 'split';
+  const colSpan = (split ? (selectable ? 6 : 4) : selectable ? 5 : 4) + (blame ? 1 : 0);
+
+  const hunkHeaderRow = (v: HunkView) => {
+    const keys = keysByHunk[v.hunkIndex];
     const allOn = keys.length > 0 && keys.every((k) => selected.has(k));
     return (
-      <tr className="hunk" key={`h${v.hunkIndex}`}>
-        <td colSpan={colSpan}>
-          <div className="hunk-header">
-            <span className="hunk-actions">
-              {v.canExpandUp > 0 ? (
-                <>
-                  <button type="button" onClick={() => expand(v.hunkIndex, 'up', EXPAND_STEP)} title={`Show ${Math.min(EXPAND_STEP, v.canExpandUp)} more lines above`}>
-                    <Icon name="arrow-up" size={12} />
+      <td colSpan={colSpan}>
+        <div className="hunk-header">
+          <span className="hunk-actions">
+            {v.canExpandUp > 0 ? (
+              <>
+                <button type="button" onClick={() => expand(v.hunkIndex, 'up', EXPAND_STEP)} title={`Show ${Math.min(EXPAND_STEP, v.canExpandUp)} more lines above`}>
+                  <Icon name="arrow-up" size={12} />
+                </button>
+                {v.canExpandUp > EXPAND_STEP ? (
+                  <button type="button" onClick={() => expand(v.hunkIndex, 'up', v.canExpandUp)} title="Show all lines above">
+                    all
                   </button>
-                  {v.canExpandUp > EXPAND_STEP ? (
-                    <button type="button" onClick={() => expand(v.hunkIndex, 'up', v.canExpandUp)} title="Show all lines above">
-                      all
-                    </button>
-                  ) : null}
-                </>
-              ) : null}
-            </span>
-            <span className="selectable">{v.hunk.header}</span>
-            {selectable && keys.length ? (
-              <span className="hunk-actions" style={{ marginLeft: 'auto' }}>
-                <button type="button" onClick={() => toggleHunk(v.hunkIndex)}>{allOn ? 'Deselect hunk' : 'Select hunk'}</button>
-              </span>
+                ) : null}
+              </>
             ) : null}
-          </div>
-        </td>
-      </tr>
+          </span>
+          <span className="selectable">{v.hunk.header}</span>
+          {selectable && keys.length ? (
+            <span className="hunk-actions" style={{ marginLeft: 'auto' }}>
+              <button type="button" onClick={() => toggleHunk(v.hunkIndex)}>{allOn ? 'Deselect hunk' : 'Select hunk'}</button>
+            </span>
+          ) : null}
+        </div>
+      </td>
     );
   };
 
@@ -573,182 +618,226 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     [onExplainRange],
   );
 
-  if (mode === 'split') {
-    const colSpan = (selectable ? 6 : 4) + (blame ? 1 : 0);
-    return (
-      <table ref={tableRef} className={`diff split ${wrap ? 'wrap' : 'nowrap'}`} onContextMenu={handleExplainContextMenu}>
-        <colgroup>
-          {blame ? <col style={{ width: '14ch' }} /> : null}
-          {selectable ? <col style={{ width: 22 }} /> : null}
-          <col style={{ width: 50 }} />
-          <col />
-          {selectable ? <col style={{ width: 22 }} /> : null}
-          <col style={{ width: 50 }} />
-          <col />
-        </colgroup>
-        <tbody>
-          {views.map((v) => (
-            <React.Fragment key={v.hunkIndex}>
-              {hunkHeaderRow(v, colSpan)}
-              {v.above.map((x) => (
-                <tr key={`a${x.newNo}`} className="context extra">
-                  {blameCell(x.newNo)}
-                  {selectable ? <td className="sel" /> : null}
-                  <td className="num">{x.oldNo}</td>
-                  <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
-                  {selectable ? <td className="sel" /> : null}
-                  <td className="num">{x.newNo}</td>
-                  <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
-                </tr>
-              ))}
-              {pairLines(v.hunk, v.hunkIndex).map((p, idx) => {
-                const leftType = p.left?.line.type ?? 'empty';
-                const rightType = p.right?.line.type ?? 'empty';
-                const rowClass = leftType === 'delete' && rightType === 'add' ? 'modified' : leftType === 'delete' ? 'delete' : rightType === 'add' ? 'add' : 'context';
-                const rightNo = p.right?.line.newLineNumber ?? null;
-                const pairMatches = (!!p.left && p.left.key === highlightKey) || (!!p.right && p.right.key === highlightKey);
-                return (
-                  <React.Fragment key={idx}>
-                  <tr className={`${rowClass} ${(p.left && selected.has(p.left.key) && p.left.line.type !== 'context') || (p.right && selected.has(p.right.key) && p.right.line.type !== 'context') ? 'selected-line' : ''} ${rightNo !== null && annotationsByLine.has(rightNo) ? 'annotated' : ''} ${pairMatches ? 'highlight-match' : ''}`} data-new-line={rightNo ?? undefined} data-key={p.left?.key ?? p.right?.key ?? undefined}>
-                    {blameCell(rightNo)}
-                    {selCell(p.left)}
-                    {p.left ? (
-                      <>
-                        <td className={`num ${p.left.line.type === 'delete' ? 'del-num' : ''}`}>{p.left.line.oldLineNumber}</td>
-                        <td className={`code ${p.left.line.type === 'delete' ? 'del-code' : ''}`}>
-                          <span dangerouslySetInnerHTML={{ __html: renderCode(p.left.line, p.left.key) }} />
-                          {noNewline(p.left.line)}
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="num cell-empty" />
-                        <td className="code cell-empty" />
-                      </>
-                    )}
-                    {selCell(p.right)}
-                    {p.right ? (
-                      <>
-                        <td className={`num ${p.right.line.type === 'add' ? 'add-num' : ''}`}>
-                          {p.right.line.newLineNumber}
-                          {annotationMarker(rightNo)}
-                        </td>
-                        <td className={`code ${p.right.line.type === 'add' ? 'add-code' : ''}`}>
-                          <span dangerouslySetInnerHTML={{ __html: renderCode(p.right.line, p.right.key) }} />
-                          {noNewline(p.right.line)}
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="num cell-empty" />
-                        <td className="code cell-empty" />
-                      </>
-                    )}
-                  </tr>
-                  {annotationRow(rightNo, colSpan)}
-                  {blameCardRow(rightNo, colSpan)}
-                  </React.Fragment>
-                );
-              })}
-              {v.below.map((x) => (
-                <tr key={`b${x.newNo}`} className="context extra">
-                  {blameCell(x.newNo)}
-                  {selectable ? <td className="sel" /> : null}
-                  <td className="num">{x.oldNo}</td>
-                  <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
-                  {selectable ? <td className="sel" /> : null}
-                  <td className="num">{x.newNo}</td>
-                  <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
-                </tr>
-              ))}
-              {v.hunkIndex === views.length - 1 && v.canExpandDown > 0 ? (
-                <tr className="expander" key="exp-bottom">
-                  <td colSpan={colSpan}>
-                    <button type="button" onClick={() => expand(v.hunkIndex, 'down', EXPAND_STEP)}>
-                      <Icon name="arrow-down" size={12} /> Show {Math.min(EXPAND_STEP, v.canExpandDown)} more lines
-                    </button>
-                    {v.canExpandDown > EXPAND_STEP ? <button type="button" onClick={() => expand(v.hunkIndex, 'down', v.canExpandDown)}>Show all {v.canExpandDown} lines</button> : null}
-                  </td>
-                </tr>
-              ) : null}
-            </React.Fragment>
-          ))}
-        </tbody>
-      </table>
-    );
-  }
+  // -------------------------------------------------------------------------
+  // Flatten hunks into rows, then render only the windowed slice.
+  // -------------------------------------------------------------------------
+  const showAnnotationCard = !!renderAnnotationCard && activeLine !== null;
+  const showBlameCard = !!renderBlameCard && !!activeBlameId && !!blame && blameActiveLine !== null;
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = [];
+    const cardsFor = (newNo: number | null) => {
+      if (newNo === null) return;
+      if (showAnnotationCard && newNo === activeLine && (annotationsByLine.get(newNo)?.length ?? 0) > 0) out.push({ kind: 'card', what: 'annotation', newNo });
+      if (showBlameCard && newNo === blameActiveLine) out.push({ kind: 'card', what: 'blame', newNo });
+    };
+    for (const v of views) {
+      out.push({ kind: 'hunk', v });
+      for (const x of v.above) out.push({ kind: 'extra', x, hunkIndex: v.hunkIndex });
+      if (split) {
+        pairsOf(v.hunkIndex).forEach((p, idx) => {
+          out.push({ kind: 'pair', p, hunkIndex: v.hunkIndex, idx });
+          cardsFor(p.right?.line.newLineNumber ?? null);
+        });
+      } else {
+        v.hunk.lines.forEach((line, li) => {
+          out.push({ kind: 'line', line, key: `${v.hunkIndex}:${li}`, hunkIndex: v.hunkIndex });
+          cardsFor(line.newLineNumber);
+        });
+      }
+      for (const x of v.below) out.push({ kind: 'extra', x, hunkIndex: v.hunkIndex });
+      if (v.hunkIndex === views.length - 1 && v.canExpandDown > 0) out.push({ kind: 'expander', v });
+    }
+    return out;
+  }, [views, split, pairsOf, showAnnotationCard, activeLine, annotationsByLine, showBlameCard, blameActiveLine]);
 
-  const colSpan = (selectable ? 5 : 4) + (blame ? 1 : 0);
+  const kindOf = useCallback((i: number) => rows[i].kind, [rows]);
+  const resetKey = useMemo(() => ({}), [diff.hunks, wrap, split, !!blame]);
+  const win = useWindowedRows(container, { count: rows.length, kindOf, estimates: ROW_ESTIMATES, resetKey });
+
+  // Keeps the unified nowrap table from re-sizing as long lines scroll in and out of the window.
+  const longestLine = useMemo(() => {
+    let n = 0;
+    for (const h of diff.hunks) for (const l of h.lines) if (l.text.length > n) n = l.text.length;
+    return n;
+  }, [diff.hunks]);
+
+  // Reads rows through a ref so the scroll-to effects below fire only when their target changes, not when a hunk expands or a card opens.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const scrollToRow = useCallback(
+    (pred: (r: Row) => boolean, align: 'center' | 'nearest') => {
+      const i = rowsRef.current.findIndex(pred);
+      if (i !== -1) win.scrollTo(i, align);
+    },
+    [win.scrollTo],
+  );
+  useEffect(() => {
+    if (activeLine !== null) scrollToRow((r) => rowNewNo(r) === activeLine, 'center');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLine, diff]);
+  useEffect(() => {
+    if (highlightKey) scrollToRow((r) => (r.kind === 'line' && r.key === highlightKey) || (r.kind === 'pair' && (r.p.left?.key === highlightKey || r.p.right?.key === highlightKey)), 'center');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightKey, diff]);
+  useEffect(() => {
+    if (blameActiveLine !== null) scrollToRow((r) => rowNewNo(r) === blameActiveLine, 'nearest');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blameActiveLine]);
+
+  const renderRow = (r: Row, i: number): React.ReactNode => {
+    const ref = win.rowRef(i);
+    switch (r.kind) {
+      case 'hunk':
+        return <tr ref={ref} key={rowKey(r)} className="hunk">{hunkHeaderRow(r.v)}</tr>;
+      case 'extra': {
+        const x = r.x;
+        const html = (highlighted('new', x.newNo) ?? escapeHtml(x.text)) || ' ';
+        return (
+          <tr ref={ref} key={rowKey(r)} className="context extra">
+            {blameCell(x.newNo)}
+            {selectable ? <td className="sel" /> : null}
+            <td className="num">{x.oldNo}</td>
+            {split ? (
+              <>
+                <td className="code" dangerouslySetInnerHTML={{ __html: html }} />
+                {selectable ? <td className="sel" /> : null}
+                <td className="num">{x.newNo}</td>
+                <td className="code" dangerouslySetInnerHTML={{ __html: html }} />
+              </>
+            ) : (
+              <>
+                <td className="num">{x.newNo}</td>
+                <td className="marker" />
+                <td className="code" dangerouslySetInnerHTML={{ __html: html }} />
+              </>
+            )}
+          </tr>
+        );
+      }
+      case 'line': {
+        const { line, key } = r;
+        const isChange = line.type !== 'context';
+        return (
+          <tr ref={ref} key={key} className={`${line.type} ${isChange && selected.has(key) ? 'selected-line' : ''} ${line.newLineNumber !== null && annotationsByLine.has(line.newLineNumber) ? 'annotated' : ''} ${key === highlightKey ? 'highlight-match' : ''}`} data-new-line={line.newLineNumber ?? undefined} data-key={key}>
+            {blameCell(line.newLineNumber)}
+            {selCell(isChange ? { line, key } : null)}
+            <td className="num">{line.oldLineNumber ?? ''}</td>
+            <td className="num">
+              {line.newLineNumber ?? ''}
+              {annotationMarker(line.newLineNumber)}
+            </td>
+            <td className="marker">{line.type === 'add' ? '+' : line.type === 'delete' ? '−' : ''}</td>
+            <td className="code">
+              <span dangerouslySetInnerHTML={{ __html: renderCode(line, key, r.hunkIndex) }} />
+              {noNewline(line)}
+            </td>
+          </tr>
+        );
+      }
+      case 'pair': {
+        const p = r.p;
+        const leftType = p.left?.line.type ?? 'empty';
+        const rightType = p.right?.line.type ?? 'empty';
+        const rowClass = leftType === 'delete' && rightType === 'add' ? 'modified' : leftType === 'delete' ? 'delete' : rightType === 'add' ? 'add' : 'context';
+        const rightNo = p.right?.line.newLineNumber ?? null;
+        const pairMatches = (!!p.left && p.left.key === highlightKey) || (!!p.right && p.right.key === highlightKey);
+        return (
+          <tr ref={ref} key={rowKey(r)} className={`${rowClass} ${(p.left && selected.has(p.left.key) && p.left.line.type !== 'context') || (p.right && selected.has(p.right.key) && p.right.line.type !== 'context') ? 'selected-line' : ''} ${rightNo !== null && annotationsByLine.has(rightNo) ? 'annotated' : ''} ${pairMatches ? 'highlight-match' : ''}`} data-new-line={rightNo ?? undefined} data-key={p.left?.key ?? p.right?.key ?? undefined}>
+            {blameCell(rightNo)}
+            {selCell(p.left)}
+            {p.left ? (
+              <>
+                <td className={`num ${p.left.line.type === 'delete' ? 'del-num' : ''}`}>{p.left.line.oldLineNumber}</td>
+                <td className={`code ${p.left.line.type === 'delete' ? 'del-code' : ''}`}>
+                  <span dangerouslySetInnerHTML={{ __html: renderCode(p.left.line, p.left.key, r.hunkIndex) }} />
+                  {noNewline(p.left.line)}
+                </td>
+              </>
+            ) : (
+              <>
+                <td className="num cell-empty" />
+                <td className="code cell-empty" />
+              </>
+            )}
+            {selCell(p.right)}
+            {p.right ? (
+              <>
+                <td className={`num ${p.right.line.type === 'add' ? 'add-num' : ''}`}>
+                  {p.right.line.newLineNumber}
+                  {annotationMarker(rightNo)}
+                </td>
+                <td className={`code ${p.right.line.type === 'add' ? 'add-code' : ''}`}>
+                  <span dangerouslySetInnerHTML={{ __html: renderCode(p.right.line, p.right.key, r.hunkIndex) }} />
+                  {noNewline(p.right.line)}
+                </td>
+              </>
+            ) : (
+              <>
+                <td className="num cell-empty" />
+                <td className="code cell-empty" />
+              </>
+            )}
+          </tr>
+        );
+      }
+      case 'card':
+        if (r.what === 'annotation') {
+          const ids = (annotationsByLine.get(r.newNo) ?? []).map((a) => a.id);
+          return (
+            <tr ref={ref} key={rowKey(r)} className="annotation-row">
+              <td colSpan={colSpan}>{renderAnnotationCard!(ids)}</td>
+            </tr>
+          );
+        }
+        return (
+          <tr ref={ref} key={rowKey(r)} className="blame-card-row">
+            <td colSpan={colSpan}>{renderBlameCard!(blame!.find((h) => blameBlockId(h) === activeBlameId)!)}</td>
+          </tr>
+        );
+      case 'expander': {
+        const v = r.v;
+        return (
+          <tr ref={ref} key={rowKey(r)} className="expander">
+            <td colSpan={colSpan}>
+              <button type="button" onClick={() => expand(v.hunkIndex, 'down', EXPAND_STEP)}>
+                <Icon name="arrow-down" size={12} /> Show {Math.min(EXPAND_STEP, v.canExpandDown)} more lines
+              </button>
+              {v.canExpandDown > EXPAND_STEP ? <button type="button" onClick={() => expand(v.hunkIndex, 'down', v.canExpandDown)}>Show all {v.canExpandDown} lines</button> : null}
+            </td>
+          </tr>
+        );
+      }
+    }
+  };
+
+  const slice: React.ReactNode[] = [];
+  for (let i = win.start; i < win.end; i++) slice.push(renderRow(rows[i], i));
+
   return (
-    <table ref={tableRef} className={`diff unified ${wrap ? 'wrap' : 'nowrap'}`} onContextMenu={handleExplainContextMenu}>
+    <table ref={tableRef} className={`diff ${split ? 'split' : 'unified'} ${wrap ? 'wrap' : 'nowrap'}`} style={!split && !wrap ? { minWidth: `max(100%, ${longestLine + 24}ch)` } : undefined} onContextMenu={handleExplainContextMenu}>
       <colgroup>
         {blame ? <col style={{ width: '14ch' }} /> : null}
         {selectable ? <col style={{ width: 22 }} /> : null}
         <col style={{ width: 50 }} />
-        <col style={{ width: 50 }} />
-        <col style={{ width: 18 }} />
-        <col />
+        {split ? (
+          <>
+            <col />
+            {selectable ? <col style={{ width: 22 }} /> : null}
+            <col style={{ width: 50 }} />
+            <col />
+          </>
+        ) : (
+          <>
+            <col style={{ width: 50 }} />
+            <col style={{ width: 18 }} />
+            <col />
+          </>
+        )}
       </colgroup>
       <tbody>
-        {views.map((v) => (
-          <React.Fragment key={v.hunkIndex}>
-            {hunkHeaderRow(v, colSpan)}
-            {v.above.map((x) => (
-              <tr key={`a${x.newNo}`} className="context extra">
-                {blameCell(x.newNo)}
-                {selectable ? <td className="sel" /> : null}
-                <td className="num">{x.oldNo}</td>
-                <td className="num">{x.newNo}</td>
-                <td className="marker" />
-                <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
-              </tr>
-            ))}
-            {v.hunk.lines.map((line, li) => {
-              const key = `${v.hunkIndex}:${li}`;
-              const isChange = line.type !== 'context';
-              return (
-                <React.Fragment key={li}>
-                <tr className={`${line.type} ${isChange && selected.has(key) ? 'selected-line' : ''} ${line.newLineNumber !== null && annotationsByLine.has(line.newLineNumber) ? 'annotated' : ''} ${key === highlightKey ? 'highlight-match' : ''}`} data-new-line={line.newLineNumber ?? undefined} data-key={key}>
-                  {blameCell(line.newLineNumber)}
-                  {selCell(isChange ? { line, key } : null)}
-                  <td className="num">{line.oldLineNumber ?? ''}</td>
-                  <td className="num">
-                    {line.newLineNumber ?? ''}
-                    {annotationMarker(line.newLineNumber)}
-                  </td>
-                  <td className="marker">{line.type === 'add' ? '+' : line.type === 'delete' ? '−' : ''}</td>
-                  <td className="code">
-                    <span dangerouslySetInnerHTML={{ __html: renderCode(line, key) }} />
-                    {noNewline(line)}
-                  </td>
-                </tr>
-                {annotationRow(line.newLineNumber, colSpan)}
-                {blameCardRow(line.newLineNumber, colSpan)}
-                </React.Fragment>
-              );
-            })}
-            {v.below.map((x) => (
-              <tr key={`b${x.newNo}`} className="context extra">
-                {blameCell(x.newNo)}
-                {selectable ? <td className="sel" /> : null}
-                <td className="num">{x.oldNo}</td>
-                <td className="num">{x.newNo}</td>
-                <td className="marker" />
-                <td className="code" dangerouslySetInnerHTML={{ __html: renderExtra(x.text, x.newNo) }} />
-              </tr>
-            ))}
-            {v.hunkIndex === views.length - 1 && v.canExpandDown > 0 ? (
-              <tr className="expander">
-                <td colSpan={colSpan}>
-                  <button type="button" onClick={() => expand(v.hunkIndex, 'down', EXPAND_STEP)}>
-                    <Icon name="arrow-down" size={12} /> Show {Math.min(EXPAND_STEP, v.canExpandDown)} more lines
-                  </button>
-                  {v.canExpandDown > EXPAND_STEP ? <button type="button" onClick={() => expand(v.hunkIndex, 'down', v.canExpandDown)}>Show all {v.canExpandDown} lines</button> : null}
-                </td>
-              </tr>
-            ) : null}
-          </React.Fragment>
-        ))}
+        {win.top > 0 ? <tr aria-hidden style={{ height: win.top }}><td colSpan={colSpan} /></tr> : null}
+        {slice}
+        {win.bottom > 0 ? <tr aria-hidden style={{ height: win.bottom }}><td colSpan={colSpan} /></tr> : null}
       </tbody>
     </table>
   );

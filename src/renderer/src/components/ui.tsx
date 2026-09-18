@@ -199,11 +199,23 @@ export function Avatar({ email, name, size = 20 }: { email: string; name?: strin
 // Relative time
 // ---------------------------------------------------------------------------
 
+/** One timer for every mounted RelativeTime (a 2k-row commit list would otherwise own 2k intervals that all fire together). */
+const tickListeners = new Set<() => void>();
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+
 export function RelativeTime({ date, prefix }: { date: string | number; prefix?: string }): React.JSX.Element {
   const [, tick] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 60_000);
-    return () => clearInterval(t);
+    const listener = () => tick((n) => n + 1);
+    tickListeners.add(listener);
+    if (!tickTimer) tickTimer = setInterval(() => tickListeners.forEach((l) => l()), 60_000);
+    return () => {
+      tickListeners.delete(listener);
+      if (!tickListeners.size && tickTimer) {
+        clearInterval(tickTimer);
+        tickTimer = null;
+      }
+    };
   }, []);
   const d = new Date(date);
   return (

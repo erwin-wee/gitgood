@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import type { BlameHunk, FileDiff } from '@shared/types';
 import { ZERO_SHA } from '@shared/types';
 import { buildDiscardPatch } from '@shared/diff/patch';
@@ -54,7 +54,8 @@ export interface DiffPaneProps {
 /** Stable empty selector result: useSyncExternalStore re-renders forever if a selector returns a fresh array each call. */
 const NO_PATHS: string[] = [];
 
-export function DiffPane({ path, oldPath, status, mode, emptyMessage }: DiffPaneProps): React.JSX.Element {
+/** Memoized: the pane's props are all primitives, so parents re-rendering (keystrokes, toasts, sidebar drags) must not reconcile the diff table. */
+export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, emptyMessage }: DiffPaneProps): React.JSX.Element {
   const diffState = useAppStore((s) => s.diff);
   const settings = useAppStore((s) => s.settings);
   const repo = useAppStore((s) => s.currentRepo);
@@ -281,7 +282,7 @@ export function DiffPane({ path, oldPath, status, mode, emptyMessage }: DiffPane
       </div>
     </div>
   );
-}
+});
 
 function DiffBody({ diff, path, viewMode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange, annotations, activeAnnotationId, onAnnotationClick, renderAnnotationCard, blame, activeBlameId, onBlameBlockClick, renderBlameCard, highlightTerm, onExplainRange }: { diff: FileDiff; path: string; mode: string; viewMode: 'unified' | 'split'; wrap: boolean; syntax: boolean; intraline: boolean; selectable: boolean; selectedLines: string[] | null; onSelectionChange: (s: Set<string>, total: number) => void; annotations?: LineAnnotation[]; activeAnnotationId?: string | null; onAnnotationClick?: (id: string) => void; renderAnnotationCard?: (ids: string[]) => React.ReactNode; blame?: BlameHunk[] | null; activeBlameId?: string | null; onBlameBlockClick?: (id: string) => void; renderBlameCard?: (hunk: BlameHunk) => React.ReactNode; highlightTerm?: { text: string; regex: boolean } | null; onExplainRange?: (hunkIndex: number, startLine: number, endLine: number) => void }): React.JSX.Element {
   switch (diff.kind) {

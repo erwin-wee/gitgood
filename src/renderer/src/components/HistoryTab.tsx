@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { Commit, CommitSignature, HistoryQuery, SignatureStatus } from '@shared/types';
 import { isMac } from '../api';
 import * as actions from '../state/actions';
@@ -6,6 +6,9 @@ import { historyFilterActive, historyReorderDisabled } from '../state/actions';
 import { openDialog, patchHistory, setPopover, store, useAppStore } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
 import { Avatar, Badge, Button, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
+import { useWindowedRows } from '../lib/windowing';
+
+const COMMIT_ROW_ESTIMATES = { row: 52 };
 
 const SIGNATURE_BADGES: Partial<Record<SignatureStatus, { icon: IconName; className: string; label: (signer: string | null) => string }>> = {
   good: { icon: 'check-circle', className: 'sig-good', label: (signer) => `Good signature${signer ? ` from ${signer}` : ''}` },
@@ -71,6 +74,8 @@ export function HistoryTab(): React.JSX.Element {
   const verifySignatures = useAppStore((s) => s.settings?.historyVerifySignatures ?? false);
   const sentinel = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState<string | 'top' | null>(null);
+  const [listEl, setListEl] = useState<HTMLElement | null>(null);
+  const win = useWindowedRows(listEl, { count: history.commits.length, kindOf: () => 'row', estimates: COMMIT_ROW_ESTIMATES, resetKey: history.path ?? '' });
   const filterActive = historyFilterActive(history);
   const reorderDisabled = historyReorderDisabled(history);
 
@@ -86,13 +91,32 @@ export function HistoryTab(): React.JSX.Element {
 
   const unpushedCount = status?.branch.upstream && !status.branch.upstreamGone && !history.search ? status.branch.ahead : status?.branch.upstream ? 0 : history.search ? 0 : null;
 
-  const onDrop = (target: string | null) => {
-    const moving = history.dragging;
+  const onDrop = useCallback((target: string | null) => {
+    const moving = store.get().history.dragging;
     setDragOver(null);
     patchHistory({ dragging: null });
     if (!moving || (target && moving.includes(target))) return;
     void actions.reorderCommits(moving, target);
-  };
+  }, []);
+  const onRowDragOver = useCallback((sha: string, e: React.DragEvent) => {
+    const dragging = store.get().history.dragging;
+    if (dragging && !dragging.includes(sha)) {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragOver(sha);
+    }
+  }, []);
+  const onRowDragLeave = useCallback((sha: string) => setDragOver((d) => (d === sha ? null : d)), []);
+  const onRowDragEnd = useCallback(() => {
+    patchHistory({ dragging: null });
+    setDragOver(null);
+  }, []);
+
+  const rows: React.ReactNode[] = [];
+  for (let i = win.start; i < win.end; i++) {
+    const c = history.commits[i];
+    rows.push(<CommitRow key={c.sha} rowRef={win.rowRef(i)} commit={c} selected={history.selectedShas.includes(c.sha)} inactive={!focused} unpushed={unpushedCount !== null && i < unpushedCount} dragOver={dragOver === c.sha} draggable={!reorderDisabled} verifySignatures={verifySignatures} onDragOver={onRowDragOver} onDragLeave={onRowDragLeave} onDragEnd={onRowDragEnd} onDrop={onDrop} />);
+  }
 
   return (
     <>
@@ -132,6 +156,7 @@ export function HistoryTab(): React.JSX.Element {
         </div>
       ) : null}
       <div
+        ref={setListEl}
         className="commit-list"
         onDragOver={(e) => {
           if (history.dragging) {
@@ -150,75 +175,9 @@ export function HistoryTab(): React.JSX.Element {
         ) : null}
         {!history.loading && !history.commits.length ? <div className="list-empty">{filterActive ? 'No commits match your search.' : status?.branch.unborn ? 'No commits yet.' : 'No history to show.'}</div> : null}
         {dragOver === 'top' && history.dragging ? <div style={{ height: 2, background: 'var(--accent)' }} /> : null}
-        {history.commits.map((c, index) => {
-          const selected = history.selectedShas.includes(c.sha);
-          const unpushed = unpushedCount !== null && index < unpushedCount;
-          const tags = c.refs.filter((r) => r.startsWith('tag: ')).map((r) => r.slice(5));
-          const branchesRefs = c.refs.filter((r) => !r.startsWith('tag: ') && r !== 'HEAD');
-          return (
-            <div
-              key={c.sha}
-              className={`commit-row ${selected ? 'selected' : ''} ${selected && !focused ? 'inactive' : ''} ${dragOver === c.sha ? 'drag-over' : ''}`}
-              onClick={(e) => actions.selectCommit(c.sha, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
-              onContextMenu={(e) => {
-                if (!history.selectedShas.includes(c.sha)) actions.selectCommit(c.sha);
-                openContextMenu(e, commitMenu(c, store.get().history.selectedShas));
-              }}
-              draggable={!reorderDisabled}
-              onDragStart={(e) => {
-                const shas = history.selectedShas.includes(c.sha) ? history.selectedShas : [c.sha];
-                patchHistory({ dragging: shas });
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', shas.join('\n'));
-              }}
-              onDragEnd={() => {
-                patchHistory({ dragging: null });
-                setDragOver(null);
-              }}
-              onDragOver={(e) => {
-                if (history.dragging && !history.dragging.includes(c.sha)) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setDragOver(c.sha);
-                }
-              }}
-              onDragLeave={() => setDragOver((d) => (d === c.sha ? null : d))}
-              onDrop={(e) => {
-                e.stopPropagation();
-                onDrop(c.sha);
-              }}
-              title={`${c.shortSha} · ${c.author.name} · ${new Date(c.author.date).toLocaleString()}`}
-            >
-              <Avatar email={c.author.email} name={c.author.name} size={28} />
-              <span className="row-main">
-                <span className="summary">{c.summary || <span className="muted">(no message)</span>}</span>
-                <span className="meta">
-                  <span className="truncate" style={{ flex: '0 1 auto' }}>{c.author.name}</span>
-                  <span>·</span>
-                  <RelativeTime date={c.committer.date} />
-                  {c.isMerge ? <Icon name="merge" size={12} title="Merge commit" /> : null}
-                  {tags.length || branchesRefs.length ? (
-                    <span className="refs">
-                      {tags.map((t) => (
-                        <Badge key={t} tone="accent" outline title={`Tag ${t}`}>
-                          <Icon name="tag" size={10} /> {t}
-                        </Badge>
-                      ))}
-                      {branchesRefs.slice(0, 2).map((b) => (
-                        <Badge key={b} outline title={b}>
-                          {b}
-                        </Badge>
-                      ))}
-                    </span>
-                  ) : null}
-                </span>
-              </span>
-              {unpushed ? <Icon name="arrow-up" className="unpushed" title="Not yet pushed" /> : null}
-              {c.coAuthors.length ? <Icon name="person" className="muted" title={`Co-authored by ${c.coAuthors.map((a) => a.name).join(', ')}`} /> : null}
-              {verifySignatures ? <SignatureBadge signature={c.signature} /> : null}
-            </div>
-          );
-        })}
+        {win.top > 0 ? <div style={{ height: win.top }} /> : null}
+        {rows}
+        {win.bottom > 0 ? <div style={{ height: win.bottom }} /> : null}
         <div ref={sentinel} className="load-more">
           {history.loading && history.commits.length ? <Spinner /> : history.hasMore ? <Button size="sm" variant="ghost" onClick={() => void actions.loadHistory(false)}>Load more</Button> : history.commits.length ? <span className="muted">End of history</span> : null}
         </div>
@@ -226,6 +185,69 @@ export function HistoryTab(): React.JSX.Element {
     </>
   );
 }
+
+const CommitRow = memo(function CommitRow({ commit: c, selected, inactive, unpushed, dragOver, draggable, verifySignatures, rowRef, onDragOver, onDragLeave, onDragEnd, onDrop }: { commit: Commit; selected: boolean; inactive: boolean; unpushed: boolean; dragOver: boolean; draggable: boolean; verifySignatures: boolean; rowRef: (el: HTMLElement | null) => void; onDragOver: (sha: string, e: React.DragEvent) => void; onDragLeave: (sha: string) => void; onDragEnd: () => void; onDrop: (sha: string) => void }): React.JSX.Element {
+  const tags = c.refs.filter((r) => r.startsWith('tag: ')).map((r) => r.slice(5));
+  const branchesRefs = c.refs.filter((r) => !r.startsWith('tag: ') && r !== 'HEAD');
+  return (
+    <div
+      ref={rowRef}
+      className={`commit-row ${selected ? 'selected' : ''} ${selected && inactive ? 'inactive' : ''} ${dragOver ? 'drag-over' : ''}`}
+      onClick={(e) => actions.selectCommit(c.sha, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
+      onContextMenu={(e) => {
+        if (!store.get().history.selectedShas.includes(c.sha)) actions.selectCommit(c.sha);
+        openContextMenu(e, commitMenu(c, store.get().history.selectedShas));
+      }}
+      draggable={draggable}
+      onDragStart={(e) => {
+        const current = store.get().history.selectedShas;
+        const shas = current.includes(c.sha) ? current : [c.sha];
+        patchHistory({ dragging: shas });
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', shas.join('\n'));
+      }}
+      onDragEnd={onDragEnd}
+      onDragOver={(e) => onDragOver(c.sha, e)}
+      onDragLeave={() => onDragLeave(c.sha)}
+      onDrop={(e) => {
+        e.stopPropagation();
+        onDrop(c.sha);
+      }}
+      // The full date is formatted only when the tooltip is about to show: toLocaleString per row per render is measurable at 2k rows.
+      onMouseEnter={(e) => {
+        if (!e.currentTarget.title) e.currentTarget.title = `${c.shortSha} · ${c.author.name} · ${new Date(c.author.date).toLocaleString()}`;
+      }}
+    >
+      <Avatar email={c.author.email} name={c.author.name} size={28} />
+      <span className="row-main">
+        <span className="summary">{c.summary || <span className="muted">(no message)</span>}</span>
+        <span className="meta">
+          <span className="truncate" style={{ flex: '0 1 auto' }}>{c.author.name}</span>
+          <span>·</span>
+          <RelativeTime date={c.committer.date} />
+          {c.isMerge ? <Icon name="merge" size={12} title="Merge commit" /> : null}
+          {tags.length || branchesRefs.length ? (
+            <span className="refs">
+              {tags.map((t) => (
+                <Badge key={t} tone="accent" outline title={`Tag ${t}`}>
+                  <Icon name="tag" size={10} /> {t}
+                </Badge>
+              ))}
+              {branchesRefs.slice(0, 2).map((b) => (
+                <Badge key={b} outline title={b}>
+                  {b}
+                </Badge>
+              ))}
+            </span>
+          ) : null}
+        </span>
+      </span>
+      {unpushed ? <Icon name="arrow-up" className="unpushed" title="Not yet pushed" /> : null}
+      {c.coAuthors.length ? <Icon name="person" className="muted" title={`Co-authored by ${c.coAuthors.map((a) => a.name).join(', ')}`} /> : null}
+      {verifySignatures ? <SignatureBadge signature={c.signature} /> : null}
+    </div>
+  );
+});
 
 /** Form-control equivalent of the search box's `key:value` syntax; two-way synced through `history.query` (see setHistoryQuery). */
 function HistoryFilterPopover(): React.JSX.Element {
