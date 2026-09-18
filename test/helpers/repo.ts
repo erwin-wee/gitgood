@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { findExecutable } from '../../src/main/tools';
@@ -105,7 +105,10 @@ export async function createRepo(options: CreateRepoOptions = {}): Promise<TestR
   const gitBin = await findGit();
   if (!gitBin) throw new Error('git was not found on PATH; fixture tests require a real git installation.');
   seq += 1;
-  const root = await mkdtemp(join(tmpdir(), `gg-repo-${seq}-`));
+  // Resolved to its physical path: on macOS `tmpdir()` is under `/var`, a symlink
+  // to `/private/var`, and git reports working-tree roots physically, so a test
+  // comparing a path it built against one the app returned would never match.
+  const root = await realpath(await mkdtemp(join(tmpdir(), `gg-repo-${seq}-`)));
   const repoPath = join(root, 'repo');
   const home = join(root, 'home');
   await mkdir(repoPath, { recursive: true });

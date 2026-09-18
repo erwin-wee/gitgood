@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -52,7 +52,7 @@ describe.skipIf(!hasGitSync())('fixture isolation', () => {
     const before = await readdir(tmpdir());
     repo = await createRepo({ commits: [{ message: 'init', files: { 'a.txt': '1\n' } }] });
     expect(existsSync(repo.root)).toBe(true);
-    expect(repo.root.startsWith(tmpdir())).toBe(true);
+    expect(repo.root.startsWith(await realpath(tmpdir()))).toBe(true);
     const root = repo.root;
     await repo.dispose();
     expect(existsSync(root)).toBe(false);
