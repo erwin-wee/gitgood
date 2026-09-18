@@ -24,6 +24,11 @@ git tag v0.2.0 && git push origin v0.2.0
 
 `.github/workflows/release.yml` builds Windows/macOS/Linux in parallel and publishes the artifacts to a **draft** GitHub Release (`electron-builder.yml`'s `publish` block, `releaseType: draft`) — review the draft, add notes, and publish it manually from the Releases page.
 
+The tag is what starts a release, so two things have to hold or the assets never arrive:
+
+- **Bump `package.json` before tagging.** electron-builder names artifacts and picks the release from `version`, not from the tag, so a `v0.2.0` tag on a `0.1.9` `package.json` uploads `0.1.9` files to the `v0.1.9` release. The workflow's "Check the tag matches package.json" step fails the run instead.
+- **Don't create the release from GitHub's Releases page.** Publishing a drafted release there creates the tag, so by the time the build finishes the release already exists as a published one; `releaseType: draft` then refuses it (`existing type not compatible with publishing type ... existingType=release publishingType=draft`) and skips every upload — while the workflow still reports success. Push the tag first and let the workflow create the draft.
+
 ## Auto-update
 
 Installed copies check the GitHub releases feed (via `electron-updater`) on launch and every 6 hours, download a newer eligible release in the background, and offer **Restart to update**. See `openspec/changes/add-auto-update` for the full design (channels, install gating, per-machine Windows installs, and what's still unverified end-to-end).
