@@ -46,4 +46,4 @@ publish:
   provider: github
   owner: erwin-wee
   repo: gitgood
-  draft: true
+  releaseType: draft
