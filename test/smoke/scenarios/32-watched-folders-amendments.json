@@ -4,31 +4,36 @@
   "steps": [
     { "wait": 1200 },
     {
-      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; await inv('repos.watchedFolders.add', projects); await new Promise((r) => setTimeout(r, 1500)); const manual = await inv('repos.add', projects + '/a'); const inWatched = await inv('repos.isInWatchedFolder', manual.path); const outside = await inv('repos.add', __REPO_PATH__ + '-outside/c'); const outsideInWatched = await inv('repos.isInWatchedFolder', outside.path); return JSON.stringify({ discoveredOrigin: manual.origin, outsideOrigin: outside.origin === undefined ? 'manual' : outside.origin, inWatched, outsideInWatched }); })()",
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; await inv('repos.watchedFolders.add', projects); await new Promise((r) => setTimeout(r, 1500)); const manual = await inv('repos.add', projects + __SEP__ + 'a'); const inWatched = await inv('repos.isInWatchedFolder', manual.path); const outside = await inv('repos.add', __REPO_PATH__ + '-outside' + __SEP__ + 'c'); const outsideInWatched = await inv('repos.isInWatchedFolder', outside.path); return JSON.stringify({ discoveredOrigin: manual.origin, outsideOrigin: outside.origin === undefined ? 'manual' : outside.origin, inWatched, outsideInWatched }); })()",
       "dump": "manual-add.json"
     },
     {
-      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const repos = await inv('repos.list'); const manual = repos.find((r) => r.path === projects + '/a'); window.__gitgood.actions.openDialog({ kind: 'remove-repo', repo: manual }); await new Promise((r) => setTimeout(r, 600)); const text = document.body.innerText; return JSON.stringify({ warnsAboutScans: text.indexOf('not be added back by future scans') !== -1, bodyLen: text.length }); })()",
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const repos = await inv('repos.list'); const manual = repos.find((r) => r.path === projects + __SEP__ + 'a'); window.__gitgood.actions.openDialog({ kind: 'remove-repo', repo: manual }); await new Promise((r) => setTimeout(r, 600)); const text = document.body.innerText; return JSON.stringify({ warnsAboutScans: text.indexOf('not be added back by future scans') !== -1, bodyLen: text.length }); })()",
       "dump": "confirm-inside.json"
     },
     { "shot": "confirm-inside.png" },
     {
-      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; window.__gitgood.actions.closeAllDialogs(); await new Promise((r) => setTimeout(r, 200)); const outside = (await inv('repos.list')).find((r) => r.path === __REPO_PATH__ + '-outside/c'); window.__gitgood.actions.openDialog({ kind: 'remove-repo', repo: outside }); await new Promise((r) => setTimeout(r, 600)); const text = document.body.innerText; return JSON.stringify({ warnsAboutScans: text.indexOf('not be added back by future scans') !== -1, bodyLen: text.length }); })()",
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; window.__gitgood.actions.closeAllDialogs(); await new Promise((r) => setTimeout(r, 200)); const outside = (await inv('repos.list')).find((r) => r.path === __REPO_PATH__ + '-outside' + __SEP__ + 'c'); window.__gitgood.actions.openDialog({ kind: 'remove-repo', repo: outside }); await new Promise((r) => setTimeout(r, 600)); const text = document.body.innerText; return JSON.stringify({ warnsAboutScans: text.indexOf('not be added back by future scans') !== -1, bodyLen: text.length }); })()",
       "dump": "confirm-outside.json"
     },
     { "shot": "confirm-outside.png" },
     {
-      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; window.__gitgood.actions.closeAllDialogs(); await new Promise((r) => setTimeout(r, 200)); const repos = await inv('repos.list'); const manual = repos.find((r) => r.path === projects + '/a'); await window.__gitgood.actions.removeRepository(manual, false); await new Promise((r) => setTimeout(r, 400)); const excluded = await inv('repos.exclusions.list'); const rescan = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 400)); const after = await inv('repos.list'); return JSON.stringify({ excludedCount: excluded.length, addedOnRescan: rescan.added, stillGone: !after.some((r) => r.path === projects + '/a') }); })()",
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; window.__gitgood.actions.closeAllDialogs(); await new Promise((r) => setTimeout(r, 200)); const repos = await inv('repos.list'); const manual = repos.find((r) => r.path === projects + __SEP__ + 'a'); await window.__gitgood.actions.removeRepository(manual, false); await new Promise((r) => setTimeout(r, 400)); const excluded = await inv('repos.exclusions.list'); const rescan = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 400)); const after = await inv('repos.list'); return JSON.stringify({ excludedCount: excluded.length, addedOnRescan: rescan.added, stillGone: !after.some((r) => r.path === projects + __SEP__ + 'a') }); })()",
       "dump": "manual-removal-sticks.json"
     },
     {
-      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const outside = (await inv('repos.list')).find((r) => r.path === __REPO_PATH__ + '-outside/c'); await window.__gitgood.actions.removeRepository(outside, false); await new Promise((r) => setTimeout(r, 400)); const excluded = await inv('repos.exclusions.list'); return JSON.stringify({ excludedAfterOutsideRemoval: excluded.length, excludesOutside: excluded.some((p) => p.indexOf('-outside') !== -1) }); })()",
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const outside = (await inv('repos.list')).find((r) => r.path === __REPO_PATH__ + '-outside' + __SEP__ + 'c'); await window.__gitgood.actions.removeRepository(outside, false); await new Promise((r) => setTimeout(r, 400)); const excluded = await inv('repos.exclusions.list'); return JSON.stringify({ excludedAfterOutsideRemoval: excluded.length, excludesOutside: excluded.some((p) => p.indexOf('-outside') !== -1) }); })()",
       "dump": "outside-removal.json"
     },
     {
-      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const link = __REPO_PATH__ + '-link-b'; const viaLink = await inv('repos.add', link); const rescan = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 400)); const after = await inv('repos.list'); const bEntries = after.filter((r) => r.path === link || r.path === projects + '/org/b'); return JSON.stringify({ resolvedToRealPath: viaLink.path === projects + '/org/b', addedOnRescan: rescan.added, entriesForB: bEntries.length, total: after.length }); })()",
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const link = __REPO_PATH__ + '-link-b'; const viaLink = await inv('repos.add', link); const rescan = await inv('repos.scanWatchedFolders'); await new Promise((r) => setTimeout(r, 400)); const after = await inv('repos.list'); const bEntries = after.filter((r) => r.path === link || r.path === projects + __SEP__ + 'org' + __SEP__ + 'b'); return JSON.stringify({ resolvedToRealPath: viaLink.path === projects + __SEP__ + 'org' + __SEP__ + 'b', addedOnRescan: rescan.added, entriesForB: bEntries.length, total: after.length }); })()",
       "dump": "symlink-dedupe.json"
-    }
+    },
+    {
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const link = __REPO_PATH__ + '-link-outside'; const real = __REPO_PATH__ + '-outside'; const added = await inv('repos.watchedFolders.add', link); const folder = (added.settings.watchedFolders || []).find((f) => f.path === real) || null; const nested = await inv('repos.watchedFolders.add', link + __SEP__ + 'c'); window.__gitgood.actions.closeAllDialogs(); window.__gitgood.actions.openDialog({ kind: 'settings', tab: 'git' }); await new Promise((r) => setTimeout(r, 700)); const text = document.body.innerText; return JSON.stringify({ addOk: added.ok, storedPhysically: folder !== null, keepsChosenPath: folder ? folder.displayPath === link : false, showsChosenPath: text.indexOf(link) !== -1, rejectionNamesChosenPath: nested.ok === false && (nested.error || '').indexOf(link) !== -1 }); })()",
+      "dump": "display-path.json"
+    },
+    { "shot": "display-path.png" }
   ],
   "expect": [
     { "dump": "manual-add.json", "jsonPath": "discoveredOrigin", "equals": "watched" },
@@ -44,6 +49,11 @@
     { "dump": "outside-removal.json", "jsonPath": "excludesOutside", "equals": false },
     { "dump": "symlink-dedupe.json", "jsonPath": "resolvedToRealPath", "equals": true },
     { "dump": "symlink-dedupe.json", "jsonPath": "addedOnRescan", "equals": 0 },
-    { "dump": "symlink-dedupe.json", "jsonPath": "entriesForB", "equals": 1 }
+    { "dump": "symlink-dedupe.json", "jsonPath": "entriesForB", "equals": 1 },
+    { "dump": "display-path.json", "jsonPath": "addOk", "equals": true },
+    { "dump": "display-path.json", "jsonPath": "storedPhysically", "equals": true },
+    { "dump": "display-path.json", "jsonPath": "keepsChosenPath", "equals": true },
+    { "dump": "display-path.json", "jsonPath": "showsChosenPath", "equals": true },
+    { "dump": "display-path.json", "jsonPath": "rejectionNamesChosenPath", "equals": true }
   ]
 }

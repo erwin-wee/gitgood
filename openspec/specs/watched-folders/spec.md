@@ -8,7 +8,7 @@ Lets a user point GitGood at the folders where they keep their clones, so every 
 
 ### Requirement: Registering watched folders
 
-The application SHALL let the user register any number of watched folders, each an absolute path to a directory with its own scan depth. Depth SHALL default to 3 and be constrained to 1–10. The same folder SHALL NOT be registered twice; path comparison SHALL be case-insensitive on Windows and case-sensitive elsewhere. A folder that is a subdirectory of an already-watched folder SHALL be rejected with an explanation naming the folder that already covers it. Registering, editing the depth of, or removing a watched folder SHALL be reversible by the user at any time, and removing a watched folder SHALL leave the repositories it discovered in the list.
+The application SHALL let the user register any number of watched folders, each an absolute path to a directory with its own scan depth. Depth SHALL default to 3 and be constrained to 1–10. A watched folder SHALL be recorded by its physical path, with symbolic links (and Windows junctions) resolved, since every comparison it takes part in is against paths git reports physically; when the path the user chose differs from that, it SHALL be kept alongside it and SHALL be the path shown wherever the folder is named to the user, so a folder is never displayed or referred to by a path the user did not choose. The same folder SHALL NOT be registered twice; path comparison SHALL be case-insensitive on Windows and case-sensitive elsewhere. A folder that is a subdirectory of an already-watched folder SHALL be rejected with an explanation naming the folder that already covers it. Registering, editing the depth of, or removing a watched folder SHALL be reversible by the user at any time, and removing a watched folder SHALL leave the repositories it discovered in the list.
 
 #### Scenario: Add a folder
 
@@ -44,6 +44,11 @@ The application SHALL let the user register any number of watched folders, each 
 
 - **WHEN** the user registers `~/Projects`, which is a symbolic link (or a Windows junction) to `/mnt/data/Projects`, and a repository exists at `/mnt/data/Projects/a`
 - **THEN** that repository is discovered, and is treated as being inside the watched folder — so removing it records an exclusion and a vanished copy of it is dropped
+
+#### Scenario: Chosen path is what the user sees
+
+- **WHEN** the user registers `~/Projects`, which is a symbolic link to `/mnt/data/Projects`, and then adds `~/Projects/work`
+- **THEN** Options lists the folder as `~/Projects`, and the rejection of the nested folder names `~/Projects` rather than `/mnt/data/Projects`
 
 ### Requirement: Bounded discovery of repositories
 

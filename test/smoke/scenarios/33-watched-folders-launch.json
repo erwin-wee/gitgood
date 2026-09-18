@@ -7,7 +7,7 @@
   "steps": [
     { "wait": 2500 },
     {
-      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const repos = await inv('repos.list'); const paths = repos.map((r) => r.path).sort(); return JSON.stringify({ count: repos.length, foundA: paths.includes(projects + '/a'), foundB: paths.includes(projects + '/org/b'), allWatched: repos.length > 0 && repos.every((r) => r.origin === 'watched'), inStoreList: window.__gitgood.store.get().repos.length }); })()",
+      "js": "(async () => { const inv = async (m, ...a) => { const r = await window.gitgoodBridge.invokeRaw(m, ...a); if (!r.ok) throw new Error(r.error.message); return r.value; }; const projects = __REPO_PATH__ + '-projects'; const repos = await inv('repos.list'); const paths = repos.map((r) => r.path).sort(); return JSON.stringify({ count: repos.length, foundA: paths.includes(projects + __SEP__ + 'a'), foundB: paths.includes(projects + __SEP__ + 'org' + __SEP__ + 'b'), allWatched: repos.length > 0 && repos.every((r) => r.origin === 'watched'), inStoreList: window.__gitgood.store.get().repos.length }); })()",
       "dump": "launch.json"
     },
     { "shot": "launch.png" }

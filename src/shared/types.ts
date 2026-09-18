@@ -125,9 +125,26 @@ export interface AppSettings {
 
 /** A folder scanned for repositories, with how many levels below it may be examined (the folder itself is level 0). */
 export interface WatchedFolder {
+  /**
+   * The physical path, with symbolic links (and Windows junctions) resolved.
+   * Every comparison — scan root, exclusions, dropping vanished repositories —
+   * uses this, because git reports repositories by their physical path.
+   */
   path: string;
+  /**
+   * The path the user actually chose, when it differs from `path` — a symlink,
+   * a junction or a mapped drive. Shown wherever a folder is named to the user,
+   * so a row reads `~/Projects` rather than `/mnt/data/Projects`. Absent when
+   * the chosen path was already physical.
+   */
+  displayPath?: string;
   /** 1–10; the deepest level below `path` that a scan examines. */
   depth: number;
+}
+
+/** The path to show the user for a watched folder: the one they chose, falling back to the physical path. */
+export function watchedFolderLabel(folder: Pick<WatchedFolder, 'path' | 'displayPath'>): string {
+  return folder.displayPath ?? folder.path;
 }
 
 export const WATCHED_FOLDER_MIN_DEPTH = 1;

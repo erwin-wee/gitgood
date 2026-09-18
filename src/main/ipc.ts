@@ -243,7 +243,14 @@ export function registerIpc(ctx: AppContext): void {
       // repos.watchedFolders.add — otherwise the two disagree about whether a
       // symlink and its target are the same folder, and it gets walked twice.
       if (patch.watchedFolders) {
-        const canonical = await Promise.all(patch.watchedFolders.map(async (f) => ({ ...f, path: await canonicalPath(f.path) })));
+        // Dropped before the map rather than inside sanitizeWatchedFolders,
+        // because reading `f.path` off a malformed entry (a hand-edited
+        // settings.json) would throw out of the whole settings save.
+        const entries = (Array.isArray(patch.watchedFolders) ? patch.watchedFolders : []).filter((f) => f && typeof f.path === 'string');
+        // A folder edited here keeps the display path it was registered with;
+        // one arriving without it (a hand-edited settings.json, an older file)
+        // is displayed by the path as written, which is what its author typed.
+        const canonical = await Promise.all(entries.map(async (f) => ({ ...f, path: await canonicalPath(f.path), displayPath: f.displayPath ?? f.path })));
         patch = { ...patch, watchedFolders: sanitizeWatchedFolders(canonical) };
       }
       const next = store.updateSettings(patch);
@@ -484,8 +491,10 @@ export function registerIpc(ctx: AppContext): void {
     'repos.watchedFolders.add': async (path, depth) => {
       // Stored physically: git reports repositories by their resolved path, so
       // a folder kept as a symlink/junction path would never match what a scan
-      // finds inside it (and nothing in it could be excluded on removal).
-      const result = addWatchedFolder(store.getSettings().watchedFolders, await canonicalPath(path), depth);
+      // finds inside it (and nothing in it could be excluded on removal). The
+      // path the user picked rides along for display, so Options names the
+      // folder they chose rather than wherever it happens to point.
+      const result = addWatchedFolder(store.getSettings().watchedFolders, await canonicalPath(path), depth, path);
       if (!result.ok) return { ok: false, error: result.error, settings: store.getSettings() };
       // The settings listener starts the scan; see WatchedFolderScanner.watchSettings.
       return { ok: true, settings: store.updateSettings({ watchedFolders: result.folders }) };

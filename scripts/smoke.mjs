@@ -15,9 +15,9 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -109,6 +109,9 @@ const REPO_KINDS = {
     execFileSync('git', ['init', '-q', '-b', 'main', outside], { env: repo.env, stdio: 'ignore' });
     // A symlink to org/b, for the "one entry per repository" check.
     symlinkSync(join(projects, 'org', 'b'), `${repo.path}-link-b`, 'dir');
+    // A symlink to the `-outside` folder, for registering a watched folder
+    // through a link and checking it is displayed as the user chose it.
+    symlinkSync(`${repo.path}-outside`, `${repo.path}-link-outside`, 'dir');
     return repo;
   },
   uncommittedChanges: (workRoot) => {
@@ -483,7 +486,12 @@ async function runScenario(scenarioFile, electronPath) {
   const outDir = join(OUT_DIR, name);
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
-  const workRoot = mkdtempSync(join(tmpdir(), `gg-smoke-${name}-`));
+  // Resolved to its physical path: on macOS `tmpdir()` is `/var/...`, a symlink
+  // to `/private/var`, and the app reports repositories by their physical path
+  // (`git rev-parse --show-toplevel` resolves symlinks, as does the watched-folder
+  // scanner), so an un-resolved fixture root would never match what a scenario
+  // reads back. Every fixture path below is derived from this root.
+  const workRoot = realpathSync(mkdtempSync(join(tmpdir(), `gg-smoke-${name}-`)));
   const userData = join(workRoot, 'userdata');
   mkdirSync(userData, { recursive: true });
 
@@ -491,10 +499,17 @@ async function runScenario(scenarioFile, electronPath) {
   const repo = build ? build(workRoot) : null;
 
   let env = { ...(repo ? repo.env : isolatedEnv(workRoot)), GITGOOD_USER_DATA: userData };
-  // `__REPO_PATH__` is substituted into seeded settings as well as into step
-  // scripts, so a scenario can seed a setting that names the fixture (e.g. a
-  // watched folder) and exercise what happens at launch.
-  const settings = scenario.settings ? JSON.parse(repo ? JSON.stringify(scenario.settings).split('__REPO_PATH__').join(JSON.stringify(repo.path).slice(1, -1)) : JSON.stringify(scenario.settings)) : {};
+  // `__REPO_PATH__` and `__SEP__` are substituted into seeded settings as well
+  // as into step scripts, so a scenario can seed a setting that names the
+  // fixture (e.g. a watched folder) and exercise what happens at launch. Here
+  // they land inside a JSON string, so both are inserted as escaped text rather
+  // than as the JS expressions the step scripts below take.
+  const seed = (value) => {
+    let json = JSON.stringify(value).split('__SEP__').join(JSON.stringify(sep).slice(1, -1));
+    if (repo) json = json.split('__REPO_PATH__').join(JSON.stringify(repo.path).slice(1, -1));
+    return JSON.parse(json);
+  };
+  const settings = scenario.settings ? seed(scenario.settings) : {};
 
   // Generic claude stub scenario: a scenario file sets `needsClaudeStub: true` and `claudeStubRules`
   // (the same rule shape as test/helpers/gh-stub) to have `claude` (per app settings.ai.claudeCliPath)
@@ -527,6 +542,11 @@ async function runScenario(scenarioFile, electronPath) {
   const dumps = {};
   const steps = (scenario.steps ?? []).map((step) => {
     const out = { ...step };
+    // `__SEP__` becomes the platform's path separator as a JS string literal, so a
+    // scenario builds paths to compare against what the app returns ('\\' on Windows)
+    // rather than hard-coding '/'. Node accepts '/' in the paths it is *given*, so
+    // `rm` targets need no such treatment.
+    if (out.js) out.js = out.js.split('__SEP__').join(JSON.stringify(sep));
     if (out.js && repo) out.js = out.js.split('__REPO_PATH__').join(JSON.stringify(repo.path));
     if (out.rm && repo) out.rm = out.rm.split('__REPO_PATH__').join(repo.path);
     if (out.dump) out.dump = join(outDir, out.dump);
