@@ -369,6 +369,18 @@ export class ReviewService {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
+    // `finally`, not a tail assignment: anything that throws on the way (AI
+    // disabled, an unknown base branch, gh failing) would otherwise leave the
+    // controller set, so `isActive()` stays true for the rest of the process
+    // and blocks installing an update forever.
+    try {
+      return await this.runReview(repoPath, input, opts, report, controller);
+    } finally {
+      if (this.controller === controller) this.controller = null;
+    }
+  }
+
+  private async runReview(repoPath: string, input: ReviewTarget, opts: ReviewStartOptions, report: (e: AiReviewProgressEvent) => void, controller: AbortController): Promise<ReviewRun> {
     const signal = controller.signal;
     const runId = newRunId();
     const emit: Reporter = (e) => report({ ...e, repoPath, runId });
@@ -527,7 +539,6 @@ export class ReviewService {
 
     run.finishedAt = new Date().toISOString();
     await this.saveRun(run);
-    if (this.controller === controller) this.controller = null;
     emit({ phase: run.cancelled ? 'cancelled' : run.error ? 'error' : 'done', path: null, index: total, total, message: run.cancelled ? 'Review cancelled' : run.error ?? 'Review complete' });
     log.info(`AI review ${runId} (${targetKey(run.target)}): ${run.findings.length} finding(s), ${run.droppedInvalid} dropped, ${run.files.filter((f) => f.status === 'reviewed').length}/${run.files.length} files via ${backend.name}/${settings.model}`);
     return run;
@@ -610,6 +621,14 @@ export class ReviewService {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
+    try {
+      return await this.runWorktreeReview(repoPath, opts, report, controller);
+    } finally {
+      if (this.controller === controller) this.controller = null;
+    }
+  }
+
+  private async runWorktreeReview(repoPath: string, opts: WorktreeReviewOptions, report: (e: AiReviewProgressEvent) => void, controller: AbortController): Promise<ReviewRun> {
     const signal = controller.signal;
     const runId = newRunId();
     const emit: Reporter = (e) => report({ ...e, repoPath, runId });
@@ -808,7 +827,6 @@ export class ReviewService {
 
     run.finishedAt = new Date().toISOString();
     await this.saveRun(run);
-    if (this.controller === controller) this.controller = null;
     emit({ phase: run.cancelled ? 'cancelled' : run.error ? 'error' : 'done', path: null, index: total, total, message: run.cancelled ? 'Review cancelled' : run.error ?? 'Review complete' });
     log.info(`AI pre-commit review ${runId}: ${run.findings.length} finding(s), ${run.droppedInvalid} dropped, ${run.files.filter((f) => f.status === 'reviewed').length}/${run.files.length} files via ${backend.name}/${settings.model}`);
     return run;

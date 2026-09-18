@@ -19,7 +19,7 @@ import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { createBackend } from './provider';
 import { buildExplainFollowUpPrompt, buildExplainPrompt, EXPLAIN_FOLLOWUP_SCHEMA, EXPLAIN_FOLLOWUP_SYSTEM_PROMPT, EXPLAIN_SCHEMA, EXPLAIN_SYSTEM_PROMPT, type ExplainFilePromptInput } from './prompts';
-import { buildRangeContext, explainCacheKey, indexNewSideLines, markSelectedRange, splitPatchByFile, validateExplanation, validateFollowUpAnswer } from './explain-core';
+import { buildRangeContext, explainCacheKey, indexNewSideLines, isVolatileExplainTarget, markSelectedRange, splitPatchByFile, validateExplanation, validateFollowUpAnswer } from './explain-core';
 import { annotateHunks } from './review-core';
 
 const MAX_INPUT_BYTES = 120_000;
@@ -76,13 +76,18 @@ export class ExplainService {
   async explain(repoPath: string, target: ExplainTarget): Promise<Explanation> {
     const key = explainCacheKey(target);
     const cached = this.cacheFor(repoPath).get(key);
-    if (cached) return cached.explanation;
+    const volatile = isVolatileExplainTarget(target);
+    if (cached && !volatile) return cached.explanation;
 
     const { backend, settings } = await createBackend(this.store, this.tools);
     const controller = new AbortController();
     this.controller = controller;
     try {
       const built = await this.buildPrompt(repoPath, target);
+      // The prompt embeds the file's content, so an unchanged working tree
+      // reproduces it exactly; anything else means the file was edited since
+      // and the cached explanation no longer describes it.
+      if (cached && cached.basePrompt === built.prompt) return cached.explanation;
       const response = await backend.complete({
         system: EXPLAIN_SYSTEM_PROMPT,
         prompt: built.prompt,

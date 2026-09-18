@@ -188,7 +188,11 @@ if (!gotLock) {
       }
     }
 
-    mainWindow = createMainWindow(store, (focused) => (focused ? inbox.onFocus() : inbox.onBlur()));
+    // Shared so the `activate` re-create below wires focus tracking too; without
+    // it a window recreated after every window was closed stops driving the
+    // inbox poller's focus/blur cadence.
+    const onFocusChange = (focused: boolean) => (focused ? inbox.onFocus() : inbox.onBlur());
+    mainWindow = createMainWindow(store, onFocusChange);
     applyInboxBadge(mainWindow, inbox.getState().unreadCount);
     inbox.start();
     updater.start();
@@ -236,7 +240,7 @@ if (!gotLock) {
     }, 30_000);
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow(store);
+      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow(store, onFocusChange);
     });
     app.on('before-quit', () => {
       inbox.dispose();

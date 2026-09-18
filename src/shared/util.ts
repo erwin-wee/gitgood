@@ -403,7 +403,9 @@ function tokenizeHistoryQuery(text: string): string[] {
 }
 
 function quoteHistoryQueryValue(value: string): string {
-  return /\s/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+  // A `"` needs quoting even without whitespace: the tokenizer strips an
+  // unescaped quote, so `say"hi` would otherwise round-trip to `sayhi`.
+  return /[\s"]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }
 
 export interface ParsedHistoryQuery {
@@ -475,20 +477,45 @@ export function isEmptyHistoryQuery(query: HistoryQuery): boolean {
  * git itself. Returns a friendly message, or null when it looks balanced.
  */
 export function checkRegexBrackets(expr: string): string | null {
-  const stack: ('(' | '[')[] = [];
-  for (let i = 0; i < expr.length; i++) {
+  let depth = 0;
+  let i = 0;
+  while (i < expr.length) {
     const c = expr[i];
     if (c === '\\') {
-      i++;
+      i += 2;
       continue;
     }
-    if (c === '(' || c === '[') stack.push(c);
-    else if (c === ')' || c === ']') {
-      const want = c === ')' ? '(' : '[';
-      if (stack.pop() !== want) return `Unbalanced ${c === ')' ? 'parentheses' : 'brackets'} in regular expression.`;
+    if (c === '[') {
+      // Inside a bracket expression `(`, `)` and `[` are literals, so `[(]` and
+      // `[]]` are valid EREs. A `]` is also literal in the first position (after
+      // an optional `^`), and `[:class:]`/`[.coll.]`/`[=equiv=]` nest.
+      let j = i + 1;
+      if (expr[j] === '^') j++;
+      if (expr[j] === ']') j++;
+      while (j < expr.length && expr[j] !== ']') {
+        const kind = expr[j] === '[' ? expr[j + 1] : undefined;
+        if (kind === ':' || kind === '.' || kind === '=') {
+          const end = expr.indexOf(`${kind}]`, j + 2);
+          if (end === -1) return 'Unbalanced brackets in regular expression.';
+          j = end + 2;
+          continue;
+        }
+        j++;
+      }
+      if (j >= expr.length) return 'Unbalanced brackets in regular expression.';
+      i = j + 1;
+      continue;
     }
+    if (c === '(') {
+      depth++;
+    } else if (c === ')') {
+      if (depth === 0) return 'Unbalanced parentheses in regular expression.';
+      depth--;
+    }
+    // A `]` outside a bracket expression is an ordinary literal in POSIX ERE.
+    i++;
   }
-  if (stack.length) return `Unbalanced ${stack[stack.length - 1] === '(' ? 'parentheses' : 'brackets'} in regular expression.`;
+  if (depth) return 'Unbalanced parentheses in regular expression.';
   return null;
 }
 

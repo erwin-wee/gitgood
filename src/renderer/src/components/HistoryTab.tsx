@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { Commit, CommitSignature, HistoryQuery, SignatureStatus } from '@shared/types';
 import { isMac } from '../api';
 import * as actions from '../state/actions';
-import { historyFilterActive } from '../state/actions';
+import { historyFilterActive, historyReorderDisabled } from '../state/actions';
 import { openDialog, patchHistory, setPopover, store, useAppStore } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
 import { Avatar, Badge, Button, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
@@ -72,6 +72,7 @@ export function HistoryTab(): React.JSX.Element {
   const sentinel = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState<string | 'top' | null>(null);
   const filterActive = historyFilterActive(history);
+  const reorderDisabled = historyReorderDisabled(history);
 
   useEffect(() => {
     const el = sentinel.current;
@@ -163,7 +164,7 @@ export function HistoryTab(): React.JSX.Element {
                 if (!history.selectedShas.includes(c.sha)) actions.selectCommit(c.sha);
                 openContextMenu(e, commitMenu(c, store.get().history.selectedShas));
               }}
-              draggable={!filterActive}
+              draggable={!reorderDisabled}
               onDragStart={(e) => {
                 const shas = history.selectedShas.includes(c.sha) ? history.selectedShas : [c.sha];
                 patchHistory({ dragging: shas });

@@ -28,7 +28,7 @@ import { applyPatchToWorktree, createCommit, getLastCommitMessage, isUnborn, sta
 import { getCommitFileDiff, getRangeFileDiff, getStashFileDiff, getStashFiles, getWorkingDiff, toFsPath } from './git/diff';
 import { deleteManyBranches, expireReflog, findLargestBlobs, getHousekeeping, getStaleBranches, pruneRemote, runGc } from './git/health';
 import { getLfsFiles, getLfsStatus, lfsFetch, lfsInstallLocal, lfsPrune, setLfsTracking } from './git/lfs';
-import { compareRefs, getCommit, getCommitFiles, getHistory, getMatchingFiles, getPathHistory, isCommitPushed } from './git/log';
+import { compareRefs, getCommit, getCommitFiles, getHistory, getMatchingFiles, getPathHistory, isCommitPushed, parseNameStatusZ } from './git/log';
 import * as ops from './git/operations';
 import { gpgKeyExists, listGpgSecretKeys, listSshPublicKeys, normalizeSshSigningKey, sshKeyFileExists, testGpgSigning, testSshSigning } from './git/signing';
 import { getStatus } from './git/status';
@@ -499,7 +499,6 @@ export function registerIpc(ctx: AppContext): void {
     'repo.diff.stash': async (repoPath, stashRef, path, opts) => getStashFileDiff(git, repoPath, stashRef, path, opts),
     'repo.diff.range': async (repoPath, base, head, path, opts) => {
       const nameStatus = await git.stdout(repoPath, ['diff', '--name-status', '-z', '-M', `${base}...${head}`, '--', path], { readOnly: true, okExitCodes: [1] });
-      const { parseNameStatusZ } = await import('./git/log');
       const file = parseNameStatusZ(nameStatus).find((f) => f.path === path) ?? { path, oldPath: null, status: 'modified' as const, additions: null, deletions: null, binary: false, lfs: false };
       return getRangeFileDiff(git, repoPath, base, head, file, opts);
     },
@@ -942,9 +941,9 @@ export function registerIpc(ctx: AppContext): void {
       const data = store.buildExport(sections, await repos.list(false));
       await writeFile(path, JSON.stringify(data, null, 2), 'utf8');
     },
-    'settings.previewImport': async (path) => {
+    'settings.previewImport': async (path, mode) => {
       const raw = JSON.parse(await readFile(path, 'utf8'));
-      return store.previewImport(raw, await repos.list(false));
+      return store.previewImport(raw, await repos.list(false), mode);
     },
     'settings.import': async (path, mode, sections) => {
       const raw = JSON.parse(await readFile(path, 'utf8'));

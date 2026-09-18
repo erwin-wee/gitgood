@@ -98,6 +98,11 @@ export function historyQueryArgs(query: HistoryQuery | null | undefined): string
   return args;
 }
 
+/** The error shape `GitClient.run` produces for an aborted command, which `tryRun` would otherwise hide. */
+function cancelledError(): GitError {
+  return new GitError({ message: 'Operation cancelled', command: 'git log', exitCode: null, stderr: '', stdout: '', code: 'cancelled' });
+}
+
 export async function getHistory(git: GitClient, repoPath: string, opts: HistoryOptions, signal?: AbortSignal): Promise<HistoryPage> {
   const limit = Math.max(1, opts.limit);
   const follow = !!opts.follow && !!opts.path;
@@ -138,6 +143,11 @@ export async function getHistory(git: GitClient, repoPath: string, opts: History
     }
     const byMessage = await git.tryRun(repoPath, [...base, '-i', `--grep=${search}`, ...refArgs, ...pathArgs], { readOnly: true, signal });
     const byAuthor = await git.tryRun(repoPath, [...base, '-i', `--author=${search}`, ...refArgs, ...pathArgs], { readOnly: true, signal });
+    // `tryRun` swallows every failure, including the abort, and returns null.
+    // Left alone, a superseded search would resolve as "no commits match" and
+    // overwrite the newer request's results; the renderer only knows to ignore
+    // a stale response when it sees the `cancelled` code.
+    if (signal?.aborted) throw cancelledError();
     const seen = new Set(commits.map((c) => c.sha));
     for (const res of [byMessage, byAuthor]) {
       if (!res) continue;
