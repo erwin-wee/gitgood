@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canInstall, compareVersions, detectDisabledReason, isEligibleForChannel, isNewerVersion, reduceUpdateState, type ReleaseInfo } from '../src/main/update/update-core';
+import { canInstall, compareVersions, detectDisabledReason, isEligibleForChannel, isNewerVersion, isPerMachineInstall, reduceUpdateState, type ReleaseInfo } from '../src/main/update/update-core';
 import type { UpdateState } from '../src/shared/types';
 
 function release(overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {
@@ -103,6 +103,39 @@ describe('reduceUpdateState', () => {
   it('disabled event always wins, from any prior state', () => {
     expect(reduceUpdateState(idle, { type: 'disabled', reason: 'dev build', manualUrl: 'https://x' })).toEqual({ status: 'disabled', reason: 'dev build', manualUrl: 'https://x' });
   });
+
+  const available: UpdateState = { status: 'available', version: '1.2.0', releaseDate: '2026-01-01T00:00:00Z', notes: 'Notes', url: 'https://x/1.2.0', prerelease: false, dismissed: false };
+  const downloading: UpdateState = { status: 'downloading', version: '1.2.0', releaseDate: '2026-01-01T00:00:00Z', notes: 'Notes', url: 'https://x/1.2.0', prerelease: false, percent: null, bytesPerSecond: null };
+
+  it('download-start moves available to downloading, carrying its fields forward', () => {
+    expect(reduceUpdateState(available, { type: 'download-start' })).toEqual(downloading);
+  });
+
+  it('download-start is a no-op from any state other than available', () => {
+    expect(reduceUpdateState(idle, { type: 'download-start' })).toEqual(idle);
+    expect(reduceUpdateState(downloading, { type: 'download-start' })).toEqual(downloading);
+  });
+
+  it('download-progress updates percent/bytesPerSecond only while downloading', () => {
+    expect(reduceUpdateState(downloading, { type: 'download-progress', percent: 42, bytesPerSecond: 1000 })).toEqual({ ...downloading, percent: 42, bytesPerSecond: 1000 });
+    expect(reduceUpdateState(available, { type: 'download-progress', percent: 42, bytesPerSecond: 1000 })).toEqual(available);
+  });
+
+  it('download-complete moves downloading to ready, carrying its fields forward', () => {
+    expect(reduceUpdateState({ ...downloading, percent: 100 }, { type: 'download-complete' })).toEqual({ status: 'ready', version: '1.2.0', releaseDate: '2026-01-01T00:00:00Z', notes: 'Notes', url: 'https://x/1.2.0', prerelease: false });
+  });
+
+  it('download-complete is a no-op from any state other than downloading', () => {
+    expect(reduceUpdateState(available, { type: 'download-complete' })).toEqual(available);
+  });
+
+  it('download-error reverts downloading back to available, not dismissed', () => {
+    expect(reduceUpdateState({ ...downloading, percent: 30 }, { type: 'download-error' })).toEqual(available);
+  });
+
+  it('download-error is a no-op from any state other than downloading', () => {
+    expect(reduceUpdateState(idle, { type: 'download-error' })).toEqual(idle);
+  });
 });
 
 describe('detectDisabledReason', () => {
@@ -154,5 +187,21 @@ describe('canInstall (install safety gate)', () => {
     const result = canInstall({ operationKind: 'none', aiActive: true });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/AI/);
+  });
+});
+
+describe('isPerMachineInstall', () => {
+  it('detects a per-machine install under Program Files', () => {
+    expect(isPerMachineInstall('C:\\Program Files\\GitGood\\GitGood.exe', 'win32')).toBe(true);
+    expect(isPerMachineInstall('c:\\program files (x86)\\GitGood\\GitGood.exe', 'win32')).toBe(true);
+  });
+
+  it('treats a per-user install (e.g. under AppData\\Local) as not per-machine', () => {
+    expect(isPerMachineInstall('C:\\Users\\erwin\\AppData\\Local\\Programs\\GitGood\\GitGood.exe', 'win32')).toBe(false);
+  });
+
+  it('is always false off Windows, regardless of path', () => {
+    expect(isPerMachineInstall('/usr/bin/program files/GitGood', 'linux')).toBe(false);
+    expect(isPerMachineInstall('/Applications/Program Files/GitGood.app', 'darwin')).toBe(false);
   });
 });

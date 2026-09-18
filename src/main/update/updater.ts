@@ -13,6 +13,8 @@ export interface UpdaterDeps {
   /** Fixed GitHub releases page, offered as the manual download link (never user-configurable — see the "feed is fixed" decision in design.md). */
   manualUrl: string;
   disabledEnv: DisabledEnv;
+  /** True for a per-machine (all-users) Windows install — see isPerMachineInstall in update-core.ts. Ignored off Windows and by providers without quitAndInstall. Defaults to false. */
+  isPerMachineInstall?: boolean;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -98,6 +100,7 @@ export class Updater {
       const channel = this.store.getSettings().updateChannel;
       this.setState(reduceUpdateState(this.state, { type: 'check-result', release, currentVersion: this.deps.getVersion(), channel }));
       log.info(`Update check result: ${this.state.status}${this.state.status === 'available' ? ` (${this.state.version})` : ''}`);
+      if (this.state.status === 'available' && this.store.getSettings().autoDownloadUpdates) void this.startDownload();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`Update check failed: ${message}`);
@@ -113,6 +116,51 @@ export class Updater {
   dismiss(version: string): void {
     this.setState(reduceUpdateState(this.state, { type: 'dismiss', version }));
     this.store.updateState({ dismissedUpdateVersion: version });
+  }
+
+  /** True when the provider can actually download and install in place, rather than only linking to the release page. */
+  get canAutoUpdate(): boolean {
+    return typeof this.provider.startDownload === 'function';
+  }
+
+  /**
+   * Downloads the currently available update in the background. No-op when
+   * nothing is available or the provider has no downloader. Never throws —
+   * a failed download reverts to 'available' (so Download can be retried)
+   * and is logged, matching the silent-check error handling above.
+   */
+  async startDownload(): Promise<UpdateState> {
+    if (this.state.status !== 'available' || !this.provider.startDownload) return this.state;
+    const version = this.state.version;
+    this.setState(reduceUpdateState(this.state, { type: 'download-start' }));
+    log.info(`Downloading update ${version}…`);
+    try {
+      await this.provider.startDownload((percent, bytesPerSecond) => {
+        this.setState(reduceUpdateState(this.state, { type: 'download-progress', percent, bytesPerSecond }));
+      });
+      this.setState(reduceUpdateState(this.state, { type: 'download-complete' }));
+      log.info(`Update ${version} downloaded; ready to install.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn(`Update download failed: ${message}`);
+      this.setState(reduceUpdateState(this.state, { type: 'download-error' }));
+    }
+    return this.state;
+  }
+
+  /**
+   * Installs a downloaded update and restarts the app. Throws (rather than
+   * silently doing nothing) when there is nothing ready to install or the
+   * provider cannot install at all, so the caller can show it as an error.
+   */
+  async quitAndInstall(): Promise<never> {
+    if (!this.provider.quitAndInstall) {
+      throw new Error('Automatic installation is not available in this build; use Download to install the update manually.');
+    }
+    if (this.state.status !== 'ready') {
+      throw new Error('No downloaded update is ready to install yet.');
+    }
+    return this.provider.quitAndInstall(!this.deps.isPerMachineInstall);
   }
 
   private setState(next: UpdateState): void {

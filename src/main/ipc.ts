@@ -917,6 +917,10 @@ export function registerIpc(ctx: AppContext): void {
     'app.update.state': async () => updater.getState(),
     'app.update.check': async () => updater.checkNow(true),
     'app.update.download': async () => {
+      if (updater.canAutoUpdate) {
+        await updater.startDownload();
+        return;
+      }
       const state = updater.getState();
       if (state.status === 'available') await shell.openExternal(state.url);
     },
@@ -926,9 +930,9 @@ export function registerIpc(ctx: AppContext): void {
       const operationKind = repo ? (await freshStatus(repo.path)).operation.kind : 'none';
       const gate = canInstall({ operationKind, aiActive: resolver.isActive() || review.isActive() || triage.isActive() || prDraft.isActive() || releaseNotes.isActive() || explain.isActive() || errorExplain.isActive() || splitter.isActive() || rebasePlan.isActive() || nlPalette.isActive() });
       if (!gate.ok) throw new Error(gate.reason);
-      // Ready for a real provider: reopen the same repository after the relaunch that an install causes.
+      // Reopen the same repository after the relaunch an install causes.
       if (repo) store.updateState({ currentRepositoryId: repo.id });
-      throw new Error('Automatic installation is not available in this build yet; use Download to install the update manually.');
+      await updater.quitAndInstall();
     },
     'app.update.dismiss': async (version) => updater.dismiss(version),
 

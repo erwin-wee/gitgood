@@ -11,23 +11,50 @@ function lfsInstallHint(platform: string): string {
   return 'sudo apt install git-lfs  (or see git-lfs.com for your distribution)';
 }
 
-/** The update-available banner, at the lowest priority (rendered last, after every repository-specific banner). Shown even with no repository open (e.g. the Welcome screen). */
+/** The update banner, at the lowest priority (rendered last, after every repository-specific banner). Shown even with no repository open (e.g. the Welcome screen). */
 function updateBanner(updateState: UpdateState): React.JSX.Element | null {
-  if (updateState.status !== 'available' || updateState.dismissed) return null;
-  return (
-    <div key="update" className="banner info">
-      <Icon name="download" />
-      <span className="banner-text">
-        <strong>GitGood {updateState.version} is available.</strong>
-        {updateState.releaseDate ? ` Released ${formatRelativeTime(updateState.releaseDate)}.` : ' A new version has been published.'}
-      </span>
-      <span className="banner-actions">
-        <Button size="sm" variant="primary" icon="download" onClick={() => void actions.downloadUpdate()}>Download</Button>
-        <Button size="sm" onClick={() => actions.openUpdateNotes()}>Release notes</Button>
-        <Button size="sm" variant="ghost" onClick={() => void actions.dismissUpdate(updateState.version)}>Later</Button>
-      </span>
-    </div>
-  );
+  if (updateState.status === 'available' && !updateState.dismissed) {
+    return (
+      <div key="update" className="banner info">
+        <Icon name="download" />
+        <span className="banner-text">
+          <strong>GitGood {updateState.version} is available.</strong>
+          {updateState.releaseDate ? ` Released ${formatRelativeTime(updateState.releaseDate)}.` : ' A new version has been published.'}
+        </span>
+        <span className="banner-actions">
+          <Button size="sm" variant="primary" icon="download" onClick={() => void actions.downloadUpdate()}>Download</Button>
+          <Button size="sm" onClick={() => actions.openUpdateNotes()}>Release notes</Button>
+          <Button size="sm" variant="ghost" onClick={() => void actions.dismissUpdate(updateState.version)}>Later</Button>
+        </span>
+      </div>
+    );
+  }
+  if (updateState.status === 'downloading') {
+    return (
+      <div key="update" className="banner info">
+        <Spinner />
+        <span className="banner-text">
+          <strong>Downloading GitGood {updateState.version}…</strong>
+          {updateState.percent != null ? ` ${Math.round(updateState.percent)}%` : ''}
+        </span>
+      </div>
+    );
+  }
+  if (updateState.status === 'ready') {
+    return (
+      <div key="update" className="banner info">
+        <Icon name="download" />
+        <span className="banner-text">
+          <strong>GitGood {updateState.version} is ready to install.</strong> Restart to finish updating.
+        </span>
+        <span className="banner-actions">
+          <Button size="sm" variant="primary" onClick={() => void actions.installUpdate()}>Restart to update</Button>
+          <Button size="sm" onClick={() => actions.openUpdateNotes()}>Release notes</Button>
+        </span>
+      </div>
+    );
+  }
+  return null;
 }
 
 /** Post-resolution check failure banner: shows the command and a "Show output" toggle, plus a single "Ask AI to fix" retry (hidden after it has already been used once for this file). */

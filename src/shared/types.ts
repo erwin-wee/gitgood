@@ -797,11 +797,11 @@ export interface ProgressEvent {
 // ---------------------------------------------------------------------------
 
 /**
- * State machine for the updater. The fallback (dependency-free) checker only
- * ever produces 'idle' | 'checking' | 'up-to-date' | 'disabled' | 'available'
- * | 'error'; 'downloading' and 'ready' are reserved for a future
- * `electron-updater`-backed provider (see src/main/update/provider.ts) so the
- * IPC contract, renderer state and UI do not need to change when that lands.
+ * State machine for the updater. `available` is reached by any provider;
+ * `downloading`/`ready` are only reached by a provider that implements
+ * `startDownload`/`quitAndInstall` (currently `ElectronUpdaterProvider` — see
+ * src/main/update/provider.ts). A provider without those (e.g. a manual-link
+ * fallback) never leaves `available` except back to `up-to-date`/`error`.
  */
 export type UpdateState =
   | { status: 'idle' }
@@ -809,8 +809,8 @@ export type UpdateState =
   | { status: 'up-to-date' }
   | { status: 'disabled'; reason: string; manualUrl: string | null }
   | { status: 'available'; version: string; releaseDate: string | null; notes: string | null; url: string; prerelease: boolean; dismissed: boolean }
-  | { status: 'downloading'; version: string; percent: number | null; bytesPerSecond: number | null }
-  | { status: 'ready'; version: string; notes: string | null }
+  | { status: 'downloading'; version: string; releaseDate: string | null; notes: string | null; url: string; prerelease: boolean; percent: number | null; bytesPerSecond: number | null }
+  | { status: 'ready'; version: string; releaseDate: string | null; notes: string | null; url: string; prerelease: boolean }
   | { status: 'error'; message: string; manualUrl: string | null };
 
 export interface FoundEditor {

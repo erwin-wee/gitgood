@@ -1,6 +1,7 @@
 import { accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, Menu, nativeTheme, Notification } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import type { InboxItem } from '@shared/types';
 import { ErrorExplainService } from './ai/error-explain';
 import { ExplainService } from './ai/explain';
@@ -25,7 +26,8 @@ import { buildMenu } from './menu';
 import { RepositoryManager } from './repo/manager';
 import { Store } from './store';
 import { ToolLocator } from './tools';
-import { DynamicUpdateProvider, type Fetcher } from './update/github-provider';
+import { ElectronUpdaterProvider, type ElectronAutoUpdater } from './update/electron-updater-provider';
+import { isPerMachineInstall } from './update/update-core';
 import { Updater, type DisabledEnv } from './update/updater';
 import { createMainWindow } from './window';
 
@@ -143,11 +145,15 @@ if (!gotLock) {
     );
     const settingsSync = new SettingsSyncService(store, gh, repos);
     const disabledEnv: DisabledEnv = { isPackaged: app.isPackaged, platform: process.platform, portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR, appImagePath: process.env.APPIMAGE, appImageWritable: appImageWritable(process.env.APPIMAGE) };
-    const updateProvider = new DynamicUpdateProvider(gh, tools, globalThis.fetch.bind(globalThis) as Fetcher, `GitGood/${app.getVersion()} (+${RELEASES_URL})`);
+    // electron-updater's AppUpdater is a TypedEmitter generic over its own event map, which does not
+    // structurally satisfy ElectronAutoUpdater's plain string-keyed on/once/off — verified by hand
+    // against electron-updater's .d.ts (AppUpdater.d.ts, types.d.ts) that the real singleton has every
+    // member this provider actually calls.
+    const updateProvider = new ElectronUpdaterProvider(autoUpdater as unknown as ElectronAutoUpdater, () => store.getSettings().updateChannel);
     const updater = new Updater(store, updateProvider, (state) => {
       log.info(`Update state: ${state.status}${state.status === 'available' ? ` (${state.version})` : ''}`);
       sendEvent(getWindow(), 'app.update.changed', state);
-    }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv });
+    }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv, isPerMachineInstall: isPerMachineInstall(process.execPath, process.platform) });
     const ctx: AppContext = { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, getWindow, busy: new Set() };
     registerIpc(ctx);
     Menu.setApplicationMenu(buildMenu(getWindow));

@@ -30,8 +30,20 @@ Everything you expect from GitHub Desktop, mapped onto `git`/`gh`:
 - **Conflicts**: banner and dialog listing conflicted files (sorted with any low-confidence resolution first, and a per-file confidence/check summary), per-block **Accept ours / theirs / both / base**, whole-file ours/theirs, open in editor, mark resolved, continue/abort merge, rebase (with skip), cherry-pick and revert — plus **Resolve with AI** per file or for all files at once, confidence-tinted results with an explain-why popover per block, an optional post-resolution check, and **Resolve remaining like `<file>`** once you've resolved one by hand.
 - **Integrations**: open in VS Code, Cursor, Sublime, Notepad++, Visual Studio, JetBrains IDEs and more; open in Windows Terminal, PowerShell, Command Prompt or Git Bash; show in Explorer; view on GitHub; create issue.
 - **Portable settings** (Options → Advanced, or File → Export/Import Settings…): export preferences, the repository list and integration choices to one JSON file, with a section checklist and an import preview (adds/changes/unchanged per section, merge or replace) — timestamped backups are kept before a replace. Optional **sync through a secret GitHub gist** (created or reused via the signed-in GitHub CLI): the sync card always shows which side changed since the last sync and lets you upload or download, never merging silently; disconnect keeps or deletes the gist. The export never includes your API key, saved GitHub credentials, tool paths or window position.
-- **Updates** (Help → Check for Updates…, or Options → Advanced): checks the GitHub releases feed on launch and every 6 hours for a newer stable or (on the beta channel) prerelease version — never a downgrade — offering a banner, an About-dialog status line and a Help-menu message; automatic checking, automatic download and the release channel are configurable. This release checks and links to the release page rather than downloading and installing in place, since installing automatically needs `electron-updater`, which is pending a dependency review (see `openspec/changes/add-auto-update`); it is disabled in development builds, portable Windows builds, unsigned macOS builds and a read-only AppImage, which show *Updates unavailable in this build* instead.
+- **Updates** (Help → Check for Updates…, or Options → Advanced): checks the GitHub releases feed (via `electron-updater`) on launch and every 6 hours for a newer stable or (on the beta channel) prerelease version — never a downgrade — then downloads it in the background and offers **Restart to update** from a banner, the Help menu and the About dialog; automatic checking, automatic download and the release channel are configurable. Installing is blocked while a git operation or AI task is running, and reopens the same repository afterwards. Disabled in development builds, portable Windows builds, unsigned macOS builds and a read-only AppImage, which show *Updates unavailable in this build* instead — see `openspec/changes/add-auto-update`.
 - Light/dark/system theme, keyboard shortcuts mirroring GitHub Desktop, native menus.
+
+## Download
+
+Grab the latest release for your platform from the [Releases page](https://github.com/erwin-wee/gitgood/releases/latest):
+
+- **Windows**: `GitGood-Setup-<version>.exe` (NSIS installer)
+- **macOS**: `GitGood-<version>.dmg` (unsigned — see note below)
+- **Linux**: `GitGood-<version>.AppImage` — `chmod +x` and run
+
+Releases are unsigned. Windows will show a SmartScreen "unknown publisher" prompt (**More info → Run anyway**) the first time you launch a new version. macOS Gatekeeper may refuse to open the `.dmg` outright; if so, download the `.zip` instead and right-click → **Open** on the extracted app. Signing/notarization is a planned follow-up, not yet set up.
+
+Once installed, GitGood checks for updates automatically, downloads them in the background, and offers **Restart to update** (Help → Check for Updates…, or Options → Advanced to configure) — see **Updates** above.
 
 ## Prerequisites
 
@@ -68,6 +80,10 @@ Packaging notes:
 - Build the Windows installer on Windows (`npm run dist:win`). Cross-building it from Linux/macOS also works but needs `wine` installed for electron-builder's NSIS step; without it you still get `release/<version>/win-unpacked/` (a runnable portable folder) but no `Setup.exe`.
 - A `.deb` target can be added back to `linux.target` in `electron-builder.yml`, but electron-builder's `fpm` needs `libcrypt.so.1` (`libxcrypt-compat` on Arch-based systems) on the build machine.
 - The installer registers the `gitgood://` and `x-github-client://` URL schemes, so GitHub's "Open with GitHub Desktop" buttons open the repository in GitGood (or offer to clone it).
+
+### Cutting a release
+
+Bump `version` in `package.json`, merge to `main`, then push a tag matching it (`git tag v0.2.0 && git push origin v0.2.0`). `.github/workflows/release.yml` builds Windows/macOS/Linux in parallel and publishes the artifacts to a **draft** GitHub Release (`electron-builder.yml`'s `publish` block) — review the draft, add notes, and publish it manually from the Releases page.
 
 ## Signing in to GitHub
 

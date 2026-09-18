@@ -2736,7 +2736,16 @@ export async function downloadUpdate(): Promise<void> {
   try {
     await invoke('app.update.download');
   } catch (err) {
-    showError('Could not open the download page', err);
+    showError('Could not download the update', err);
+  }
+}
+
+/** Restart to update: never resolves on success (the app quits first), so a rejection here always means it was refused (e.g. an operation or AI task in progress). */
+export async function installUpdate(): Promise<void> {
+  try {
+    await invoke('app.update.install');
+  } catch (err) {
+    showError('Could not install the update', err);
   }
 }
 
@@ -2746,7 +2755,7 @@ export async function dismissUpdate(version: string): Promise<void> {
 
 export function openUpdateNotes(): void {
   const s = store.get().updateState;
-  if (s.status !== 'available') return;
+  if (s.status !== 'available' && s.status !== 'downloading' && s.status !== 'ready') return;
   openDialog({ kind: 'update-notes', version: s.version, notes: s.notes ?? 'No release notes were provided for this version.', url: s.url });
 }
 

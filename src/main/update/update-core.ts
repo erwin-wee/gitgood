@@ -85,14 +85,20 @@ export type UpdateEvent =
   | { type: 'check-start' }
   | { type: 'check-result'; release: ReleaseInfo | null; currentVersion: string; channel: UpdateChannel }
   | { type: 'check-error'; message: string; manualUrl: string | null }
-  | { type: 'dismiss'; version: string };
+  | { type: 'dismiss'; version: string }
+  | { type: 'download-start' }
+  | { type: 'download-progress'; percent: number | null; bytesPerSecond: number | null }
+  | { type: 'download-complete' }
+  | { type: 'download-error' };
 
 /**
  * Advances the update state machine. Pure: given the same (state, event) it
  * always returns the same next state, so it is fully unit-testable without
- * a real provider, timers or Electron. The fallback provider only ever
- * drives 'check-start'/'check-result'/'check-error'/'dismiss'; 'disabled' is
- * applied once at startup by the caller.
+ * a real provider, timers or Electron. A manual-link-only provider only ever
+ * drives 'check-start'/'check-result'/'check-error'/'dismiss'; the
+ * 'download-*' events are only ever emitted for a provider that implements
+ * `startDownload` (see Updater.startDownload). 'disabled' is applied once at
+ * startup by the caller.
  */
 export function reduceUpdateState(state: UpdateState, event: UpdateEvent): UpdateState {
   switch (event.type) {
@@ -113,6 +119,17 @@ export function reduceUpdateState(state: UpdateState, event: UpdateEvent): Updat
     case 'dismiss':
       if (state.status === 'available' && state.version === event.version) return { ...state, dismissed: true };
       return state;
+    case 'download-start':
+      if (state.status !== 'available') return state;
+      return { status: 'downloading', version: state.version, releaseDate: state.releaseDate, notes: state.notes, url: state.url, prerelease: state.prerelease, percent: null, bytesPerSecond: null };
+    case 'download-progress':
+      return state.status === 'downloading' ? { ...state, percent: event.percent, bytesPerSecond: event.bytesPerSecond } : state;
+    case 'download-complete':
+      if (state.status !== 'downloading') return state;
+      return { status: 'ready', version: state.version, releaseDate: state.releaseDate, notes: state.notes, url: state.url, prerelease: state.prerelease };
+    case 'download-error':
+      if (state.status !== 'downloading') return state;
+      return { status: 'available', version: state.version, releaseDate: state.releaseDate, notes: state.notes, url: state.url, prerelease: state.prerelease, dismissed: false };
   }
 }
 
@@ -170,4 +187,19 @@ export function canInstall(ctx: InstallGateContext): InstallGateResult {
   }
   if (ctx.aiActive) return { ok: false, reason: 'Cannot install while an AI task is running. Wait for it to finish or cancel it first.' };
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Per-machine Windows install detection
+// ---------------------------------------------------------------------------
+
+/**
+ * True for a per-machine (all-users) Windows NSIS install, detected by the
+ * running executable sitting under Program Files. A silent `quitAndInstall`
+ * can't self-elevate there, so that case needs a visible (UAC-prompting)
+ * installer instead. Always false off Windows.
+ */
+export function isPerMachineInstall(execPath: string, platform: NodeJS.Platform): boolean {
+  if (platform !== 'win32') return false;
+  return /^[a-z]:\\program files/i.test(execPath);
 }
