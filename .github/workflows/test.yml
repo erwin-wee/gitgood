@@ -45,11 +45,9 @@ jobs:
       # run on Windows, which is what covers the Windows-specific code paths.
       # Tracked in #3.
       - name: Fixture tests
-        if: runner.os == 'Linux'
         run: npm run test:fixture
 
       - name: Smoke tests
-        if: runner.os == 'Linux'
         run: npm run test:smoke
 
       - name: Upload smoke artifacts
