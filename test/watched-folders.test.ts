@@ -275,12 +275,21 @@ describe('folderProblem', () => {
     expect(await folderProblem(join(tmpdir(), 'gg-folder-problem-missing-4242'))).toBe('missing');
   });
 
-  it('reports not-a-directory for a file, and for a path that runs through one', async () => {
+  it('reports not-a-directory when the watched folder is itself a file', async () => {
     const root = tree();
     const file = join(root, 'a-file');
     writeFileSync(file, 'x');
     expect(await folderProblem(file)).toBe('not-a-directory');
-    // ENOTDIR rather than ENOENT: the path exists, it just isn't a folder.
-    expect(await folderProblem(join(file, 'child'))).toBe('not-a-directory');
+  });
+
+  it('reports a path running through a file the way the platform does', async () => {
+    const root = tree();
+    const file = join(root, 'a-file');
+    writeFileSync(file, 'x');
+    // POSIX reports ENOTDIR here ("there is a file in the way"), Windows
+    // reports ENOENT ("path not found"). Both map to an honest warning, and
+    // normalizing them would mean stat-ing every parent on the way up for a
+    // corner case no message depends on.
+    expect(await folderProblem(join(file, 'child'))).toBe(onWindows ? 'missing' : 'not-a-directory');
   });
 });
