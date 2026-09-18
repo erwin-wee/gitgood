@@ -140,6 +140,16 @@ function sourceCacheKey(source: ExplainSource): string {
   }
 }
 
+/**
+ * True when the target reads the working tree, whose content can change between
+ * two explains. A commit or stash source is immutable, so its cache key alone
+ * identifies its content; `sourceCacheKey` returns a constant for `working`, so
+ * a cached entry for one of these must be revalidated before it is reused.
+ */
+export function isVolatileExplainTarget(target: ExplainTarget): boolean {
+  return target.kind !== 'commit' && target.source.kind === 'working';
+}
+
 /** Stable cache/dedupe key for a target, used both by the in-memory explanation cache and to detect a superseded request in the renderer. */
 export function explainCacheKey(target: ExplainTarget): string {
   switch (target.kind) {

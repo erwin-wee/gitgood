@@ -75,22 +75,32 @@ export function ImportSettingsDialog(): React.JSX.Element {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const choose = async () => {
-    const p = await invoke('app.chooseFile', { title: 'Import settings', filters: [{ name: 'GitGood settings', extensions: ['json'] }] });
-    if (!p) return;
-    setPath(p);
+  const loadPreview = async (p: string, m: 'merge' | 'replace', selectSections: boolean) => {
     setPreview(null);
     setError(null);
     setLoading(true);
     try {
-      const pv = await invoke('settings.previewImport', p);
+      const pv = await invoke('settings.previewImport', p, m);
       setPreview(pv);
-      setSections(new Set(pv.sections.map((s) => s.name)));
+      if (selectSections) setSections(new Set(pv.sections.map((s) => s.name)));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
+  };
+
+  const choose = async () => {
+    const p = await invoke('app.chooseFile', { title: 'Import settings', filters: [{ name: 'GitGood settings', extensions: ['json'] }] });
+    if (!p) return;
+    setPath(p);
+    await loadPreview(p, mode, true);
+  };
+
+  /** `replace` resets omitted fields to their defaults, so its counts differ from `merge`'s -- re-preview on every mode change. */
+  const changeMode = (m: 'merge' | 'replace') => {
+    setMode(m);
+    if (path && m !== mode) void loadPreview(path, m, false);
   };
 
   const toggle = (s: SettingsSection) =>
@@ -110,7 +120,11 @@ export function ImportSettingsDialog(): React.JSX.Element {
       closeDialog();
       showToast({ kind: 'success', title: 'Settings imported' });
     } catch (err) {
+      // In `replace` mode this runs from the confirmation dialog's onConfirm,
+      // by which point this dialog is no longer mounted and setError would be
+      // dropped -- so the failure is reported by toast too, never silently.
       setError(errorMessage(err));
+      showToast({ kind: 'error', title: 'Could not import settings', message: errorMessage(err) }, 12000);
     } finally {
       setImporting(false);
     }
@@ -184,7 +198,7 @@ export function ImportSettingsDialog(): React.JSX.Element {
           )}
           <div className="settings-row" style={{ marginTop: 12 }}>
             <label>Mode</label>
-            <select value={mode} onChange={(e) => setMode(e.target.value as 'merge' | 'replace')}>
+            <select value={mode} onChange={(e) => changeMode(e.target.value as 'merge' | 'replace')}>
               <option value="merge">Merge — keep everything not in the file</option>
               <option value="replace">Replace — reset omitted fields to defaults</option>
             </select>

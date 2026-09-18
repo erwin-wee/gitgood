@@ -981,6 +981,8 @@ export interface RebasePlan {
   /** HEAD at plan time. Undo/abort reset to this commit. */
   startSha: string;
   rows: RebasePlanRow[];
+  /** The commit shas of the range in their pre-plan order, so a reorder can be detected by comparing against `rows`. */
+  originalOrder: string[];
   /** Repair warnings from validating the model's proposal (omissions, invalid squash targets, downgraded drops, …). */
   warnings: string[];
   /** True when every row is pick with an unchanged message and the original order — nothing to apply. */

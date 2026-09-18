@@ -215,10 +215,18 @@ export function reorderRebaseRow(fromIndex: number, toIndex: number): void {
   });
 }
 
-/** A plan with every row pick, unchanged and in order needs nothing applied — the model itself may also report this via `alreadyTidy`, but user edits can restore it too. */
+/**
+ * A plan with every row pick, unchanged and in order needs nothing applied — the
+ * model itself may also report this via `alreadyTidy`, but user edits can restore
+ * it too. Order matters as much as the per-row fields: a pure reorder leaves every
+ * row a pick with an unchanged message, so ignoring order here would report a
+ * reorder-only plan as tidy and hide the board that applies it. Mirrors the
+ * main-process computation in `rebase-plan-core.ts`.
+ */
 export function rebaseAlreadyTidy(plan: RebasePlan | null): boolean {
   if (!plan) return false;
-  return plan.rows.every((r) => r.action === 'pick' && r.message === r.originalMessage);
+  const sameOrder = plan.rows.every((r, i) => r.sha === plan.originalOrder[i]) && plan.rows.length === plan.originalOrder.length;
+  return sameOrder && plan.rows.every((r) => r.action === 'pick' && r.message === r.originalMessage);
 }
 
 export function canApplyRebasePlan(plan: RebasePlan | null): boolean {

@@ -183,7 +183,7 @@ export class ConflictResolver {
       }
       await writeFile(fsPath, resolved, 'utf8');
 
-      const check = await this.runConfiguredCheck(repoPath, settings, report, path);
+      const check = await this.runConfiguredCheck(repoPath, settings, report, path, signal);
       let staged = false;
       if (settings.autoStageAfterResolve && (!check || check.ok)) {
         await markResolved(this.git, repoPath, [path]);
@@ -199,8 +199,14 @@ export class ConflictResolver {
     }
   }
 
-  /** Runs the post-resolution check for the resolved file, if one is configured and (for a repository-provided command) trusted. Returns null when nothing is configured. */
-  private async runConfiguredCheck(repoPath: string, settings: AiSettings, report: ProgressReporter, path: string): Promise<PostResolveCheckResult | null> {
+  /**
+   * Runs the post-resolution check for the resolved file, if one is configured
+   * and (for a repository-provided command) trusted. Returns null when nothing
+   * is configured. `signal` must be forwarded: "Resolve all" runs up to three
+   * files concurrently, so without it a cancel leaves that many check commands
+   * running to completion.
+   */
+  private async runConfiguredCheck(repoPath: string, settings: AiSettings, report: ProgressReporter, path: string, signal: AbortSignal): Promise<PostResolveCheckResult | null> {
     const repoConfig = await readRepoConfig(repoPath);
     const chosen = resolveCheckCommand({
       userCommand: settings.postResolveCheck,
@@ -211,7 +217,7 @@ export class ConflictResolver {
     if (!chosen) return null;
     report(path, 'writing', `Running ${chosen.fromRepo ? 'the repository' : 'the configured'} check…`);
     const env = await this.git.baseEnv();
-    return runPostResolveCheck(chosen.command, repoPath, env, chosen.fromRepo);
+    return runPostResolveCheck(chosen.command, repoPath, env, chosen.fromRepo, signal);
   }
 
   /** Runs an arbitrary check command against the repository, for the Settings "Test command" button. Never gated by trust: the user is typing the command directly in this call. */

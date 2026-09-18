@@ -139,7 +139,9 @@ export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }):
   const [bodyTouched, setBodyTouched] = useState(false);
   const [restored, setRestored] = useState(false);
   const [noticeSeen, setNoticeSeen] = useState(noticeAlreadySeen);
-  const [aheadCount, setAheadCount] = useState<number | null>(null);
+  // null while the compare is in flight, 'unknown' once it has failed -- the two
+  // must stay distinct, or a failed compare reads as a compare that never finishes.
+  const [aheadCount, setAheadCount] = useState<number | 'unknown' | null>(null);
   const autoDraftTriggered = useRef(false);
 
   useEffect(() => {
@@ -165,7 +167,10 @@ export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }):
         if (!cancelled) setAheadCount(r.ahead.length);
       })
       .catch(() => {
-        if (!cancelled) setAheadCount(null);
+        // A shallow clone, unrelated histories or a transient failure must not
+        // leave the draft button disabled forever: let the user try and let the
+        // draft itself report a real error.
+        if (!cancelled) setAheadCount('unknown');
       });
     return () => {
       cancelled = true;
@@ -210,7 +215,7 @@ export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }):
 
   useEffect(() => {
     if (!autoDraft || autoDraftTriggered.current || !aiEnabled || drafting) return;
-    if (aheadCount === null) return; // still resolving eligibility
+    if (aheadCount === null) return; // still resolving eligibility ('unknown' means it failed; fall through and try)
     autoDraftTriggered.current = true;
     if (draftDisabledReason) actions.showToast({ kind: 'info', title: 'Could not draft with AI', message: draftDisabledReason });
     else void runDraft();

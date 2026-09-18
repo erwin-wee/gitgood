@@ -478,24 +478,26 @@ export interface ImportPreviewInputs {
   thisPlatform: string;
   /** Warnings already collected while validating the file. */
   validationWarnings: string[];
+  /** The mode the import would run in; `replace` also resets omitted fields to their defaults, which the counts must reflect. */
+  mode: 'merge' | 'replace';
 }
 
-function countPreferenceChanges(current: AppSettings, incoming: Partial<PortablePreferences>): number {
+/**
+ * Counts the fields a patch would actually change. Diffing the real patch (not
+ * just the keys present in the file) is what makes the preview match a
+ * `replace` import, which also resets every field the file omits back to its
+ * default -- counting only the file's own keys would under-report that badly.
+ */
+function countPatchChanges(current: AppSettings, patch: Partial<AppSettings>): number {
   let changes = 0;
-  for (const key of Object.keys(incoming) as (keyof PortablePreferences)[]) {
+  for (const key of Object.keys(patch) as (keyof AppSettings)[]) {
     if (key === 'ai') {
-      const incomingAi = incoming.ai;
-      if (incomingAi) for (const ak of Object.keys(incomingAi) as (keyof PortableAiSettings)[]) if (current.ai[ak] !== incomingAi[ak]) changes++;
+      const patchAi = patch.ai;
+      if (patchAi) for (const ak of Object.keys(patchAi) as (keyof AiSettings)[]) if (current.ai[ak] !== patchAi[ak]) changes++;
       continue;
     }
-    if ((current as unknown as Record<string, unknown>)[key] !== (incoming as Record<string, unknown>)[key]) changes++;
+    if ((current as unknown as Record<string, unknown>)[key] !== (patch as Record<string, unknown>)[key]) changes++;
   }
-  return changes;
-}
-
-function countIntegrationChanges(current: AppSettings, incoming: Partial<PortableIntegrations>): number {
-  let changes = 0;
-  for (const key of Object.keys(incoming) as (keyof PortableIntegrations)[]) if ((current as unknown as Record<string, unknown>)[key] !== (incoming as Record<string, unknown>)[key]) changes++;
   return changes;
 }
 
@@ -505,17 +507,13 @@ export function buildImportPreview(inputs: ImportPreviewInputs): ImportPreview {
   const warnings = [...inputs.validationWarnings];
 
   if (inputs.file.preferences) {
-    sections.push({ name: 'preferences', adds: 0, changes: countPreferenceChanges(inputs.currentSettings, inputs.file.preferences), skipped: 0 });
+    const patch = buildPreferencesPatch(inputs.currentSettings, inputs.file.preferences, inputs.mode);
+    sections.push({ name: 'preferences', adds: 0, changes: countPatchChanges(inputs.currentSettings, patch), skipped: 0 });
   }
   if (inputs.file.integrations) {
-    const { warnings: skipWarnings } = buildIntegrationsPatch(inputs.currentSettings, inputs.file.integrations, 'merge', inputs.filePlatform, inputs.thisPlatform);
+    const { patch, warnings: skipWarnings } = buildIntegrationsPatch(inputs.currentSettings, inputs.file.integrations, inputs.mode, inputs.filePlatform, inputs.thisPlatform);
     warnings.push(...skipWarnings);
-    const filtered = { ...inputs.file.integrations };
-    if (inputs.filePlatform !== inputs.thisPlatform) {
-      delete filtered.customEditorPath;
-      delete filtered.customShellPath;
-    }
-    sections.push({ name: 'integrations', adds: 0, changes: countIntegrationChanges(inputs.currentSettings, filtered), skipped: skipWarnings.length });
+    sections.push({ name: 'integrations', adds: 0, changes: countPatchChanges(inputs.currentSettings, patch), skipped: skipWarnings.length });
   }
   if (inputs.file.repositories) {
     const plan = planRepositoryImport(inputs.currentRepositories, inputs.file.repositories);

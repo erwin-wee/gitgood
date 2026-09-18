@@ -135,6 +135,7 @@ export interface RebasePlanValidationResult {
   rows: RebasePlanRow[];
   warnings: string[];
   alreadyTidy: boolean;
+  originalOrder: string[];
 }
 
 function asString(v: unknown): string {
@@ -249,7 +250,7 @@ export function validateRebasePlan(raw: unknown, originalCommits: readonly Origi
   const sameOrder = outputOrder.length === originalOrder.length && outputOrder.every((sha, i) => sha === originalOrder[i]);
   const alreadyTidy = sameOrder && rows.every((r) => r.action === 'pick' && r.message === r.originalMessage);
 
-  return { rows, warnings, alreadyTidy };
+  return { rows, warnings, alreadyTidy, originalOrder };
 }
 
 // ---------------------------------------------------------------------------

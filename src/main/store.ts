@@ -262,7 +262,7 @@ export class Store {
   }
 
   /** Validates a parsed export file and builds an import preview against the current settings/repositories. Throws when the file is not a valid GitGood export. */
-  previewImport(raw: unknown, currentRepositories: RepositoryInfo[]): ImportPreview {
+  previewImport(raw: unknown, currentRepositories: RepositoryInfo[], mode: 'merge' | 'replace'): ImportPreview {
     const validated = validateSettingsExport(raw);
     if (!validated.ok) throw new Error(validated.error);
     return buildImportPreview({
@@ -273,6 +273,7 @@ export class Store {
       filePlatform: validated.data.platform,
       thisPlatform: process.platform,
       validationWarnings: validated.warnings,
+      mode,
     });
   }
 

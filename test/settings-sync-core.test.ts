@@ -236,20 +236,34 @@ describe('buildImportPreview', () => {
 
   it('reports missing repository paths without failing', () => {
     const file: SettingsExport = { schema: 1, app: 'gitgood', version: '1.0.0', exportedAt: '2026-01-01T00:00:00Z', platform: 'linux', repositories: [{ path: '/gone', alias: null, github: null }] };
-    const preview = buildImportPreview({ file, currentSettings: current, currentRepositories: [], pathExists: () => false, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: [] });
+    const preview = buildImportPreview({ file, currentSettings: current, currentRepositories: [], pathExists: () => false, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: [], mode: 'merge' });
     expect(preview.missingRepositories).toEqual(['/gone']);
     expect(preview.sections).toEqual([{ name: 'repositories', adds: 1, changes: 0, skipped: 0 }]);
   });
 
   it('counts a preference section change only for fields that actually differ', () => {
     const file: SettingsExport = { schema: 1, app: 'gitgood', version: '1.0.0', exportedAt: '2026-01-01T00:00:00Z', platform: 'linux', preferences: { theme: current.theme, diffFontSize: current.diffFontSize + 1 } };
-    const preview = buildImportPreview({ file, currentSettings: current, currentRepositories: [], pathExists: () => true, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: [] });
+    const preview = buildImportPreview({ file, currentSettings: current, currentRepositories: [], pathExists: () => true, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: [], mode: 'merge' });
     expect(preview.sections).toEqual([{ name: 'preferences', adds: 0, changes: 1, skipped: 0 }]);
+  });
+
+  it('counts the defaults a replace import would reset, not just the keys in the file', () => {
+    // A `replace` import resets every omitted field to its default, so a file
+    // carrying one unchanged key must not preview as "0 changes".
+    const changed: AppSettings = { ...current, diffFontSize: current.diffFontSize + 3, autoFetchIntervalMinutes: current.autoFetchIntervalMinutes + 7 };
+    const file: SettingsExport = { schema: 1, app: 'gitgood', version: '1.0.0', exportedAt: '2026-01-01T00:00:00Z', platform: 'linux', preferences: { theme: changed.theme } };
+
+    const merge = buildImportPreview({ file, currentSettings: changed, currentRepositories: [], pathExists: () => true, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: [], mode: 'merge' });
+    expect(merge.sections).toEqual([{ name: 'preferences', adds: 0, changes: 0, skipped: 0 }]);
+
+    const replace = buildImportPreview({ file, currentSettings: changed, currentRepositories: [], pathExists: () => true, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: [], mode: 'replace' });
+    const replaceChanges = replace.sections.find((x) => x.name === 'preferences')!.changes;
+    expect(replaceChanges).toBe(2); // diffFontSize and autoFetchIntervalMinutes go back to defaults
   });
 
   it('surfaces validation warnings alongside the section counts', () => {
     const file: SettingsExport = { schema: 1, app: 'gitgood', version: '1.0.0', exportedAt: '2026-01-01T00:00:00Z', platform: 'linux' };
-    const preview = buildImportPreview({ file, currentSettings: current, currentRepositories: [], pathExists: () => true, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: ['mystery: unknown top-level field, ignored'] });
+    const preview = buildImportPreview({ file, currentSettings: current, currentRepositories: [], pathExists: () => true, filePlatform: 'linux', thisPlatform: 'linux', validationWarnings: ['mystery: unknown top-level field, ignored'], mode: 'merge' });
     expect(preview.warnings).toEqual(['mystery: unknown top-level field, ignored']);
   });
 });

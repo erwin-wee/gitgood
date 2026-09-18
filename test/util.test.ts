@@ -77,6 +77,16 @@ describe('history search query syntax', () => {
     expect(reparsed.freeText).toBe(freeText);
   });
 
+  it('round-trips a value containing a quote but no whitespace', () => {
+    // The tokenizer strips an unescaped `"`, so a value like `say"hi` has to be
+    // quoted on the way out even though it has no space to trigger quoting.
+    const base = { content: '', diffRegex: '', paths: [] as string[], author: '', after: '', before: '', allRefs: false };
+    for (const value of ['say"hi', 'a"b"c', '"lead', 'trail"']) {
+      const formatted = formatHistoryQuery({ ...base, content: value }, '');
+      expect(parseHistoryQuery(formatted).query.content, formatted).toBe(value);
+    }
+  });
+
   it('flags unbalanced parentheses and brackets, ignoring escaped characters', () => {
     expect(checkRegexBrackets('^import')).toBeNull();
     expect(checkRegexBrackets('(foo|bar)')).toBeNull();
@@ -84,6 +94,23 @@ describe('history search query syntax', () => {
     expect(checkRegexBrackets('(')).toMatch(/parentheses/);
     expect(checkRegexBrackets('foo)')).toMatch(/parentheses/);
     expect(checkRegexBrackets('[a-z')).toMatch(/brackets/);
+  });
+
+  it('accepts bracket expressions where ( ) [ ] are literals', () => {
+    // POSIX ERE, which is git's dialect: inside `[...]` these are ordinary
+    // characters, so rejecting them blocks a search that git runs happily.
+    expect(checkRegexBrackets('[(]')).toBeNull();
+    expect(checkRegexBrackets('[)]')).toBeNull();
+    expect(checkRegexBrackets('[]]')).toBeNull();
+    expect(checkRegexBrackets('[^]]')).toBeNull();
+    expect(checkRegexBrackets('[][]')).toBeNull();
+    expect(checkRegexBrackets('[[]')).toBeNull();
+    expect(checkRegexBrackets('[[:alpha:]]+')).toBeNull();
+    expect(checkRegexBrackets('foo]')).toBeNull();
+    expect(checkRegexBrackets('([(])')).toBeNull();
+    // Genuinely unbalanced input is still reported.
+    expect(checkRegexBrackets('([(]')).toMatch(/parentheses/);
+    expect(checkRegexBrackets('[[:alpha:]')).toMatch(/brackets/);
   });
 
   it('extracts a friendly one-line message from git regex-compile stderr', () => {

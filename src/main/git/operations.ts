@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { OperationOutcome } from '@shared/ipc';
 import type { RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
-import { getStashFiles } from './diff';
+import { getStashFiles, toFsPath } from './diff';
 import { GitError, TransferProgressParser, type GitClient } from './git';
 import { getGitDir } from './status';
 
@@ -555,7 +555,6 @@ export async function useSide(git: GitClient, repoPath: string, path: string, si
 
 export async function unresolve(git: GitClient, repoPath: string, path: string, originalContent: string | null): Promise<void> {
   if (originalContent !== null) {
-    const { toFsPath } = await import('./diff');
     await writeFile(toFsPath(repoPath, path), originalContent, 'utf8');
   }
   const res = await git.tryRun(repoPath, ['update-index', '--unresolve', '--', path]);

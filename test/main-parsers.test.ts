@@ -127,6 +127,18 @@ describe('git error classification', () => {
     expect(classifyGitError('error: Load key "/home/u/.ssh/missing": No such file or directory\nfatal: failed to write commit object', '')).toBe('signing-key-missing');
     expect(classifyGitError('ssh-keygen: /home/u/.ssh/missing: No such file or directory', '')).toBe('signing-key-missing');
   });
+
+  it('treats a missing SSH key on the transport as an auth failure, not a signing one', () => {
+    // A push over SSH with no key file prints the same `Load key` line as a
+    // missing signing key, so the transport error has to win: this belongs in
+    // the credential flow, not the signing-failure dialog.
+    expect(
+      classifyGitError('Load key "/home/u/.ssh/id_ed25519": No such file or directory\ngit@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.', ''),
+    ).toBe('auth-failed');
+    expect(
+      classifyGitError('ssh-keygen: /home/u/.ssh/id_ed25519: No such file or directory\nfatal: Authentication failed for https://github.com/x/y.git/', ''),
+    ).toBe('auth-failed');
+  });
 });
 
 describe('worktree branch-in-use path extraction', () => {

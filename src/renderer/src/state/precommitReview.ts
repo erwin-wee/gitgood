@@ -55,10 +55,13 @@ async function runPrecommitReview(only?: string[]): Promise<WorktreeReviewRun | 
   try {
     const opts: WorktreeReviewOptions = { ...base, rereviewOf: only?.length && previous ? previous.id : undefined };
     const run = (await invoke('ai.review.startWorktree', repo.path, opts)) as WorktreeReviewRun;
+    // The user can switch repositories while the model runs; without this the
+    // findings would be shown against a different repository's working tree.
+    if (store.get().currentRepo?.path !== repo.path) return null;
     patchPrecommitReview({ run, running: false, progress: null, stalePaths: [], activeFindingId: null, expanded: true });
     return run;
   } catch (err) {
-    patchPrecommitReview({ running: false, progress: null });
+    if (store.get().currentRepo?.path === repo.path) patchPrecommitReview({ running: false, progress: null });
     throw err;
   }
 }

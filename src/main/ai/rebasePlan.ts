@@ -191,7 +191,7 @@ export class RebasePlanService {
       });
       const validated = validateRebasePlan(response.json, originalCommits);
       const startSha = (await this.git.stdout(repoPath, ['rev-parse', 'HEAD'], { readOnly: true })).trim();
-      const plan: RebasePlan = { id: newPlanId(), base: resolvedBase, startSha, rows: validated.rows, warnings: validated.warnings, alreadyTidy: validated.alreadyTidy, truncated, model: response.model };
+      const plan: RebasePlan = { id: newPlanId(), base: resolvedBase, startSha, rows: validated.rows, originalOrder: validated.originalOrder, warnings: validated.warnings, alreadyTidy: validated.alreadyTidy, truncated, model: response.model };
       log.info(`AI rebase plan ${plan.id} for ${repoPath}: ${plan.rows.length} row(s), ${plan.warnings.length} warning(s), via ${backend.name}/${response.model}${includedShas.size < oldestFirst.length ? ` (${includedShas.size}/${oldestFirst.length} commits sent)` : ''}`);
       return plan;
     } finally {
