@@ -102,6 +102,7 @@ function LargeFilesCard(): React.JSX.Element {
   };
 
   useEffect(() => {
+    setBlobs([]);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repo?.path]);

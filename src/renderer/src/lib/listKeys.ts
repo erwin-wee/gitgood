@@ -20,7 +20,7 @@ export function onListKeyDown(e: KeyboardEvent<HTMLElement>): void {
   } else if (e.key === 'End') {
     e.preventDefault();
     options[options.length - 1].focus();
-  } else if (e.key === 'Enter' || e.key === ' ') {
+  } else if ((e.key === 'Enter' || e.key === ' ') && e.target === row) {
     e.preventDefault();
     row.click();
   } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {

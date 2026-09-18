@@ -241,11 +241,13 @@ interface ContextMenuState {
 }
 
 let menuState: ContextMenuState | null = null;
+let menuOpener: HTMLElement | null = null;
 const menuListeners = new Set<() => void>();
 
 export function openContextMenu(e: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void }, items: MenuItem[]): void {
   e.preventDefault();
   e.stopPropagation();
+  menuOpener = document.activeElement as HTMLElement | null;
   menuState = { x: e.clientX, y: e.clientY, items };
   for (const l of menuListeners) l();
 }
@@ -268,11 +270,19 @@ export function ContextMenuHost(): React.JSX.Element | null {
   }, []);
   useEffect(() => {
     if (!menuState) return;
+    const opener = menuOpener;
+    ref.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
     const onDown = (ev: MouseEvent) => {
       if (ref.current && !ref.current.contains(ev.target as Node)) closeContextMenu();
     };
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') closeContextMenu();
+      if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+      ev.preventDefault();
+      const items = [...(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled)') ?? [])];
+      if (!items.length) return;
+      const i = items.indexOf(document.activeElement as HTMLElement);
+      items[(i + (ev.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
     };
     window.addEventListener('mousedown', onDown, true);
     window.addEventListener('keydown', onKey, true);
@@ -281,8 +291,9 @@ export function ContextMenuHost(): React.JSX.Element | null {
       window.removeEventListener('mousedown', onDown, true);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('blur', closeContextMenu);
+      if (opener?.isConnected && (document.activeElement === document.body || ref.current?.contains(document.activeElement))) opener.focus();
     };
-  });
+  }, [menuState]);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !menuState) return;
@@ -331,8 +342,22 @@ export function ContextMenuHost(): React.JSX.Element | null {
 export function Dialog({ title, onClose, children, footer, width, icon, dismissible = true, className }: { title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: 'default' | 'wide' | 'xwide'; icon?: IconName; dismissible?: boolean; className?: string }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const opener = useRef<HTMLElement | null>(null);
+  if (opener.current === null) {
+    const active = document.activeElement as HTMLElement | null;
+    opener.current = active?.closest('[role="menu"]') ? menuOpener : active;
+  }
   useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const active = document.activeElement as HTMLElement | null;
+    if (!ref.current?.contains(active)) {
+      if (active && active !== document.body) opener.current = active;
+      ref.current?.querySelector<HTMLElement>('.dialog-body input:not([type=checkbox]), .dialog-body textarea, .dialog-body select, .dialog-footer button.primary, button')?.focus();
+    }
+    return () => {
+      if (opener.current?.isConnected) opener.current.focus();
+    };
+  }, []);
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && dismissible) {
         e.stopPropagation();
@@ -342,7 +367,10 @@ export function Dialog({ title, onClose, children, footer, width, icon, dismissi
       if (e.key === 'Tab') {
         if (!ref.current || ref.current.closest('.dialog-backdrop') !== [...document.querySelectorAll('.dialog-backdrop')].at(-1)) return;
         const focusables = [...ref.current.querySelectorAll<HTMLElement>('a[href],button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')];
-        if (focusables.length === 0) return;
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
         const first = focusables[0];
         const last = focusables[focusables.length - 1];
         const active = document.activeElement;
@@ -353,12 +381,7 @@ export function Dialog({ title, onClose, children, footer, width, icon, dismissi
       }
     };
     window.addEventListener('keydown', onKey);
-    const first = ref.current?.querySelector<HTMLElement>('input:not([type=checkbox]), textarea, select, button.primary, button');
-    first?.focus();
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
-    };
+    return () => window.removeEventListener('keydown', onKey);
   }, [dismissible, onClose]);
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismissible && onClose()}>

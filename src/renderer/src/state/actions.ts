@@ -856,7 +856,7 @@ export function selectCommit(sha: string, opts: { toggle?: boolean; range?: bool
   } else {
     selected = [sha];
   }
-  patchHistory({ selectedShas: selected, details: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.details : null, selectedFile: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.selectedFile : null });
+  patchHistory({ selectedShas: selected, detailsError: null, details: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.details : null, selectedFile: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.selectedFile : null });
   if (selected.length === 1) void loadCommitDetails(selected[0]);
   else void loadDiff();
 }
