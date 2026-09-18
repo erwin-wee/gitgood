@@ -4,8 +4,18 @@ import { debounce } from '@shared/util';
 import type { Store } from './store';
 import { sendEvent } from './ipc';
 
-export function createMainWindow(store: Store): BrowserWindow {
+/**
+ * Automated smoke runs render offscreen and never show the window, so a test
+ * pass does not steal focus from whatever the developer is doing. Set
+ * GITGOOD_SMOKE_SHOW=1 to watch the app during a smoke run instead.
+ */
+export function smokeHeadless(): boolean {
+  return !!process.env.GITGOOD_SMOKE_SCRIPT && process.env.GITGOOD_SMOKE_SHOW !== '1';
+}
+
+export function createMainWindow(store: Store, onFocusChange?: (focused: boolean) => void): BrowserWindow {
   const state = store.getState();
+  const headless = smokeHeadless();
   const bounds = state.window;
   const display = screen.getDisplayMatching({ x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width, height: bounds.height });
   const fitsOnScreen = bounds.x !== undefined && bounds.y !== undefined && bounds.x >= display.bounds.x - 50 && bounds.y >= display.bounds.y - 50 && bounds.x < display.bounds.x + display.bounds.width && bounds.y < display.bounds.y + display.bounds.height;
@@ -32,10 +42,12 @@ export function createMainWindow(store: Store): BrowserWindow {
       spellcheck: true,
       zoomFactor: 1,
       backgroundThrottling: !process.env.GITGOOD_SMOKE_SCRIPT,
+      offscreen: headless,
     },
   });
 
-  if (bounds.maximized) win.maximize();
+  if (headless) win.webContents.setFrameRate(30);
+  if (bounds.maximized && !headless) win.maximize();
 
   const saveBounds = debounce(() => {
     if (win.isDestroyed()) return;
@@ -47,8 +59,14 @@ export function createMainWindow(store: Store): BrowserWindow {
   win.on('move', saveBounds);
   win.on('maximize', saveBounds);
   win.on('unmaximize', saveBounds);
-  win.on('focus', () => sendEvent(win, 'window.focus', { focused: true }));
-  win.on('blur', () => sendEvent(win, 'window.focus', { focused: false }));
+  win.on('focus', () => {
+    sendEvent(win, 'window.focus', { focused: true });
+    onFocusChange?.(true);
+  });
+  win.on('blur', () => {
+    sendEvent(win, 'window.focus', { focused: false });
+    onFocusChange?.(false);
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
@@ -64,7 +82,7 @@ export function createMainWindow(store: Store): BrowserWindow {
 
   win.once('ready-to-show', () => {
     win.webContents.setZoomLevel(state.zoomLevel ?? 0);
-    win.show();
+    if (!headless) win.show();
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {

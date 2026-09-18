@@ -1,7 +1,8 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { OperationOutcome } from '@shared/ipc';
-import type { RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo } from '@shared/types';
+import type { RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
+import { getStashFiles } from './diff';
 import { GitError, TransferProgressParser, type GitClient } from './git';
 import { getGitDir } from './status';
 
@@ -141,9 +142,17 @@ export async function rebase(git: GitClient, repoPath: string, onto: string): Pr
   }
 }
 
-export async function rebaseContinue(git: GitClient, repoPath: string): Promise<OperationOutcome> {
+/**
+ * `unsigned` retries the paused step with `-c commit.gpgsign=false` for the
+ * "Commit unsigned this time" recovery from a signing-failed dialog; git
+ * exports `-c` overrides to child processes, so this also covers the `exec
+ * git commit --amend` steps used by squash/reword. Never persists a config
+ * change.
+ */
+export async function rebaseContinue(git: GitClient, repoPath: string, unsigned = false): Promise<OperationOutcome> {
   try {
-    await git.run(repoPath, ['rebase', '--continue'], { env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' } });
+    const args = unsigned ? ['-c', 'commit.gpgsign=false', 'rebase', '--continue'] : ['rebase', '--continue'];
+    await git.run(repoPath, args, { env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' } });
     return { status: 'complete' };
   } catch (err) {
     return outcomeFromError(err);
@@ -239,8 +248,8 @@ async function listTodo(git: GitClient, repoPath: string, base: string | null): 
   return lines.map(({ sha, subject }) => ({ sha, subject }));
 }
 
-/** Determines the rebase base for the given commits: parent of the oldest one, or null for --root. */
-async function rebaseBaseFor(git: GitClient, repoPath: string, shas: string[]): Promise<string | null> {
+/** Determines the rebase base for the given commits: parent of the oldest one, or null for --root. Exported for the AI rebase assistant's applier (src/main/git/rebase-apply.ts), which needs the same "parent of the oldest of a set of commits" computation for a History multi-selection. */
+export async function rebaseBaseFor(git: GitClient, repoPath: string, shas: string[]): Promise<string | null> {
   let oldest: string | null = null;
   for (const sha of shas) {
     if (oldest === null) {
@@ -272,7 +281,11 @@ async function runInteractiveRebase(git: GitClient, repoPath: string, base: stri
   const scriptFile = join(tmpDir, 'seq-editor.js');
   await writeFile(todoFile, todo, 'utf8');
   await writeFile(scriptFile, `const fs=require('fs');const [,,src,dst]=process.argv;fs.copyFileSync(src,dst);\n`, 'utf8');
-  const exe = process.execPath.replace(/\\/g, '/');
+  // Normally this very Electron binary runs the script (as plain Node, via
+  // ELECTRON_RUN_AS_NODE). Tests have no Electron binary to launch, so
+  // GITGOOD_SEQUENCE_EDITOR lets them point this at `process.execPath` of a
+  // plain Node process instead; the script and its invocation are identical.
+  const exe = (process.env.GITGOOD_SEQUENCE_EDITOR || process.execPath).replace(/\\/g, '/');
   const editor = `${shQuote(exe)} ${shQuote(scriptFile.replace(/\\/g, '/'))} ${shQuote(todoFile.replace(/\\/g, '/'))}`;
   try {
     await git.run(repoPath, ['rebase', '-i', ...(base ? [base] : ['--root'])], {
@@ -282,6 +295,11 @@ async function runInteractiveRebase(git: GitClient, repoPath: string, base: stri
     return { status: 'complete' };
   } catch (err) {
     if (err instanceof GitError && err.info.code === 'conflicts') return { status: 'conflicts' };
+    if (err instanceof GitError && (err.info.code === 'signing-failed' || err.info.code === 'signing-key-missing')) {
+      // Leave the rebase in progress (like a conflict pause) so the existing in-progress banner
+      // shows and "git rebase --continue" (optionally with -c commit.gpgsign=false) can resume it.
+      throw err;
+    }
     // Anything else (bad todo, exec failure): restore the branch instead of leaving a half-started rebase.
     await git.tryRun(repoPath, ['rebase', '--abort']);
     throw err;
@@ -366,6 +384,10 @@ export async function dropCommit(git: GitClient, repoPath: string, sha: string):
 
 export const APP_STASH_PREFIX = '!!GitGood';
 
+/** Number of stashes to eagerly compute file counts and untracked status for; keeps the listing cheap for very long histories. */
+const STASH_DETAIL_CAP = 50;
+const STASH_DETAIL_CONCURRENCY = 4;
+
 export async function getStashes(git: GitClient, repoPath: string): Promise<Stash[]> {
   const out = await git.stdout(repoPath, ['stash', 'list', '--format=%gd%x1f%H%x1f%gs%x1f%ci'], { readOnly: true });
   const stashes: Stash[] = [];
@@ -378,7 +400,22 @@ export async function getStashes(git: GitClient, repoPath: string): Promise<Stas
     const createdByApp = message.startsWith(APP_STASH_PREFIX);
     if (createdByApp) message = message.slice(APP_STASH_PREFIX.length).replace(/^<[^>]*>\s*/, '').trim() || 'Stashed changes';
     const idx = /stash@\{(\d+)\}/.exec(ref ?? '');
-    stashes.push({ index: idx ? parseInt(idx[1], 10) : stashes.length, ref: ref ?? `stash@{${stashes.length}}`, sha: sha ?? '', message, branch, date: date ?? '', createdByApp });
+    stashes.push({ index: idx ? parseInt(idx[1], 10) : stashes.length, ref: ref ?? `stash@{${stashes.length}}`, sha: sha ?? '', message, branch, date: date ?? '', createdByApp, fileCount: null, untracked: false });
+  }
+  // Details cost a few git runs per stash; walk the list in small batches so a
+  // refresh never fans out into dozens of concurrent processes.
+  const detailed = stashes.slice(0, STASH_DETAIL_CAP);
+  for (let i = 0; i < detailed.length; i += STASH_DETAIL_CONCURRENCY) {
+    await Promise.all(
+      detailed.slice(i, i + STASH_DETAIL_CONCURRENCY).map(async (st) => {
+        const [untracked, files] = await Promise.all([
+          git.tryRun(repoPath, ['rev-parse', '--verify', '-q', `${st.sha}^3`], { readOnly: true }),
+          getStashFiles(git, repoPath, st.sha).catch(() => null),
+        ]);
+        st.untracked = !!untracked;
+        st.fileCount = files ? files.length : null;
+      }),
+    );
   }
   return stashes;
 }
@@ -391,7 +428,32 @@ export async function stashPush(git: GitClient, repoPath: string, message: strin
   await git.run(repoPath, args);
 }
 
-export async function stashPop(git: GitClient, repoPath: string, ref: string): Promise<OperationOutcome> {
+/**
+ * Resolves a stash's current `stash@{N}` reflog ref from its (stable) commit
+ * SHA. `stash@{N}` indices shift whenever any stash is pushed or dropped, so
+ * every stash action re-resolves immediately before running instead of
+ * trusting an index captured from an earlier listing.
+ */
+export async function resolveStashRef(git: GitClient, repoPath: string, sha: string): Promise<string | null> {
+  const out = await git.stdout(repoPath, ['stash', 'list', '--format=%gd%x1f%H'], { readOnly: true });
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const [ref, lineSha] = line.split('\x1f');
+    if (lineSha === sha) return ref ?? null;
+  }
+  return null;
+}
+
+async function requireStashRef(git: GitClient, repoPath: string, sha: string): Promise<string> {
+  const ref = await resolveStashRef(git, repoPath, sha);
+  if (!ref) {
+    throw new GitError({ message: 'Stash no longer exists', command: 'git stash', exitCode: null, stderr: '', stdout: '', code: 'stash-missing' });
+  }
+  return ref;
+}
+
+export async function stashPop(git: GitClient, repoPath: string, sha: string): Promise<OperationOutcome> {
+  const ref = await requireStashRef(git, repoPath, sha);
   try {
     await git.run(repoPath, ['stash', 'pop', ref]);
     return { status: 'complete' };
@@ -400,7 +462,8 @@ export async function stashPop(git: GitClient, repoPath: string, ref: string): P
   }
 }
 
-export async function stashApply(git: GitClient, repoPath: string, ref: string): Promise<OperationOutcome> {
+export async function stashApply(git: GitClient, repoPath: string, sha: string): Promise<OperationOutcome> {
+  const ref = await requireStashRef(git, repoPath, sha);
   try {
     await git.run(repoPath, ['stash', 'apply', ref]);
     return { status: 'complete' };
@@ -409,8 +472,20 @@ export async function stashApply(git: GitClient, repoPath: string, ref: string):
   }
 }
 
-export async function stashDrop(git: GitClient, repoPath: string, ref: string): Promise<void> {
+export async function stashDrop(git: GitClient, repoPath: string, sha: string): Promise<void> {
+  const ref = await requireStashRef(git, repoPath, sha);
   await git.run(repoPath, ['stash', 'drop', ref]);
+}
+
+/** Creates a branch at the stash's parent commit, checks it out with the stash applied, and removes the stash (`git stash branch`). */
+export async function stashBranch(git: GitClient, repoPath: string, sha: string, branchName: string): Promise<OperationOutcome> {
+  const ref = await requireStashRef(git, repoPath, sha);
+  try {
+    await git.run(repoPath, ['stash', 'branch', branchName, ref]);
+    return { status: 'complete' };
+  } catch (err) {
+    return outcomeFromError(err);
+  }
 }
 
 // ---------- tags ----------
@@ -434,8 +509,22 @@ export async function getTags(git: GitClient, repoPath: string): Promise<Tag[]> 
   return tags;
 }
 
+/** Latest tag reachable from HEAD (`git describe --tags --abbrev=0 HEAD`), or null when the repository has no tags reachable from HEAD. Used as the release notes dialog's default "From". */
+export async function getLatestReachableTag(git: GitClient, repoPath: string): Promise<string | null> {
+  const res = await git.tryRun(repoPath, ['describe', '--tags', '--abbrev=0', 'HEAD'], { readOnly: true });
+  return res ? res.stdout.trim() || null : null;
+}
+
 export async function createTag(git: GitClient, repoPath: string, name: string, sha: string, message: string | null): Promise<void> {
-  if (message && message.trim()) await git.run(repoPath, ['tag', '-a', name, sha, '-F', '-'], { stdin: `${message.trim()}\n` });
+  if (message && message.trim()) {
+    // tag.gpgsign (if set) already makes an annotated tag signed automatically; no explicit -S needed here.
+    await git.run(repoPath, ['tag', '-a', name, sha, '-F', '-'], { stdin: `${message.trim()}\n` });
+    return;
+  }
+  // A lightweight tag can never carry a signature, so when signing is configured make an
+  // (empty-message) annotated, explicitly signed tag instead of a plain lightweight one.
+  const signTags = (await git.tryRun(repoPath, ['config', '--get', 'tag.gpgsign'], { readOnly: true }))?.stdout.trim().toLowerCase() === 'true';
+  if (signTags) await git.run(repoPath, ['tag', '-s', name, sha, '-m', '']);
   else await git.run(repoPath, ['tag', name, sha]);
 }
 
@@ -492,6 +581,67 @@ export async function setConfigIdentity(git: GitClient, repoPath: string | null,
 export async function unsetLocalIdentity(git: GitClient, repoPath: string): Promise<void> {
   await git.tryRun(repoPath, ['config', '--local', '--unset', 'user.name']);
   await git.tryRun(repoPath, ['config', '--local', '--unset', 'user.email']);
+}
+
+// ---------------------------------------------------------------------------
+// Commit signing config
+// ---------------------------------------------------------------------------
+
+async function readSigningConfig(git: GitClient, repoPath: string | null, scopeArgs: string[], scopeLabel: 'local' | 'global'): Promise<SigningConfig> {
+  const read = async (key: string) => (await git.tryRun(repoPath, ['config', ...scopeArgs, '--get', key], { readOnly: true }))?.stdout.trim() || null;
+  const [format, key, signCommits, signTags, gpgProgram, sshProgram, allowedSignersFile] = await Promise.all([
+    read('gpg.format'),
+    read('user.signingkey'),
+    read('commit.gpgsign'),
+    read('tag.gpgsign'),
+    read('gpg.program'),
+    read('gpg.ssh.program'),
+    read('gpg.ssh.allowedSignersFile'),
+  ]);
+  const fmt: SigningFormat | null = format === 'openpgp' || format === 'ssh' || format === 'x509' ? format : null;
+  const hasAny = [format, key, signCommits, signTags].some((v) => v !== null);
+  return {
+    format: fmt,
+    key,
+    signCommits: signCommits?.toLowerCase() === 'true',
+    signTags: signTags?.toLowerCase() === 'true',
+    program: fmt === 'ssh' ? sshProgram : gpgProgram,
+    allowedSignersFile,
+    scope: hasAny ? scopeLabel : 'none',
+  };
+}
+
+const EMPTY_SIGNING_CONFIG: SigningConfig = { format: null, key: null, signCommits: false, signTags: false, program: null, allowedSignersFile: null, scope: 'none' };
+
+/** Reads local, global and effective (local overrides global) commit-signing configuration, mirroring getConfigIdentity. */
+export async function getSigningConfig(git: GitClient, repoPath: string | null): Promise<SigningConfigInfo> {
+  const [local, global] = await Promise.all([repoPath ? readSigningConfig(git, repoPath, ['--local'], 'local') : Promise.resolve(EMPTY_SIGNING_CONFIG), readSigningConfig(git, null, ['--global'], 'global')]);
+  const effective = repoPath ? await readSigningConfig(git, repoPath, [], local.scope === 'local' ? 'local' : 'global') : global;
+  return { local, global, effective };
+}
+
+/**
+ * Writes only the fields present in `patch` at the given scope, mirroring
+ * setConfigIdentity. Turning signing off (signCommits/signTags: false)
+ * without touching `format`/`key` leaves the previously configured key and
+ * format stored, as required.
+ */
+export async function setSigningConfig(git: GitClient, repoPath: string | null, scope: 'global' | 'local', patch: Partial<SigningConfig>): Promise<void> {
+  const flag = scope === 'global' ? '--global' : '--local';
+  const target = scope === 'global' ? null : repoPath;
+  const setOrUnset = async (key: string, value: string | null) => {
+    if (value === null || value === '') await git.tryRun(target, ['config', flag, '--unset', key]);
+    else await git.run(target, ['config', flag, key, value]);
+  };
+  if (patch.format !== undefined) await setOrUnset('gpg.format', patch.format);
+  if (patch.key !== undefined) await setOrUnset('user.signingkey', patch.key);
+  if (patch.signCommits !== undefined) await git.run(target, ['config', flag, 'commit.gpgsign', String(patch.signCommits)]);
+  if (patch.signTags !== undefined) await git.run(target, ['config', flag, 'tag.gpgsign', String(patch.signTags)]);
+  if (patch.program !== undefined) {
+    const format = patch.format ?? (await readSigningConfig(git, target, [flag], scope)).format;
+    await setOrUnset(format === 'ssh' ? 'gpg.ssh.program' : 'gpg.program', patch.program);
+  }
+  if (patch.allowedSignersFile !== undefined) await setOrUnset('gpg.ssh.allowedSignersFile', patch.allowedSignersFile);
 }
 
 export async function getPullRebaseConfig(git: GitClient, repoPath: string): Promise<boolean | null> {

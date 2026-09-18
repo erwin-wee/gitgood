@@ -1,16 +1,46 @@
+import { accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
-import { app, BrowserWindow, Menu, nativeTheme } from 'electron';
+import { app, BrowserWindow, Menu, nativeTheme, Notification } from 'electron';
+import type { InboxItem } from '@shared/types';
+import { ErrorExplainService } from './ai/error-explain';
+import { ExplainService } from './ai/explain';
+import { NlPaletteService } from './ai/nlPalette';
+import { PrDraftService } from './ai/prDraft';
+import { RebasePlanService } from './ai/rebasePlan';
+import { ReleaseNotesService } from './ai/release-notes';
 import { ConflictResolver } from './ai/resolver';
+import { ReviewService } from './ai/review';
+import { SplitterService } from './ai/splitter';
+import { TriageService } from './ai/triage';
+import { applyInboxBadge } from './badge';
 import { GitClient } from './git/git';
 import { fetch as gitFetch } from './git/operations';
 import { GhClient } from './gh/gh';
+import { InboxPoller } from './gh/inbox-poller';
+import { shouldNotifyInboxItem } from './gh/inbox';
+import { SettingsSyncService } from './gh/settings-sync';
 import { registerIpc, sendEvent, type AppContext } from './ipc';
 import { initLogger, log } from './logger';
 import { buildMenu } from './menu';
 import { RepositoryManager } from './repo/manager';
 import { Store } from './store';
 import { ToolLocator } from './tools';
+import { DynamicUpdateProvider, type Fetcher } from './update/github-provider';
+import { Updater, type DisabledEnv } from './update/updater';
 import { createMainWindow } from './window';
+
+const RELEASES_URL = 'https://github.com/erwin-wee/gitgood/releases';
+
+/** Whether the running AppImage's own file can be rewritten in place (a prerequisite any AppImage self-updater needs); false (and irrelevant) when not running from an AppImage. */
+function appImageWritable(appImagePath: string | undefined): boolean {
+  if (!appImagePath) return false;
+  try {
+    accessSync(appImagePath, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 app.setAppUserModelId('com.erwinwee.gitgood');
 if (process.platform === 'win32') app.setName('GitGood');
@@ -92,9 +122,55 @@ if (!gotLock) {
     const gh = new GhClient(tools);
     const repos = new RepositoryManager(store, git, (event, payload) => sendEvent(getWindow(), event, payload));
     const resolver = new ConflictResolver(store, tools, git);
-    const ctx: AppContext = { store, tools, git, gh, repos, resolver, getWindow, busy: new Set() };
+    const review = new ReviewService(store, tools, git, gh, repos, userData);
+    const splitter = new SplitterService(store, tools, git);
+    const triage = new TriageService(store, tools, gh, repos, userData);
+    const prDraft = new PrDraftService(store, tools, git, gh, repos);
+    const rebasePlan = new RebasePlanService(store, tools, git);
+    const releaseNotes = new ReleaseNotesService(store, tools, git, gh, repos);
+    const explain = new ExplainService(store, tools, git);
+    const errorExplain = new ErrorExplainService(store, tools, git);
+    const nlPalette = new NlPaletteService(store, tools, git);
+    const inbox = new InboxPoller(
+      store,
+      gh,
+      (state) => {
+        sendEvent(getWindow(), 'gh.inbox.changed', state);
+        applyInboxBadge(getWindow(), state.unreadCount);
+      },
+      (items) => notifyNewInboxItems(items),
+      { listLocalRepos: () => store.getRepositories().map((r) => ({ id: r.id, github: r.github })), getAccount: () => tools.current().ghAccount },
+    );
+    const settingsSync = new SettingsSyncService(store, gh, repos);
+    const disabledEnv: DisabledEnv = { isPackaged: app.isPackaged, platform: process.platform, portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR, appImagePath: process.env.APPIMAGE, appImageWritable: appImageWritable(process.env.APPIMAGE) };
+    const updateProvider = new DynamicUpdateProvider(gh, tools, globalThis.fetch.bind(globalThis) as Fetcher, `GitGood/${app.getVersion()} (+${RELEASES_URL})`);
+    const updater = new Updater(store, updateProvider, (state) => {
+      log.info(`Update state: ${state.status}${state.status === 'available' ? ` (${state.version})` : ''}`);
+      sendEvent(getWindow(), 'app.update.changed', state);
+    }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv });
+    const ctx: AppContext = { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, getWindow, busy: new Set() };
     registerIpc(ctx);
     Menu.setApplicationMenu(buildMenu(getWindow));
+
+    /** Desktop notification for a freshly-arrived inbox item (only while the window is unfocused; see shouldNotifyInboxItem for the per-category gating). */
+    function notifyNewInboxItems(items: InboxItem[]): void {
+      // Smoke runs are offscreen and never focused; never pop OS notifications on the developer's desktop from them.
+      if (process.env.GITGOOD_SMOKE_SCRIPT || inbox.isFocused() || !Notification.isSupported()) return;
+      const settings = store.getSettings();
+      for (const item of items) {
+        if (!shouldNotifyInboxItem(item, settings)) continue;
+        const n = new Notification({ title: `${item.repo.owner}/${item.repo.name}`, body: item.subject.title });
+        n.on('click', () => {
+          const win = getWindow();
+          if (!win) return;
+          if (win.isMinimized()) win.restore();
+          win.show();
+          win.focus();
+          sendEvent(win, 'menu.action', { action: 'open-inbox-item', args: { id: item.id } });
+        });
+        n.show();
+      }
+    }
 
     if (app.isPackaged) {
       for (const proto of PROTOCOLS) {
@@ -106,7 +182,10 @@ if (!gotLock) {
       }
     }
 
-    mainWindow = createMainWindow(store);
+    mainWindow = createMainWindow(store, (focused) => (focused ? inbox.onFocus() : inbox.onBlur()));
+    applyInboxBadge(mainWindow, inbox.getState().unreadCount);
+    inbox.start();
+    updater.start();
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
@@ -153,7 +232,11 @@ if (!gotLock) {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow(store);
     });
-    app.on('before-quit', () => repos.dispose());
+    app.on('before-quit', () => {
+      inbox.dispose();
+      updater.dispose();
+      repos.dispose();
+    });
   });
 
   const autoFetchTimes = new Map<string, number>();
@@ -181,7 +264,8 @@ if (!gotLock) {
             }
           }
           if (step.shot) {
-            await win.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50))))', true).catch(() => undefined);
+            // Occluded windows never fire requestAnimationFrame, so do not wait forever for a paint.
+            await Promise.race([win.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50))))', true).catch(() => undefined), delay(1500)]);
             win.webContents.invalidate();
             await delay(350);
             const image = await win.webContents.capturePage();

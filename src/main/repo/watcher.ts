@@ -7,6 +7,20 @@ export type ChangeReason = 'worktree' | 'refs' | 'both';
 
 const IGNORED_GIT_SEGMENTS = new Set(['objects', 'lfs', 'gitgood-rebase', 'modules']);
 
+export interface RepositoryWatcherOptions {
+  /**
+   * The `.git` directory shared by every worktree of this repository
+   * (`git rev-parse --git-common-dir`). Defaults to `gitDir`, i.e. this
+   * worktree is the main one. When it differs, the common `refs/` directory
+   * is watched too, so branches created in another worktree are noticed.
+   */
+  commonDir?: string;
+  /** Polling interval in ms (default 4000); mainly for tests. */
+  pollIntervalMs?: number;
+  /** Skip native fs.watch entirely and use polling (deterministic; mainly for tests). */
+  forcePolling?: boolean;
+}
+
 /**
  * Watches a repository for working tree and .git changes. Uses recursive
  * fs.watch (native on Windows/macOS, inotify-based on Linux) with a polling
@@ -14,19 +28,28 @@ const IGNORED_GIT_SEGMENTS = new Set(['objects', 'lfs', 'gitgood-rebase', 'modul
  */
 export class RepositoryWatcher {
   private watcher: FSWatcher | null = null;
+  private commonWatcher: FSWatcher | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pending: ChangeReason | null = null;
   private lastPoll = new Map<string, number>();
   private paused = 0;
+  private readonly commonDir: string;
 
   constructor(
     private readonly repoPath: string,
     private readonly gitDir: string,
     private readonly onChange: (reason: ChangeReason) => void,
-  ) {}
+    private readonly opts: RepositoryWatcherOptions = {},
+  ) {
+    this.commonDir = opts.commonDir ?? gitDir;
+  }
 
   start(): void {
+    if (this.opts.forcePolling) {
+      this.startPolling();
+      return;
+    }
     try {
       this.watcher = watch(this.repoPath, { recursive: true, persistent: false }, (_event, filename) => {
         if (filename === null || filename === undefined) {
@@ -51,6 +74,18 @@ export class RepositoryWatcher {
             gitWatcher.close();
           },
         } as unknown as FSWatcher;
+      }
+      // Linked worktree: HEAD/index live in the per-worktree admin dir above,
+      // but branches/refs are shared in the common dir and are not covered by
+      // it. Watch the common refs/ too, so ref changes made in any other
+      // worktree are picked up here.
+      if (this.commonDir !== this.gitDir) {
+        try {
+          this.commonWatcher = watch(join(this.commonDir, 'refs'), { recursive: true, persistent: false }, () => this.schedule('refs'));
+          this.commonWatcher.on('error', () => undefined);
+        } catch {
+          /* the polling fallback below also covers the common refs/ and packed-refs */
+        }
       }
     } catch (err) {
       log.warn(`Cannot watch ${this.repoPath} (${(err as Error).message}); using polling`);
@@ -107,6 +142,9 @@ export class RepositoryWatcher {
   private startPolling(): void {
     if (this.pollTimer) return;
     const targets = ['HEAD', 'index', 'FETCH_HEAD', 'ORIG_HEAD', 'MERGE_HEAD', 'packed-refs', join('refs', 'heads'), join('logs', 'HEAD')].map((f) => join(this.gitDir, f));
+    if (this.commonDir !== this.gitDir) {
+      targets.push(join(this.commonDir, 'packed-refs'), join(this.commonDir, 'refs', 'heads'));
+    }
     this.pollTimer = setInterval(async () => {
       let changed = false;
       for (const t of targets) {
@@ -124,7 +162,7 @@ export class RepositoryWatcher {
       }
       if (changed) this.schedule('both');
       else this.schedule('worktree');
-    }, 4000);
+    }, this.opts.pollIntervalMs ?? 4000);
   }
 
   private stopWatcher(): void {
@@ -134,6 +172,12 @@ export class RepositoryWatcher {
       /* ignore */
     }
     this.watcher = null;
+    try {
+      this.commonWatcher?.close();
+    } catch {
+      /* ignore */
+    }
+    this.commonWatcher = null;
   }
 
   stop(): void {

@@ -25,7 +25,7 @@ export interface AiBackend {
 }
 
 export class AiError extends Error {
-  constructor(message: string, readonly kind: 'not-configured' | 'auth' | 'rate-limit' | 'refusal' | 'truncated' | 'invalid-output' | 'network' | 'cancelled' | 'other' = 'other') {
+  constructor(message: string, readonly kind: 'not-configured' | 'auth' | 'rate-limit' | 'refusal' | 'truncated' | 'invalid-output' | 'network' | 'cancelled' | 'stale' | 'other' = 'other') {
     super(message);
     this.name = 'AiError';
   }

@@ -1,4 +1,5 @@
-import type { GitHubRepoRef } from './types';
+import type { Explanation, ExplainTarget, GitHubRepoRef, HistoryQuery } from './types';
+import { EMPTY_HISTORY_QUERY } from './types';
 
 export function basename(p: string): string {
   const normalized = p.replace(/[\\/]+$/, '');
@@ -309,6 +310,225 @@ export function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 }
 
+// ---------------------------------------------------------------------------
+// GitHub issues
+// ---------------------------------------------------------------------------
+
+/**
+ * Branch name slug for "Create branch for issue": lowercase, runs of
+ * characters outside [a-z0-9] collapsed to a single hyphen, leading/trailing
+ * hyphens trimmed, capped at 60 characters total (including the `N-` prefix).
+ */
+export function issueBranchSlug(number: number, title: string): string {
+  const prefix = `${number}-`;
+  const maxSlugLen = Math.max(0, 60 - prefix.length);
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxSlugLen)
+    .replace(/-+$/g, '');
+  return `${prefix}${slug}`;
+}
+
+const URL_PATTERN = /\bhttps?:\/\/[^\s<>"')\]]+/g;
+
+/**
+ * Splits `text` into plain-text and URL segments for a linkified, non-HTML
+ * rendering of untrusted GitHub content (issue/comment bodies): the text is
+ * never interpreted as Markdown or HTML, only bare URLs become links.
+ */
+export function linkifyText(text: string): { text: string; url: string | null }[] {
+  const parts: { text: string; url: string | null }[] = [];
+  let lastIndex = 0;
+  for (const m of text.matchAll(URL_PATTERN)) {
+    const start = m.index ?? 0;
+    if (start > lastIndex) parts.push({ text: text.slice(lastIndex, start), url: null });
+    let url = m[0];
+    // Trailing punctuation is very likely prose, not part of the URL.
+    const trailingMatch = /[.,!?;:]+$/.exec(url);
+    if (trailingMatch) url = url.slice(0, -trailingMatch[0].length);
+    parts.push({ text: url, url });
+    lastIndex = start + url.length;
+  }
+  if (lastIndex < text.length) parts.push({ text: text.slice(lastIndex), url: null });
+  return parts;
+}
+
+/** Extracts the other worktree's path from git's "already checked out"/"already used by worktree" error text. */
+export function extractWorktreePathFromError(message: string): string | null {
+  const m = /is already (?:checked out|used by worktree) at ['"]?([^'"\n]+?)['"]?(?:\r?\n|$)/i.exec(message);
+  return m ? m[1].trim() : null;
+}
+
+// ---------------------------------------------------------------------------
+// History search query syntax: `content:`, `regex:`, `path:`, `author:`,
+// `after:`, `before:` and `all:` prefixes, freely mixed with free text. See
+// openspec/changes/add-history-content-search/design.md.
+// ---------------------------------------------------------------------------
+
+const HISTORY_QUERY_PREFIXES = ['content', 'regex', 'path', 'author', 'after', 'before', 'all'] as const;
+type HistoryQueryPrefix = (typeof HISTORY_QUERY_PREFIXES)[number];
+
+/** Splits `text` into whitespace-separated tokens, honoring `"quoted values"` (with `\"` escapes) that may contain spaces. */
+function tokenizeHistoryQuery(text: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    while (i < n && /\s/.test(text[i])) i++;
+    if (i >= n) break;
+    let token = '';
+    while (i < n && !/\s/.test(text[i])) {
+      if (text[i] === '"') {
+        i++;
+        while (i < n && text[i] !== '"') {
+          if (text[i] === '\\' && text[i + 1] === '"') {
+            token += '"';
+            i += 2;
+            continue;
+          }
+          token += text[i];
+          i++;
+        }
+        i++; // skip closing quote (or run off the end for an unterminated quote)
+      } else {
+        token += text[i];
+        i++;
+      }
+    }
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function quoteHistoryQueryValue(value: string): string {
+  return /\s/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+}
+
+export interface ParsedHistoryQuery {
+  query: HistoryQuery;
+  /** Remaining text (unrecognized prefixes and plain words), joined with single spaces. */
+  freeText: string;
+}
+
+/** Parses the History search box's text into a structured `HistoryQuery` plus whatever free text is left over. */
+export function parseHistoryQuery(text: string): ParsedHistoryQuery {
+  const query: HistoryQuery = { ...EMPTY_HISTORY_QUERY, paths: [] };
+  const free: string[] = [];
+  for (const token of tokenizeHistoryQuery(text)) {
+    const m = /^([A-Za-z]+):([\s\S]*)$/.exec(token);
+    if (!m || !(HISTORY_QUERY_PREFIXES as readonly string[]).includes(m[1].toLowerCase())) {
+      free.push(token);
+      continue;
+    }
+    const prefix = m[1].toLowerCase() as HistoryQueryPrefix;
+    const value = m[2];
+    switch (prefix) {
+      case 'content':
+        if (value) query.content = value;
+        break;
+      case 'regex':
+        if (value) query.diffRegex = value;
+        break;
+      case 'path':
+        if (value) query.paths.push(value);
+        break;
+      case 'author':
+        if (value) query.author = value;
+        break;
+      case 'after':
+        if (value) query.after = value;
+        break;
+      case 'before':
+        if (value) query.before = value;
+        break;
+      case 'all':
+        query.allRefs = true;
+        break;
+    }
+  }
+  return { query, freeText: free.join(' ') };
+}
+
+/** Inverse of `parseHistoryQuery`: renders a `HistoryQuery` (and optional free text) back to the text-box syntax. */
+export function formatHistoryQuery(query: HistoryQuery, freeText = ''): string {
+  const parts: string[] = [];
+  if (query.content) parts.push(`content:${quoteHistoryQueryValue(query.content)}`);
+  if (query.diffRegex) parts.push(`regex:${quoteHistoryQueryValue(query.diffRegex)}`);
+  for (const p of query.paths) parts.push(`path:${quoteHistoryQueryValue(p)}`);
+  if (query.author) parts.push(`author:${quoteHistoryQueryValue(query.author)}`);
+  if (query.after) parts.push(`after:${quoteHistoryQueryValue(query.after)}`);
+  if (query.before) parts.push(`before:${quoteHistoryQueryValue(query.before)}`);
+  if (query.allRefs) parts.push('all:');
+  if (freeText.trim()) parts.push(freeText.trim());
+  return parts.join(' ');
+}
+
+export function isEmptyHistoryQuery(query: HistoryQuery): boolean {
+  return !query.content && !query.diffRegex && query.paths.length === 0 && !query.author && !query.after && !query.before && !query.allRefs;
+}
+
+/**
+ * Client-side sanity check for a POSIX ERE (git's own regex dialect): only
+ * flags unbalanced `(`/`)` and `[`/`]`, since anything subtler is reported by
+ * git itself. Returns a friendly message, or null when it looks balanced.
+ */
+export function checkRegexBrackets(expr: string): string | null {
+  const stack: ('(' | '[')[] = [];
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === '\\') {
+      i++;
+      continue;
+    }
+    if (c === '(' || c === '[') stack.push(c);
+    else if (c === ')' || c === ']') {
+      const want = c === ')' ? '(' : '[';
+      if (stack.pop() !== want) return `Unbalanced ${c === ')' ? 'parentheses' : 'brackets'} in regular expression.`;
+    }
+  }
+  if (stack.length) return `Unbalanced ${stack[stack.length - 1] === '(' ? 'parentheses' : 'brackets'} in regular expression.`;
+  return null;
+}
+
+/** Maps git's own regex-compile stderr to a friendlier one-line message, or returns it unchanged. */
+export function friendlyRegexError(stderr: string): string {
+  const line = stderr.split('\n').find((l) => /invalid regex|regex parse error|bad.*regex|unmatched|error compiling/i.test(l)) ?? stderr.split('\n').find((l) => l.trim()) ?? stderr;
+  return line.replace(/^fatal:\s*/i, '').trim() || 'Invalid regular expression.';
+}
+
+/** Renders an AI diff explanation as Markdown suitable for pasting into a pull request comment. */
+export function explanationToMarkdown(explanation: Explanation, target: ExplainTarget): string {
+  const sha = target.kind === 'commit' ? target.sha : target.source.kind === 'commit' ? target.source.sha : null;
+  const paths = target.kind === 'commit' ? [] : [target.path];
+  const parts: string[] = [];
+  if (sha) parts.push(`**Commit:** \`${sha}\``);
+  if (paths.length) parts.push(`**File:** \`${paths[0]}\``);
+  parts.push(`## What changed\n\n${explanation.whatChanged}`);
+  if (explanation.why) parts.push(`## Why (inferred)\n\n${explanation.why}`);
+  if (explanation.impact) parts.push(`## Impact\n\n${explanation.impact}`);
+  if (explanation.watchOutFor.length) parts.push(`## Watch out for\n\n${explanation.watchOutFor.map((w) => `- ${w}`).join('\n')}`);
+  if (explanation.truncated) parts.push('_Note: this explanation was produced from a truncated diff._');
+  return parts.join('\n\n');
+}
+
+/** AI-drafted footer appended to a pull request body only at create time (see the ai-pr-description spec's "Attribution and no automatic submission"). */
+export const PR_DRAFT_FOOTER = '_Drafted with AI in GitGood; reviewed before creating._';
+
+/** AI-drafted footer appended to a release body only when it is published to GitHub (see the add-ai-release-notes spec). */
+export const RELEASE_NOTES_FOOTER = '_Drafted with AI in GitGood; reviewed before publishing._';
+
+/** Placeholder summary the AI commit splitter inserts for a commit the model left unnamed; the plan dialog keeps Apply disabled until every commit's summary differs from this (see src/main/ai/splitter-core.ts and src/renderer/src/state/split.ts). */
+export const SPLIT_SUMMARY_PLACEHOLDER = 'Update files (edit this summary before applying)';
+
+/** Appends `footer` after a blank line, or returns the trimmed body unchanged when `footer` is null (setting off, or the body no longer originates from the draft). */
+export function appendDraftFooter(body: string, footer: string | null): string {
+  const trimmed = body.trim();
+  if (!footer) return trimmed;
+  return trimmed ? `${trimmed}\n\n${footer}` : footer;
+}
+
 export function debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T & { cancel(): void } {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const wrapped = ((...args: never[]) => {
@@ -323,4 +543,12 @@ export function debounce<T extends (...args: never[]) => void>(fn: T, ms: number
     timer = null;
   };
   return wrapped;
+}
+
+/** Next-patch suggestion for a semver(-looking) tag (e.g. "v1.2.3" -> "v1.2.4"), or null when the tag is not semver. */
+export function suggestNextPatchVersion(tag: string): string | null {
+  const m = /^(v)?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(tag.trim());
+  if (!m) return null;
+  const [, prefix, major, minor, patch] = m;
+  return `${prefix ?? ''}${major}.${minor}.${parseInt(patch, 10) + 1}`;
 }

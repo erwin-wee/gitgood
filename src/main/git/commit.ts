@@ -64,10 +64,11 @@ export async function createCommit(git: GitClient, repoPath: string, opts: Commi
     await applyPatchToIndex(git, repoPath, patch);
   }
   const message = formatCommitMessage(opts.summary, opts.description, opts.coAuthors);
-  const args = ['commit', '-F', '-', '--cleanup=strip'];
+  const signArgs = opts.signOverride === 'sign' ? ['-S'] : opts.signOverride === 'unsigned' ? ['--no-gpg-sign'] : [];
+  const args = ['commit', '-F', '-', '--cleanup=strip', ...signArgs];
   if (opts.amend) args.push('--amend');
   if (mergeInProgress && !opts.summary.trim()) {
-    await git.run(repoPath, ['commit', '--no-edit']);
+    await git.run(repoPath, ['commit', '--no-edit', ...signArgs]);
   } else {
     if (!opts.summary.trim() && !opts.amend) throw new GitError({ message: 'A commit summary is required.', command: 'git commit', exitCode: null, stderr: '', stdout: '', code: 'unknown' });
     await git.run(repoPath, args, { stdin: message });

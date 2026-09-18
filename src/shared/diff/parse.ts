@@ -1,4 +1,6 @@
-import type { DiffHunk, DiffLine } from '../types';
+import type { DiffHunk, DiffLine, FileDiff } from '../types';
+import { BLAME_MAX_LINES } from '../types';
+import { languageFromPath } from '../util';
 
 export interface ParsedDiffHeader {
   oldPath: string | null;
@@ -304,5 +306,33 @@ export function synthesizeAddedDiff(path: string, content: string): ParsedDiff {
         lines,
       },
     ],
+  };
+}
+
+/**
+ * Builds a `FileDiff` that shows a file's full content as plain (unchanged)
+ * lines, reusing the same TextDiff renderer used for real diffs. Used for the
+ * blame gutter (which attaches to the whole file, not a 3-line-context diff)
+ * and for the read-only "view file at commit" viewer.
+ */
+export function buildFileViewDiff(path: string, content: string, maxLines: number = BLAME_MAX_LINES): FileDiff {
+  const hasCRLF = content.includes('\r\n');
+  const rawLines = content === '' ? [] : content.split(/\r?\n/);
+  const trailingNewline = /\r?\n$/.test(content);
+  if (trailingNewline) rawLines.pop();
+  if (rawLines.length > maxLines) return { kind: 'too-large', lineCount: rawLines.length, bytes: content.length };
+  const lines: DiffLine[] = rawLines.map((text, i) => ({ type: 'context', text, oldLineNumber: i + 1, newLineNumber: i + 1, noNewline: false }));
+  if (lines.length && !trailingNewline) lines[lines.length - 1].noNewline = true;
+  const hunks: DiffHunk[] = lines.length ? [{ header: `@@ -1,${lines.length} +1,${lines.length} @@`, oldStart: 1, oldLines: lines.length, newStart: 1, newLines: lines.length, lines }] : [];
+  return {
+    kind: 'text',
+    hunks,
+    oldPath: path,
+    newPath: path,
+    language: languageFromPath(path),
+    lineCount: lines.length,
+    newContent: content,
+    oldContent: content,
+    hasCRLF,
   };
 }

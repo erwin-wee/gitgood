@@ -167,3 +167,15 @@ export const selectAll: LineSelector = () => true;
 export function selectHunk(hunkIndex: number): LineSelector {
   return (hi) => hi === hunkIndex;
 }
+
+/**
+ * Combines several hunks (by index) into one selector, so `buildStagePatch`
+ * produces a single multi-hunk patch instead of one patch per hunk. Used by
+ * the AI commit splitter to stage several hunks of the same file for one
+ * planned commit. Equivalent to OR-ing the `selectHunk` result for each
+ * index in `hunkIndices`.
+ */
+export function selectHunks(hunkIndices: Iterable<number>): LineSelector {
+  const set = new Set(hunkIndices);
+  return (hi) => set.has(hi);
+}

@@ -28,7 +28,7 @@ function candidatesFor(name: string): string[] {
   return out;
 }
 
-function knownDirs(tool: 'git' | 'gh' | 'claude'): string[] {
+function knownDirs(tool: 'git' | 'gh' | 'claude' | 'gpg' | 'sshKeygen'): string[] {
   const home = homedir();
   const dirs: string[] = [];
   if (isWindows) {
@@ -40,6 +40,10 @@ function knownDirs(tool: 'git' | 'gh' | 'claude'): string[] {
       dirs.push(join(pf, 'Git', 'cmd'), join(pf, 'Git', 'bin'), join(pf86, 'Git', 'cmd'), join(local, 'Programs', 'Git', 'cmd'));
     } else if (tool === 'gh') {
       dirs.push(join(pf, 'GitHub CLI'), join(pf86, 'GitHub CLI'), join(local, 'Programs', 'GitHub CLI'));
+    } else if (tool === 'gpg') {
+      dirs.push(join(pf, 'GnuPG', 'bin'), join(pf86, 'GnuPG', 'bin'), join(pf, 'Git', 'usr', 'bin'));
+    } else if (tool === 'sshKeygen') {
+      dirs.push('C:\\Windows\\System32\\OpenSSH', join(pf, 'Git', 'usr', 'bin'));
     } else {
       dirs.push(join(home, '.local', 'bin'), join(local, 'Programs', 'claude'));
     }
@@ -86,6 +90,9 @@ export class ToolLocator {
     git: { installed: false, version: null, path: null, error: null },
     gh: { installed: false, version: null, path: null, error: null },
     claudeCli: { installed: false, version: null, path: null, error: null },
+    gitLfs: { installed: false, version: null, path: null, error: null },
+    gpg: { installed: false, version: null, path: null, error: null },
+    sshKeygen: { installed: false, version: null, path: null, error: null },
     ghAccount: null,
     ghAuthError: null,
     credentialHelperConfigured: false,
@@ -135,14 +142,56 @@ export class ToolLocator {
     if (this.located) return this.located;
     this.located = (async () => {
       const settings = this.store.getSettings();
-      const [git, gh, claudeCli] = await Promise.all([
+      const [git, gh, claudeCli, gpg, sshKeygen] = await Promise.all([
         this.locate('git', settings.gitPath, ['--version'], (o) => /git version (\S+)/.exec(o)?.[1] ?? null),
         this.locate('gh', settings.ghPath, ['--version'], (o) => /gh version (\S+)/.exec(o)?.[1] ?? null),
         this.locate('claude', settings.ai.claudeCliPath, ['--version'], (o) => o.trim().split('\n')[0]?.trim() || null),
+        this.locate('gpg', null, ['--version'], (o) => /gpg \(GnuPG\) (\S+)/.exec(o)?.[1] ?? null),
+        this.locateSshKeygen(),
       ]);
-      this.state = { ...this.state, git, gh, claudeCli };
+      const gitLfs = await this.locateLfs(git);
+      this.state = { ...this.state, git, gh, claudeCli, gitLfs, gpg, sshKeygen };
     })();
     return this.located;
+  }
+
+  /**
+   * ssh-keygen has no reliable `--version`/`-V` flag that only prints a
+   * version (some invocations would instead perform key operations), so this
+   * only confirms presence on PATH without executing it.
+   */
+  private async locateSshKeygen(): Promise<ToolInfo> {
+    const env = await this.env();
+    const path = await findExecutable('ssh-keygen', knownDirs('sshKeygen'), env.PATH);
+    if (!path) return { installed: false, version: null, path: null, error: 'ssh-keygen not found on PATH' };
+    return { installed: true, version: null, path, error: null };
+  }
+
+  /**
+   * Locates git-lfs, preferring `git lfs version` (the subcommand git itself
+   * resolves) and falling back to a standalone `git-lfs` binary on PATH so
+   * the app can still detect an installation that predates git's plugin
+   * discovery, or one installed outside git's exec-path.
+   */
+  private async locateLfs(git: ToolInfo): Promise<ToolInfo> {
+    const env = await this.env();
+    const parse = (out: string): string | null => /git-lfs\/(\S+)/.exec(out)?.[1] ?? null;
+    if (git.installed && git.path) {
+      try {
+        const result = await exec(git.path, ['lfs', 'version'], { env, timeoutMs: 10000 });
+        return { installed: true, version: parse(result.stdout + result.stderr), path: git.path, error: null };
+      } catch {
+        /* git has no lfs subcommand installed; fall back to a standalone binary */
+      }
+    }
+    const path = await findExecutable('git-lfs', [], env.PATH);
+    if (!path) return { installed: false, version: null, path: null, error: 'git-lfs not found' };
+    try {
+      const result = await exec(path, ['version'], { env, timeoutMs: 10000 });
+      return { installed: true, version: parse(result.stdout + result.stderr), path, error: null };
+    } catch (err) {
+      return { installed: false, version: null, path, error: (err as Error).message };
+    }
   }
 
   refresh(): Promise<ToolsState> {
@@ -154,7 +203,7 @@ export class ToolLocator {
     return this.refreshing;
   }
 
-  private async locate(tool: 'git' | 'gh' | 'claude', override: string | null, versionArgs: string[], parse: (out: string) => string | null): Promise<ToolInfo> {
+  private async locate(tool: 'git' | 'gh' | 'claude' | 'gpg' | 'sshKeygen', override: string | null, versionArgs: string[], parse: (out: string) => string | null): Promise<ToolInfo> {
     const env = await this.env();
     let path: string | null = null;
     if (override) {

@@ -90,22 +90,42 @@ export function resolutionForChoice(block: ConflictBlock, choice: BlockChoice): 
   }
 }
 
+/** 0-based, half-open [start, end) line range a resolved block occupies in the resulting file's line array (before joining with the line-ending convention). An empty resolution produces start === end. */
+export interface ResolvedRange {
+  start: number;
+  end: number;
+}
+
+export interface AppliedResolutions {
+  content: string;
+  /** Keyed by block id; only present for blocks that received a resolution (untouched blocks, which keep their markers, are not included). */
+  ranges: Map<number, ResolvedRange>;
+}
+
 /**
  * Replaces the given blocks with their resolutions and returns the new file
- * content. Blocks without a resolution are left intact (markers preserved).
+ * content plus the line range each resolved block ended up occupying.
+ * Blocks without a resolution are left intact (markers preserved) and do not
+ * appear in `ranges`.
  */
-export function applyResolutions(parsed: ParsedConflicts, resolutions: Map<number, string[]>): string {
+export function applyResolutions(parsed: ParsedConflicts, resolutions: Map<number, string[]>): AppliedResolutions {
   const out: string[] = [];
+  const ranges = new Map<number, ResolvedRange>();
   let pos = 0;
   for (const block of parsed.blocks) {
     out.push(...parsed.lines.slice(pos, block.start));
     const res = resolutions.get(block.id);
-    if (res === undefined) out.push(...parsed.lines.slice(block.start, block.end));
-    else out.push(...res);
+    if (res === undefined) {
+      out.push(...parsed.lines.slice(block.start, block.end));
+    } else {
+      const start = out.length;
+      out.push(...res);
+      ranges.set(block.id, { start, end: out.length });
+    }
     pos = block.end;
   }
   out.push(...parsed.lines.slice(pos));
-  return joinLines(out, parsed.eol, parsed.trailingNewline || out.length > 0);
+  return { content: joinLines(out, parsed.eol, parsed.trailingNewline || out.length > 0), ranges };
 }
 
 /** Normalizes a model-provided resolution string into lines matching the file's conventions. */

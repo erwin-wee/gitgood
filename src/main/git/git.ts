@@ -16,6 +16,11 @@ export function classifyGitError(stderr: string, stdout: string): GitErrorInfo['
   const text = `${stderr}\n${stdout}`;
   const tests: [RegExp, GitErrorInfo['code']][] = [
     [/not a git repository/i, 'not-a-repository'],
+    // Checked before the more generic "signing failed" pattern below, since git's own
+    // "error: gpg failed to sign the data" / "fatal: failed to write commit object" wrapper
+    // lines accompany both a missing key and other signing failures.
+    [/No secret key|secret key not available|No default secret key|ssh-keygen: .* No such file or directory|Load key ".*": No such file or directory/i, 'signing-key-missing'],
+    [/gpg failed to sign the data|error: gpg failed to sign|unable to sign the tag/i, 'signing-failed'],
     [/Authentication failed|could not read Username|Permission denied \(publickey\)|Invalid username or (password|token)|HTTP 401|fatal: Authentication|terminal prompts disabled|remote: Support for password authentication|The requested URL returned error: 403/i, 'auth-failed'],
     [/protected branch hook declined|GH006|GH013|refusing to allow|remote: error: Required status check/i, 'protected-branch'],
     [/\[rejected\][^\n]*(non-fast-forward|fetch first|stale info|needs force)|Updates were rejected|failed to push some refs/i, 'non-fast-forward'],
@@ -26,6 +31,7 @@ export function classifyGitError(stderr: string, stdout: string): GitErrorInfo['
     [/nothing to commit|nothing added to commit|no changes added to commit/i, 'nothing-to-commit'],
     [/Unable to create '.*\.lock'|Another git process seems to be running|index\.lock': File exists/i, 'lock-file'],
     [/Repository not found|remote: Not Found|does not appear to be a git repository|Could not find remote branch|No such remote|Please make sure you have the correct access rights/i, 'remote-not-found'],
+    [/is already (?:checked out|used by worktree) at/i, 'worktree-branch-in-use'],
     [/already exists/i, 'branch-exists'],
   ];
   for (const [re, code] of tests) if (re.test(text)) return code;

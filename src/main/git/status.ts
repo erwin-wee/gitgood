@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { BranchState, ConflictKind, FileStatusKind, InProgressOperation, RepositoryStatus, WorkingFile } from '@shared/types';
 import type { GitClient } from './git';
+import { lfsTrackedPaths } from './lfs';
 
 const gitDirCache = new Map<string, string>();
 
@@ -102,6 +103,7 @@ export function parsePorcelainV2(output: string): { branch: BranchState; files: 
         unstaged: xy[1] !== '.',
         submodule: sub.startsWith('S'),
         conflict: null,
+        lfs: false,
       });
     } else if (kind === '2') {
       const parts = t.split(' ');
@@ -117,17 +119,18 @@ export function parsePorcelainV2(output: string): { branch: BranchState; files: 
         unstaged: xy[1] !== '.',
         submodule: sub.startsWith('S'),
         conflict: null,
+        lfs: false,
       });
     } else if (kind === 'u') {
       const parts = t.split(' ');
       const xy = parts[1];
       const sub = parts[2];
       const path = parts.slice(10).join(' ');
-      files.push({ path, oldPath: null, status: 'conflicted', staged: false, unstaged: true, submodule: sub.startsWith('S'), conflict: conflictKind(xy) });
+      files.push({ path, oldPath: null, status: 'conflicted', staged: false, unstaged: true, submodule: sub.startsWith('S'), conflict: conflictKind(xy), lfs: false });
     } else if (kind === '?') {
-      files.push({ path: t.slice(2), oldPath: null, status: 'untracked', staged: false, unstaged: true, submodule: false, conflict: null });
+      files.push({ path: t.slice(2), oldPath: null, status: 'untracked', staged: false, unstaged: true, submodule: false, conflict: null, lfs: false });
     } else if (kind === '!') {
-      files.push({ path: t.slice(2), oldPath: null, status: 'ignored', staged: false, unstaged: false, submodule: false, conflict: null });
+      files.push({ path: t.slice(2), oldPath: null, status: 'ignored', staged: false, unstaged: false, submodule: false, conflict: null, lfs: false });
     }
   }
   if (branch.upstream && !hasAb) branch.upstreamGone = true;
@@ -196,6 +199,11 @@ export async function getStatus(git: GitClient, repoPath: string): Promise<Repos
   const gitDir = await getGitDir(git, repoPath);
   const result = await git.run(repoPath, ['status', '--porcelain=v2', '--branch', '--untracked-files=all', '--ignore-submodules=none', '-z'], { readOnly: true, maxBuffer: 256 * 1024 * 1024 });
   const { branch, files } = parsePorcelainV2(result.stdout);
+  const nonSubmodulePaths = files.filter((f) => !f.submodule).map((f) => f.path);
+  if (nonSubmodulePaths.length) {
+    const lfsPaths = await lfsTrackedPaths(git, repoPath, nonSubmodulePaths);
+    for (const f of files) if (lfsPaths.has(f.path)) f.lfs = true;
+  }
   const operation = await detectOperation(git, repoPath, gitDir);
   if (branch.detached && operation.kind === 'rebase' && operation.headName) {
     // While rebasing git reports a detached HEAD; show the branch being rebased.

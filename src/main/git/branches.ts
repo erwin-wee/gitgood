@@ -39,9 +39,17 @@ export async function getBranches(git: GitClient, repoPath: string): Promise<Bra
       behind: track.behind,
       isDefault: !isRemote && defaultBranch !== null && name === defaultBranch,
       unpublished: !isRemote && !f[2],
+      upstreamGone: track.gone,
     });
   }
   return branches;
+}
+
+/** Local branch names already merged into `ref` (typically the default branch), via `git branch --merged`. */
+export async function getMergedBranchNames(git: GitClient, repoPath: string, ref: string): Promise<Set<string>> {
+  const out = await git.tryRun(repoPath, ['branch', '--merged', ref, '--format=%(refname:short)'], { readOnly: true, quiet: true });
+  if (!out) return new Set();
+  return new Set(out.stdout.split('\n').map((l) => l.trim()).filter(Boolean));
 }
 
 export async function getDefaultBranch(git: GitClient, repoPath: string): Promise<string | null> {
