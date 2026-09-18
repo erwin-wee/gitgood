@@ -13,6 +13,11 @@ export default defineConfig({
           include: ['test/**/*.test.ts'],
           exclude: ['test/fixture/**', 'test/smoke/**'],
           environment: 'node',
+          // Several suites here (release notes, split, precommit review) build throwaway
+          // repositories with the real `git` binary, which is slow enough on Windows CI to
+          // blow the 5s default. Same allowance the fixture project makes.
+          testTimeout: 30000,
+          hookTimeout: 30000,
         },
       },
       {

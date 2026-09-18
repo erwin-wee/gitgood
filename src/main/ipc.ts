@@ -234,7 +234,14 @@ export function registerIpc(ctx: AppContext): void {
   const handlers: ApiMethods = {
     // ---------------- app ----------------
     'app.info': async () => ({ version: app.getVersion(), electron: process.versions.electron ?? '', platform: process.platform, userDataPath: app.getPath('userData'), logPath: getLogPath() }),
-    'app.tools': async (refresh) => (refresh ? tools.refresh() : tools.current()),
+    // Without awaiting the local scan, the first call would answer with the
+    // pre-scan state (every tool "not installed") and the renderer would flash
+    // the "GitGood needs Git to run" setup screen before startup finished.
+    'app.tools': async (refresh) => {
+      if (refresh) return tools.refresh();
+      await tools.ensureLocated();
+      return tools.current();
+    },
     'app.settings.get': async () => store.getSettings(),
     'app.settings.set': async (patch) => {
       const before = store.getSettings();
