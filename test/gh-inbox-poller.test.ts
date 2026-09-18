@@ -157,26 +157,31 @@ describe('InboxPoller: polling outcomes', () => {
     expect(poller.getState().lastPolledAt).not.toBeNull();
   });
 
-  it('maps new items, reports only newly-arrived unread ones, and persists the cache', async () => {
+  it('maps items and persists the cache, but treats the first-ever sync as a baseline with no reported arrivals', async () => {
     const raw = { id: '9', unread: true, reason: 'mention', updated_at: '2026-02-01T00:00:00Z', last_read_at: null, subject: { title: 'You were mentioned', url: 'https://api.github.com/repos/octo/repo/issues/3', type: 'Issue' }, repository: { name: 'repo', owner: { login: 'octo' }, html_url: 'https://github.com/octo/repo' } };
     const onNewItems = vi.fn();
     const { poller, cache } = makePoller({ onNewItems, gh: { notificationsPoll: vi.fn().mockResolvedValue({ notModified: false, items: [raw], lastModified: 'L2', pollIntervalSeconds: null }) } });
     await poller.refresh();
     expect(poller.getState().items).toHaveLength(1);
     expect(poller.getState().unreadCount).toBe(1);
-    expect(onNewItems).toHaveBeenCalledTimes(1);
-    expect((onNewItems.mock.calls[0][0] as InboxItem[])[0].id).toBe('9');
+    expect(onNewItems).not.toHaveBeenCalled();
     expect(cache.items).toHaveLength(1);
     expect(cache.lastModified).toBe('L2');
   });
 
-  it('does not re-report an item already seen on a previous poll', async () => {
-    const raw = { id: '9', unread: true, reason: 'mention', updated_at: '2026-02-01T00:00:00Z', last_read_at: null, subject: { title: 'You were mentioned', url: 'https://api.github.com/repos/octo/repo/issues/3', type: 'Issue' }, repository: { name: 'repo', owner: { login: 'octo' }, html_url: 'https://github.com/octo/repo' } };
+  it('reports items that arrive after the first sync, but never the initial baseline or an item already seen', async () => {
+    const raw1 = { id: '9', unread: true, reason: 'mention', updated_at: '2026-02-01T00:00:00Z', last_read_at: null, subject: { title: 'You were mentioned', url: 'https://api.github.com/repos/octo/repo/issues/3', type: 'Issue' }, repository: { name: 'repo', owner: { login: 'octo' }, html_url: 'https://github.com/octo/repo' } };
+    const raw2 = { id: '10', unread: true, reason: 'mention', updated_at: '2026-02-02T00:00:00Z', last_read_at: null, subject: { title: 'Also mentioned', url: 'https://api.github.com/repos/octo/repo/issues/4', type: 'Issue' }, repository: { name: 'repo', owner: { login: 'octo' }, html_url: 'https://github.com/octo/repo' } };
     const onNewItems = vi.fn();
-    const { poller } = makePoller({ onNewItems, gh: { notificationsPoll: vi.fn().mockResolvedValue({ notModified: false, items: [raw], lastModified: 'L2', pollIntervalSeconds: null }) } });
-    await poller.refresh();
-    await poller.refresh();
+    const notificationsPoll = vi
+      .fn()
+      .mockResolvedValueOnce({ notModified: false, items: [raw1], lastModified: 'L2', pollIntervalSeconds: null })
+      .mockResolvedValueOnce({ notModified: false, items: [raw1, raw2], lastModified: 'L3', pollIntervalSeconds: null });
+    const { poller } = makePoller({ onNewItems, gh: { notificationsPoll } });
+    await poller.refresh(); // first-ever sync: baseline, not reported
+    await poller.refresh(); // raw1 already known; raw2 is genuinely new
     expect(onNewItems).toHaveBeenCalledTimes(1);
+    expect((onNewItems.mock.calls[0][0] as InboxItem[])[0].id).toBe('10');
   });
 
   it('pauses for rate-limit and resumes at the reset time without polling before it', async () => {

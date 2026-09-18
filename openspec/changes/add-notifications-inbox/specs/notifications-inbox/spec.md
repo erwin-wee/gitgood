@@ -55,7 +55,7 @@ The system SHALL let the user mark a notification read, unsubscribe from its thr
 - **THEN** GitHub removes the subscription and the item is removed from the list
 
 ### Requirement: Desktop notifications for enabled categories
-The system SHALL send a desktop notification for each new inbox item whose category is enabled in settings, only while the window is unfocused. Clicking the desktop notification MUST focus the app and select the item.
+The system SHALL send a desktop notification for each new inbox item whose category is enabled in settings, only while the window is unfocused. Clicking the desktop notification MUST focus the app and select the item. The first poll after a fresh install or a cache clear (i.e. one with no prior conditional-request cursor) MUST populate the panel and badge with the account's existing unread notifications but MUST NOT treat any of them as newly arrived for the purpose of desktop notifications.
 
 #### Scenario: Review request while unfocused
 - **WHEN** a review request arrives, review-request desktop alerts are enabled and the window is not focused
@@ -64,6 +64,10 @@ The system SHALL send a desktop notification for each new inbox item whose categ
 #### Scenario: Category disabled
 - **WHEN** a mention arrives and mention alerts are disabled
 - **THEN** no desktop notification is shown, but the item still appears in the panel and badge
+
+#### Scenario: First sync after install or cache clear
+- **WHEN** the very first notifications poll runs after install, sign-in, or *Clear inbox cache*, and the account already has unread GitHub notifications
+- **THEN** those notifications appear in the panel and badge but no desktop notification is shown for any of them
 
 ### Requirement: Badge on tray or dock
 The system SHALL show the unread count as a taskbar overlay on Windows, a dock badge on macOS, and a launcher count on Linux where the desktop supports it, and clear it when the count is zero.

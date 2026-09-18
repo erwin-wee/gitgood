@@ -310,7 +310,11 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     if (!blameRange) return { background: 'var(--diff-hunk-bg)' };
     const t = new Date(hunk.author.date).getTime();
     const age = Number.isNaN(t) ? 0.5 : blameRange.max <= blameRange.min ? 0 : (blameRange.max - t) / (blameRange.max - blameRange.min);
-    return { background: `hsl(212, 60%, ${88 - age * 34}%)`, color: age > 0.55 ? '#0b1220' : undefined };
+    // The gutter background is always a light-to-mid blue tint (54%-88% lightness), so it
+    // needs a fixed dark foreground for legible text in both light and dark themes — letting
+    // it inherit the theme's default text color (e.g. light text in dark mode) makes it
+    // unreadable against this always-light background.
+    return { background: `hsl(212, 60%, ${88 - age * 34}%)`, color: '#0b1220' };
   };
   const blameActiveLine = useMemo(() => {
     if (!activeBlameId || !blame) return null;
