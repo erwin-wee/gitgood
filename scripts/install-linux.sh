@@ -14,7 +14,7 @@ REPO="erwin-wee/gitgood"
 PREFIX="${GITGOOD_INSTALL_PREFIX:-$HOME/.local/share/GitGood}"
 BIN_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
-VERSION=""
+GITGOOD_VERSION=""
 INSTALL_PREREQS=1
 ASSUME_YES=0
 # Piped via `curl ... | bash`: stdin is the script itself, so there is no
@@ -39,7 +39,7 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) VERSION="$2"; shift 2 ;;
+    --version) GITGOOD_VERSION="$2"; shift 2 ;;
     --prefix) PREFIX="$2"; shift 2 ;;
     --no-prereqs) INSTALL_PREREQS=0; shift ;;
     -y|--yes) ASSUME_YES=1; shift ;;
@@ -176,8 +176,8 @@ fi
 # Download the release
 # ---------------------------------------------------------------------------
 
-if [ -n "$VERSION" ]; then
-  TAG="${VERSION#v}"; TAG="v$TAG"
+if [ -n "$GITGOOD_VERSION" ]; then
+  TAG="${GITGOOD_VERSION#v}"; TAG="v$TAG"
   API_URL="https://api.github.com/repos/$REPO/releases/tags/$TAG"
 else
   API_URL="https://api.github.com/repos/$REPO/releases/latest"
