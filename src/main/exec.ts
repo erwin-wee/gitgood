@@ -41,6 +41,11 @@ export function formatCommand(file: string, args: string[]): string {
   return [file, ...args].map(quote).join(' ');
 }
 
+/** Quotes one token for a cmd.exe command line (used only for the .cmd/.bat path). */
+function windowsQuote(s: string): string {
+  return /[\s"&|<>^]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+}
+
 /**
  * Spawns a process (never through a shell) and collects its output.
  * Rejects with ExecError on non-zero exit, spawn failure, timeout or abort.
@@ -51,11 +56,23 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
   return new Promise<ExecResult>((resolve, reject) => {
     let child;
     try {
-      child = spawn(file, args, {
+      // Node >= 18.20.2 refuses to spawn a .cmd/.bat without a shell (the fix for
+      // CVE-2024-27980), which is how npm installs CLIs on Windows (`claude.cmd`,
+      // `gh.cmd`). Build the cmd.exe invocation here instead of passing
+      // `shell: true`, so the path and every argument stay quoted.
+      const viaCmd = process.platform === 'win32' && /\.(cmd|bat)$/i.test(file);
+      const spawnFile = viaCmd ? process.env.ComSpec || 'cmd.exe' : file;
+      const spawnArgs = viaCmd ? ['/d', '/s', '/c', `"${[file, ...args].map(windowsQuote).join(' ')}"`] : args;
+      child = spawn(spawnFile, spawnArgs, {
         cwd: opts.cwd,
         env: opts.env ?? process.env,
         windowsHide: true,
         shell: false,
+        // Its own process group, so a kill reaches the command and anything it
+        // spawned rather than only the wrapper. Never on Windows, where it would
+        // open a console window.
+        detached: process.platform !== 'win32',
+        windowsVerbatimArguments: viaCmd,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {
@@ -80,9 +97,35 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
       fn();
     };
 
+    /**
+     * Kills the command and its descendants. `child.kill()` alone signals only
+     * the direct child -- for a shell-wrapped command that is the wrapper, and
+     * the real process keeps running and holds the pipes open, so `close` never
+     * fires and the caller hangs until the command finishes on its own.
+     */
+    const killTree = () => {
+      if (child.pid === undefined) {
+        child.kill();
+        return;
+      }
+      if (process.platform === 'win32') {
+        try {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => child.kill());
+        } catch {
+          child.kill();
+        }
+        return;
+      }
+      try {
+        process.kill(-child.pid, 'SIGTERM'); // negative pid: the whole process group
+      } catch {
+        child.kill();
+      }
+    };
+
     const onAbort = () => {
       aborted = true;
-      child.kill();
+      killTree();
     };
     if (opts.signal) {
       if (opts.signal.aborted) onAbort();
@@ -91,7 +134,7 @@ export function exec(file: string, args: string[], opts: ExecOptions = {}): Prom
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
-        child.kill();
+        killTree();
       }, opts.timeoutMs);
     }
 
