@@ -9,3 +9,4 @@ Thumbs.db
 coverage/
 *.tsbuildinfo
 test/smoke/out/
+.lavish/
