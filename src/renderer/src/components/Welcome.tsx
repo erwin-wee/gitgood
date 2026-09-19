@@ -6,6 +6,7 @@ import { Button, Icon, RelativeTime } from './ui';
 export function Welcome(): React.JSX.Element {
   const repos = useAppStore((s) => s.repos);
   const work = useAppStore((s) => s.work);
+  const workError = useAppStore((s) => s.workError);
   const account = useAppStore((s) => s.tools?.ghAccount ?? null);
   const recent = [...repos].sort((a, b) => b.lastOpened - a.lastOpened).slice(0, 6);
 
@@ -76,6 +77,12 @@ export function Welcome(): React.JSX.Element {
                 </span>
               </div>
             ))}
+          </div>
+        ) : workError ? (
+          <div className="welcome-recent">
+            <h3>Repository health</h3>
+            <p className="muted">{workError}</p>
+            <Button size="sm" onClick={() => void actions.loadWork()}>Retry</Button>
           </div>
         ) : null}
       </div>

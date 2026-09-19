@@ -77,20 +77,22 @@ function LargeFilesCard(): React.JSX.Element {
   const [status, setStatus] = useState<CardStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [blobs, setBlobs] = useState<LargeBlob[]>([]);
+  const [cancelled, setCancelled] = useState(false);
   const [lfsInstalled, setLfsInstalled] = useState(false);
 
   const load = async (): Promise<void> => {
     if (!repo) return;
     setStatus('loading');
+    setCancelled(false);
     try {
       const [result, tools] = await Promise.all([invoke('repo.health.largeFiles', repo.path, LARGE_FILE_LIMIT), invoke('app.tools', false)]);
       setBlobs(result);
       setLfsInstalled(tools.gitLfs.installed);
       setStatus('idle');
     } catch (err) {
-      // A cancelled scan returns to idle with no partial results, rather than showing an error.
+      // A cancelled scan returns to idle, keeping whatever results the previous scan found.
       if (errorInfo(err).code === 'cancelled') {
-        setBlobs([]);
+        setCancelled(true);
         setStatus('idle');
       } else {
         setError(errorMessage(err));
@@ -100,6 +102,7 @@ function LargeFilesCard(): React.JSX.Element {
   };
 
   useEffect(() => {
+    setBlobs([]);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repo?.path]);
@@ -111,6 +114,8 @@ function LargeFilesCard(): React.JSX.Element {
           <Spinner /> Scanning history…
           <Button size="sm" variant="ghost" onClick={() => void invoke('app.operations.cancel', progress.id)}>Cancel</Button>
         </div>
+      ) : cancelled && !blobs.length ? (
+        <p className="muted">Scan cancelled.</p>
       ) : !blobs.length ? (
         <p className="muted">No large blobs found in history.</p>
       ) : (

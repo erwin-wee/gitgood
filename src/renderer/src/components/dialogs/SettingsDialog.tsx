@@ -179,8 +179,8 @@ function GitTab({ settings, update }: { settings: AppSettings; update: (p: Parti
       <WatchedFoldersCard settings={settings} update={update} />
       <h4>Pull behavior</h4>
       <div className="settings-row">
-        <label>When pulling</label>
-        <select value={settings.pullBehavior} onChange={(e) => update({ pullBehavior: e.target.value as AppSettings['pullBehavior'] })}>
+        <label htmlFor="settings-pull-behavior">When pulling</label>
+        <select id="settings-pull-behavior" value={settings.pullBehavior} onChange={(e) => update({ pullBehavior: e.target.value as AppSettings['pullBehavior'] })}>
           <option value="git-config">Follow Git config (pull.rebase)</option>
           <option value="merge">Merge remote changes</option>
           <option value="rebase">Rebase local commits on top</option>
@@ -188,8 +188,8 @@ function GitTab({ settings, update }: { settings: AppSettings; update: (p: Parti
       </div>
       <h4>Background fetch</h4>
       <div className="settings-row">
-        <label>Fetch every</label>
-        <select value={settings.autoFetchIntervalMinutes} onChange={(e) => update({ autoFetchIntervalMinutes: Number(e.target.value) })}>
+        <label htmlFor="settings-fetch-interval">Fetch every</label>
+        <select id="settings-fetch-interval" value={settings.autoFetchIntervalMinutes} onChange={(e) => update({ autoFetchIntervalMinutes: Number(e.target.value) })}>
           <option value={0}>Never</option>
           <option value={5}>5 minutes</option>
           <option value={10}>10 minutes</option>
@@ -199,12 +199,13 @@ function GitTab({ settings, update }: { settings: AppSettings; update: (p: Parti
       </div>
       <h4>Repository health</h4>
       <div className="settings-row">
-        <label>A branch is inactive after</label>
-        <input type="number" min={1} max={3650} value={settings.staleBranchDays} onChange={(e) => update({ staleBranchDays: Math.max(1, Number(e.target.value) || 90) })} style={{ flex: '0 0 80px' }} /> days without a commit
+        <label htmlFor="settings-stale-branch-days">A branch is inactive after</label>
+        <input id="settings-stale-branch-days" type="number" min={1} max={3650} value={settings.staleBranchDays} onChange={(e) => update({ staleBranchDays: Math.max(1, Number(e.target.value) || 90) })} style={{ flex: '0 0 80px' }} /> days without a commit
       </div>
       <div className="settings-row">
-        <label>Warn about blobs at or above</label>
+        <label htmlFor="settings-large-file-threshold">Warn about blobs at or above</label>
         <input
+          id="settings-large-file-threshold"
           type="number"
           min={1}
           max={2048}
@@ -528,15 +529,15 @@ function AppearanceTab({ settings, update }: { settings: AppSettings; update: (p
       </div>
       <h4>Diff</h4>
       <div className="settings-row">
-        <label>Default view</label>
-        <select value={settings.diffViewMode} onChange={(e) => update({ diffViewMode: e.target.value as 'unified' | 'split' })}>
+        <label htmlFor="settings-diff-view-mode">Default view</label>
+        <select id="settings-diff-view-mode" value={settings.diffViewMode} onChange={(e) => update({ diffViewMode: e.target.value as 'unified' | 'split' })}>
           <option value="unified">Unified</option>
           <option value="split">Split (side by side)</option>
         </select>
       </div>
       <div className="settings-row">
-        <label>Font size</label>
-        <input type="number" min={9} max={24} value={settings.diffFontSize} onChange={(e) => update({ diffFontSize: Math.max(9, Math.min(24, Number(e.target.value) || 12)) })} style={{ flex: '0 0 80px' }} />
+        <label htmlFor="settings-diff-font-size">Font size</label>
+        <input id="settings-diff-font-size" type="number" min={9} max={24} value={settings.diffFontSize} onChange={(e) => update({ diffFontSize: Math.max(9, Math.min(24, Number(e.target.value) || 12)) })} style={{ flex: '0 0 80px' }} />
       </div>
       <Checkbox checked={settings.diffSyntaxHighlighting} onChange={(v) => update({ diffSyntaxHighlighting: v })} label="Syntax highlighting" />
       <Checkbox checked={settings.diffShowIntraline} onChange={(v) => update({ diffShowIntraline: v })} label="Highlight word-level changes within modified lines" />
@@ -710,8 +711,8 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
       <h3>AI conflict resolution</h3>
       <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>One click asks Claude to reconcile both sides of every conflict block in a file. Only the conflicted regions, some surrounding context and the commit subjects on each side are sent. Results are written to the file and can be undone.</p>
       <div className="settings-row">
-        <label>Provider</label>
-        <select value={ai.provider} onChange={(e) => updateAi({ provider: e.target.value as AppSettings['ai']['provider'] })}>
+        <label htmlFor="settings-ai-provider">Provider</label>
+        <select id="settings-ai-provider" value={ai.provider} onChange={(e) => updateAi({ provider: e.target.value as AppSettings['ai']['provider'] })}>
           <option value="anthropic">Anthropic API (API key)</option>
           <option value="claude-cli">Claude Code CLI (uses your existing login)</option>
           <option value="disabled">Disabled</option>
@@ -737,11 +738,11 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
       {ai.provider !== 'disabled' ? (
         <>
           <div className="settings-row">
-            <label>Model</label>
+            <label htmlFor="settings-ai-model">Model</label>
             {customModel ? (
-              <input value={ai.model} onChange={(e) => updateAi({ model: e.target.value })} spellCheck={false} />
+              <input id="settings-ai-model" value={ai.model} onChange={(e) => updateAi({ model: e.target.value })} spellCheck={false} />
             ) : (
-              <select value={ai.model} onChange={(e) => updateAi({ model: e.target.value })}>
+              <select id="settings-ai-model" value={ai.model} onChange={(e) => updateAi({ model: e.target.value })}>
                 {MODELS.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
@@ -750,8 +751,8 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
             <Button size="sm" variant="ghost" onClick={() => setCustomModel((v) => !v)}>{customModel ? 'Presets' : 'Custom'}</Button>
           </div>
           <div className="settings-row">
-            <label>Effort</label>
-            <select value={ai.effort} onChange={(e) => updateAi({ effort: e.target.value as AppSettings['ai']['effort'] })}>
+            <label htmlFor="settings-ai-effort">Effort</label>
+            <select id="settings-ai-effort" value={ai.effort} onChange={(e) => updateAi({ effort: e.target.value as AppSettings['ai']['effort'] })}>
               <option value="low">Low (fastest)</option>
               <option value="medium">Medium</option>
               <option value="high">High (default)</option>
@@ -763,16 +764,16 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
           <PostResolveCheckSettings ai={ai} updateAi={updateAi} />
           <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Pull request review</h4>
           <div className="settings-row">
-            <label>Strictness</label>
-            <select value={ai.reviewStrictness} onChange={(e) => updateAi({ reviewStrictness: e.target.value as AppSettings['ai']['reviewStrictness'] })}>
+            <label htmlFor="settings-ai-review-strictness">Strictness</label>
+            <select id="settings-ai-review-strictness" value={ai.reviewStrictness} onChange={(e) => updateAi({ reviewStrictness: e.target.value as AppSettings['ai']['reviewStrictness'] })}>
               <option value="strict">Strict — only confident blockers and warnings (default)</option>
               <option value="balanced">Balanced — adds test gaps and readability</option>
               <option value="thorough">Thorough — includes style nits</option>
             </select>
           </div>
           <div className="settings-row">
-            <label>Review file limit</label>
-            <input type="number" min={1} max={200} value={ai.reviewMaxFiles} onChange={(e) => updateAi({ reviewMaxFiles: Math.max(1, Math.min(200, parseInt(e.target.value, 10) || 40)) })} style={{ width: 80 }} />
+            <label htmlFor="settings-ai-review-max-files">Review file limit</label>
+            <input id="settings-ai-review-max-files" type="number" min={1} max={200} value={ai.reviewMaxFiles} onChange={(e) => updateAi({ reviewMaxFiles: Math.max(1, Math.min(200, parseInt(e.target.value, 10) || 40)) })} style={{ width: 80 }} />
             <span className="hint">Files beyond this limit are listed as skipped in the pre-flight card.</span>
           </div>
           <Checkbox checked={ai.reviewPostFooter} onChange={(v) => updateAi({ reviewPostFooter: v })} label="Append an “AI-assisted” footer to reviews posted to GitHub" />
@@ -782,8 +783,8 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
           <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Triage sends pull request metadata only (titles, bodies, labels, review and check state) — never a diff.</p>
           <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Release notes</h4>
           <div className="settings-row">
-            <label>Audience</label>
-            <select value={ai.releaseNotesAudience} onChange={(e) => updateAi({ releaseNotesAudience: e.target.value as AppSettings['ai']['releaseNotesAudience'] })}>
+            <label htmlFor="settings-ai-release-notes-audience">Audience</label>
+            <select id="settings-ai-release-notes-audience" value={ai.releaseNotesAudience} onChange={(e) => updateAi({ releaseNotesAudience: e.target.value as AppSettings['ai']['releaseNotesAudience'] })}>
               <option value="users">Users — skip internal refactors and CI-only changes</option>
               <option value="developers">Developers — include implementation detail</option>
             </select>
@@ -793,8 +794,8 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
           <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Runs the AI review on the exact patch Commit would apply. If it finds anything, a dialog lets you commit anyway or go back; committing is never blocked.</p>
           <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Agent for fixes</h4>
           <div className="settings-row">
-            <label>Fix with agent runs</label>
-            <select value={ai.agentCommand} onChange={(e) => updateAi({ agentCommand: e.target.value as AppSettings['ai']['agentCommand'] })}>
+            <label htmlFor="settings-ai-agent-command">Fix with agent runs</label>
+            <select id="settings-ai-agent-command" value={ai.agentCommand} onChange={(e) => updateAi({ agentCommand: e.target.value as AppSettings['ai']['agentCommand'] })}>
               {AGENT_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label} ({p.binary})</option>)}
               <option value="custom">Custom command…</option>
             </select>
@@ -889,8 +890,8 @@ function AdvancedTab({ settings, update }: { settings: AppSettings; update: (p: 
       <Checkbox checked={settings.autoDownloadUpdates} onChange={(v) => update({ autoDownloadUpdates: v })} label="Automatically download updates once found" disabled={!settings.checkForUpdatesAutomatically} />
       <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>This build can only detect and link to new releases; it cannot download or install them yet. Automatic download will take effect once that ships.</p>
       <div className="settings-row">
-        <label>Channel</label>
-        <select value={settings.updateChannel} onChange={(e) => update({ updateChannel: e.target.value as AppSettings['updateChannel'] })}>
+        <label htmlFor="settings-update-channel">Channel</label>
+        <select id="settings-update-channel" value={settings.updateChannel} onChange={(e) => update({ updateChannel: e.target.value as AppSettings['updateChannel'] })}>
           <option value="stable">Stable</option>
           <option value="beta">Beta (includes prereleases)</option>
         </select>

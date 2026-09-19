@@ -852,7 +852,7 @@ export function selectCommit(sha: string, opts: { toggle?: boolean; range?: bool
   } else {
     selected = [sha];
   }
-  patchHistory({ selectedShas: selected, details: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.details : null, selectedFile: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.selectedFile : null });
+  patchHistory({ selectedShas: selected, detailsError: null, details: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.details : null, selectedFile: selected.length === 1 && s.history.details?.commit.sha === selected[0] ? s.history.selectedFile : null });
   if (selected.length === 1) void loadCommitDetails(selected[0]);
   else void loadDiff();
 }
@@ -865,7 +865,7 @@ export function selectCommitFile(path: string): void {
 export async function loadCommitDetails(sha: string): Promise<void> {
   const repo = store.get().currentRepo;
   if (!repo) return;
-  patchHistory({ detailsLoading: true });
+  patchHistory({ detailsLoading: true, detailsError: null });
   try {
     const details = await invoke('repo.commit.details', repo.path, sha);
     const h = store.get().history;
@@ -891,10 +891,10 @@ export async function loadCommitDetails(sha: string): Promise<void> {
     const pathAtCommit = h.path ? h.pathHistory?.find((e) => e.sha === sha)?.path ?? h.path : null;
     const preferred = pathAtCommit && visibleFiles.some((f) => f.path === pathAtCommit) ? pathAtCommit : null;
     const selectedFile = preferred ?? (h.selectedFile && visibleFiles.some((f) => f.path === h.selectedFile) ? h.selectedFile : visibleFiles[0]?.path ?? null);
-    patchHistory({ details, detailsLoading: false, selectedFile, matchingFiles });
+    patchHistory({ details, detailsLoading: false, selectedFile, matchingFiles, detailsError: null });
     void loadDiff();
   } catch (err) {
-    patchHistory({ detailsLoading: false });
+    patchHistory({ detailsLoading: false, detailsError: errorMessage(err) });
     showToast({ kind: 'error', title: 'Could not load commit', message: errorMessage(err) });
   }
 }
@@ -923,7 +923,7 @@ export async function loadHistory(reset: boolean): Promise<void> {
   const h = store.get().history;
   if (h.loading && !reset) return;
   if (slowSearchTimer) clearTimeout(slowSearchTimer);
-  patchHistory({ loading: true, slowSearch: false });
+  patchHistory({ loading: true, slowSearch: false, ...(reset ? { error: null } : {}) });
   slowSearchTimer = setTimeout(() => patchHistory({ slowSearch: true }), 5000);
   try {
     const skip = reset ? 0 : h.commits.length;
@@ -931,13 +931,13 @@ export async function loadHistory(reset: boolean): Promise<void> {
     if (store.get().currentRepo?.path !== repo.path) return;
     const commits = reset ? page.commits : [...h.commits, ...page.commits];
     const stillSelected = store.get().history.selectedShas.filter((sha) => commits.some((c) => c.sha === sha));
-    patchHistory({ commits, hasMore: page.hasMore, loading: false, slowSearch: false, selectedShas: stillSelected, details: stillSelected.length === 1 ? store.get().history.details : null });
+    patchHistory({ commits, hasMore: page.hasMore, loading: false, slowSearch: false, error: null, selectedShas: stillSelected, details: stillSelected.length === 1 ? store.get().history.details : null });
     if (store.get().view === 'history' && stillSelected.length === 0 && commits.length) selectCommit(commits[0].sha);
     else if (stillSelected.length === 1 && reset) void loadCommitDetails(stillSelected[0]);
   } catch (err) {
     // A newer history request superseded this one (the main process aborts the older git run); the newer call owns the loading state.
     if (err instanceof ApiError && err.code === 'cancelled') return;
-    patchHistory({ loading: false, slowSearch: false });
+    patchHistory({ loading: false, slowSearch: false, error: errorMessage(err) });
     showToast({ kind: 'error', title: 'Could not load history', message: errorMessage(err) });
   } finally {
     if (slowSearchTimer) {
@@ -1713,9 +1713,18 @@ export async function abortOperation(): Promise<void> {
   if (!repo || !s.status) return;
   const kind = s.status.operation.kind;
   const method = kind === 'rebase' ? 'git.rebase.abort' : kind === 'cherry-pick' ? 'git.cherryPick.abort' : kind === 'revert' ? 'git.revert.abort' : 'git.merge.abort';
-  await runOperation(`Abort ${kind}`, () => invoke(method, repo.path));
-  closeAllDialogs();
-  await loadHistory(true);
+  openDialog({
+    kind: 'confirm',
+    title: `Abort ${kind}?`,
+    message: `Conflict resolutions made during this ${kind} will be discarded and the branch returns to its pre-${kind} state.`,
+    confirmLabel: `Abort ${kind}`,
+    danger: true,
+    onConfirm: async () => {
+      await runOperation(`Abort ${kind}`, () => invoke(method, repo.path));
+      closeAllDialogs();
+      await loadHistory(true);
+    },
+  });
 }
 
 export async function skipRebaseCommit(): Promise<void> {
@@ -1847,13 +1856,25 @@ export async function undoResolutions(results: ConflictResolutionResult[]): Prom
   await loadDiff(true);
 }
 
+async function undoUseSide(repoPath: string, path: string, original: string): Promise<void> {
+  try {
+    await invoke('git.conflict.unresolve', repoPath, path, original);
+  } catch (err) {
+    showToast({ kind: 'error', title: `Could not undo ${path}`, message: errorMessage(err) });
+  }
+  await refreshStatus();
+  await loadDiff(true);
+}
+
 export async function useSide(path: string, side: 'ours' | 'theirs'): Promise<void> {
   const repo = store.get().currentRepo;
   if (!repo) return;
+  const original = await invoke('repo.readFile', repo.path, path).catch(() => null);
   try {
     await invoke('git.conflict.useSide', repo.path, path, side);
     await refreshStatus();
     await loadDiff(true);
+    showToast({ kind: 'success', title: `Took ${side} for ${path}`, action: original !== null ? { label: 'Undo', onClick: () => void undoUseSide(repo.path, path, original) } : undefined });
   } catch (err) {
     showError('Could not resolve conflict', err);
   }
@@ -2592,9 +2613,9 @@ export function openHealth(): void {
 export async function loadWork(): Promise<void> {
   try {
     const work = await invoke('repos.work');
-    store.set({ work });
-  } catch {
-    /* best-effort */
+    store.set({ work, workError: null });
+  } catch (err) {
+    store.set({ workError: errorMessage(err) });
   }
 }
 

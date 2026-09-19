@@ -3,6 +3,7 @@ import type { Stash } from '@shared/types';
 import * as actions from '../state/actions';
 import { openDialog, useAppStore } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
+import { onListKeyDown } from '../lib/listKeys';
 import { Button, Icon, RelativeTime, Spinner, openContextMenu, type MenuItem } from './ui';
 
 const FILE_PAGE = 2000;
@@ -48,7 +49,7 @@ export function StashesView(): React.JSX.Element {
           <span style={{ flex: 1 }} />
           <Button size="sm" variant="ghost" iconOnly icon="x" title="Back to changes" onClick={() => actions.setView('changes')} />
         </div>
-        <div className="file-list">
+        <div className="file-list" role="listbox" aria-label="Stashes" onKeyDown={onListKeyDown}>
           {view.loading && !stashes.length ? (
             <div className="list-empty">
               <Spinner /> Loading stashes…
@@ -64,6 +65,9 @@ export function StashesView(): React.JSX.Element {
           {sorted.map((st) => (
             <div
               key={st.sha}
+              tabIndex={0}
+              role="option"
+              aria-selected={view.selectedSha === st.sha}
               className={`list-row ${view.selectedSha === st.sha ? 'selected' : ''}`}
               onClick={() => void actions.selectStash(st.sha)}
               onContextMenu={(e) => {
@@ -90,7 +94,7 @@ export function StashesView(): React.JSX.Element {
             <div className="changes-header">
               <span className="count">{view.files.length} changed file{view.files.length === 1 ? '' : 's'}</span>
             </div>
-            <div className="file-list">
+            <div className="file-list" role="listbox" aria-label="Changed files" onKeyDown={onListKeyDown}>
               {view.filesLoading ? (
                 <div className="list-empty">
                   <Spinner />

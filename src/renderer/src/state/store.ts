@@ -127,6 +127,10 @@ export interface HistoryState {
   path: string | null;
   /** sha -> the tracked file's path at that commit, for `path` (from `repo.pathHistory`); null while loading or inactive. */
   pathHistory: PathHistoryEntry[] | null;
+  /** Set when the most recent list load failed; cleared on the next successful load and when a reset load starts. */
+  error: string | null;
+  /** Set when the most recent commit-details load failed; cleared on the next successful load and when a new load starts. */
+  detailsError: string | null;
 }
 
 export interface ReviewState {
@@ -453,6 +457,8 @@ export interface AppState {
   submoduleBannerDismissed: boolean;
   /** Unpushed work across every repository on disk; loaded on demand for the Welcome screen and, opt-in, the repository list's warning dot. */
   work: RepoWork[];
+  /** Set when the most recent `loadWork` fetch failed; previous `work` data is left in place. */
+  workError: string | null;
   /** Bumped whenever signing config is saved from Options → Git, so the commit form's signing indicator re-fetches without needing a repo switch. */
   signingConfigVersion: number;
   /** Bumped after a settings-sync action (enable/upload/download/disconnect) completes, so the sync card re-fetches status even though its confirmation dialog remounted it mid-action. */
@@ -478,7 +484,7 @@ export const initialChanges: ChangesState = {
 
 export const initialStashesView: StashesViewState = { loading: false, selectedSha: null, files: [], filesLoading: false, selectedFile: null };
 
-export const initialHistory: HistoryState = { commits: [], hasMore: false, loading: false, search: '', query: EMPTY_HISTORY_QUERY, freeText: '', queryError: null, slowSearch: false, selectedShas: [], details: null, detailsLoading: false, selectedFile: null, matchingFiles: null, dragging: null, path: null, pathHistory: null };
+export const initialHistory: HistoryState = { commits: [], hasMore: false, loading: false, search: '', query: EMPTY_HISTORY_QUERY, freeText: '', queryError: null, slowSearch: false, selectedShas: [], details: null, detailsLoading: false, selectedFile: null, matchingFiles: null, dragging: null, path: null, pathHistory: null, error: null, detailsError: null };
 
 export const initialDiff: DiffState = { key: null, diff: null, loading: false, error: null, selectedLines: null, blameOn: false, blame: null, blameLoading: false, activeBlameId: null, highlightTerm: null };
 
@@ -534,6 +540,7 @@ const initialState: AppState = {
   lfsStatus: null,
   submoduleBannerDismissed: false,
   work: [],
+  workError: null,
   signingConfigVersion: 0,
   settingsSyncVersion: 0,
   inbox: initialInbox,
