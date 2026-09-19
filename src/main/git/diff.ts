@@ -106,6 +106,7 @@ export async function getWorkingDiff(git: GitClient, repoPath: string, file: Wor
     const buf = await readWorktree(repoPath, path);
     if (!buf) return { kind: 'empty', reason: file.conflict === 'deleted-by-us' || file.conflict === 'both-deleted' ? 'This file was deleted on your side.' : 'File is missing from the working tree.' };
     if (looksBinary(buf)) return { kind: 'binary', oldBytes: null, newBytes: buf.length };
+    if (buf.length > MAX_DIFF_BYTES) return { kind: 'too-large', lineCount: 0, bytes: buf.length };
     const content = buf.toString('utf8');
     const parsed = parseConflicts(content);
     return { kind: 'conflict', content, lines: parsed.lines, blocks: parsed.blocks, language: languageFromPath(path), oursLabel: parsed.oursLabel, theirsLabel: parsed.theirsLabel };

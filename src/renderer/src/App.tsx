@@ -16,12 +16,14 @@ import { ContextMenuHost, Icon } from './components/ui';
 import { Welcome } from './components/Welcome';
 import { ReviewView } from './components/review/ReviewView';
 
-function useSidebarResize(): { width: number; onMouseDown: (e: React.MouseEvent) => void; active: boolean } {
+/** Drives the sidebar width from the DOM while dragging (one style write per mousemove) and commits it to the store on release, so the tree re-renders once per drag instead of once per pixel. */
+function useSidebarResize(): { width: number; asideRef: React.RefObject<HTMLElement | null>; onMouseDown: (e: React.MouseEvent) => void; active: boolean } {
   const width = useAppStore((s) => s.sidebarWidth);
   const [active, setActive] = useState(false);
-  const dragging = useRef<{ startX: number; startWidth: number } | null>(null);
+  const asideRef = useRef<HTMLElement | null>(null);
+  const dragging = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
   const onMouseDown = (e: React.MouseEvent) => {
-    dragging.current = { startX: e.clientX, startWidth: width };
+    dragging.current = { startX: e.clientX, startWidth: width, width };
     setActive(true);
     e.preventDefault();
   };
@@ -29,14 +31,15 @@ function useSidebarResize(): { width: number; onMouseDown: (e: React.MouseEvent)
     const move = (e: MouseEvent) => {
       const d = dragging.current;
       if (!d) return;
-      const next = Math.max(220, Math.min(window.innerWidth * 0.6, d.startWidth + e.clientX - d.startX));
-      store.set({ sidebarWidth: next });
+      d.width = Math.max(220, Math.min(window.innerWidth * 0.6, d.startWidth + e.clientX - d.startX));
+      if (asideRef.current) asideRef.current.style.width = `${d.width}px`;
     };
     const up = () => {
-      if (dragging.current) {
-        dragging.current = null;
-        setActive(false);
-      }
+      const d = dragging.current;
+      if (!d) return;
+      dragging.current = null;
+      setActive(false);
+      store.set({ sidebarWidth: d.width });
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
@@ -45,7 +48,7 @@ function useSidebarResize(): { width: number; onMouseDown: (e: React.MouseEvent)
       window.removeEventListener('mouseup', up);
     };
   }, []);
-  return { width, onMouseDown, active };
+  return { width, asideRef, onMouseDown, active };
 }
 
 export function App(): React.JSX.Element {
@@ -54,13 +57,18 @@ export function App(): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
   const view = useAppStore((s) => s.view);
   const status = useAppStore((s) => s.status);
-  const changes = useAppStore((s) => s.changes);
-  const history = useAppStore((s) => s.history);
-  const stashesView = useAppStore((s) => s.stashesView);
+  const selectedWorking = useAppStore((s) => (s.changes.selectedPaths.length === 1 ? s.changes.selectedPaths[0] : null));
+  const selectedWorkingCount = useAppStore((s) => s.changes.selectedPaths.length);
+  const commitDiffFile = useAppStore((s) => (s.history.selectedShas.length === 1 && s.history.details && s.history.selectedFile ? s.history.details.files.find((f) => f.path === s.history.selectedFile) ?? null : null));
+  const showCommitDiff = useAppStore((s) => s.history.selectedShas.length === 1 && !!s.history.details);
+  const stashSelectedSha = useAppStore((s) => s.stashesView.selectedSha);
+  const stashSelectedFile = useAppStore((s) => s.stashesView.selectedFile);
+  const stashFile = useAppStore((s) => s.stashesView.files.find((f) => f.path === s.stashesView.selectedFile) ?? null);
+  const historySelectedFile = useAppStore((s) => s.history.selectedFile);
   const reviewOpen = useAppStore((s) => s.review.open);
   const reviewPath = useAppStore((s) => s.review.selectedPath);
   const reviewFile = useAppStore((s) => s.review.run?.files.find((f) => f.file.path === s.review.selectedPath)?.file ?? null);
-  const { width, onMouseDown, active } = useSidebarResize();
+  const { width, asideRef, onMouseDown, active } = useSidebarResize();
 
   useEffect(() => {
     void bootstrap();
@@ -92,11 +100,10 @@ export function App(): React.JSX.Element {
   } else if (view === 'health' && !reviewOpen) {
     content = <HealthView />;
   } else {
-    const selectedWorking = changes.selectedPaths.length === 1 ? changes.selectedPaths[0] : null;
     const workingFile = selectedWorking ? status?.files.find((f) => f.path === selectedWorking) ?? null : null;
     content = (
       <div className="main">
-        <aside className="sidebar" style={{ width }}>
+        <aside ref={asideRef} className="sidebar" style={{ width }}>
           <div className="tabs">
             <button type="button" className={`tab ${view === 'changes' ? 'active' : ''}`} onClick={() => setView('changes')} title="Changes (Ctrl+1)">
               Changes {status?.files.length ? <span className="badge">{status.files.length}</span> : null}
@@ -113,10 +120,10 @@ export function App(): React.JSX.Element {
             <ReviewView />
           ) : view === 'history' ? (
             <CommitDetailsPane />
-          ) : changes.selectedPaths.length > 1 ? (
+          ) : selectedWorkingCount > 1 ? (
             <div className="empty-state">
               <Icon name="diff-modified" size={32} />
-              <h2>{changes.selectedPaths.length} files selected</h2>
+              <h2>{selectedWorkingCount} files selected</h2>
               <p>Right-click to discard or ignore the selected files, or use the checkboxes to include them in your next commit.</p>
             </div>
           ) : (
@@ -128,8 +135,7 @@ export function App(): React.JSX.Element {
   }
 
   // The stash, commit and review views render their diff into a shared pane so state stays centralized.
-  const showStashDiff = repo && !reviewOpen && view === 'stashes' && !!stashesView.selectedSha;
-  const showCommitDiff = repo && !reviewOpen && view === 'history' && history.selectedShas.length === 1 && !!history.details;
+  const showStashDiff = repo && !reviewOpen && view === 'stashes' && !!stashSelectedSha;
   const showReviewDiff = repo && reviewOpen;
 
   return (
@@ -137,9 +143,9 @@ export function App(): React.JSX.Element {
       <Toolbar />
       {settingsLoaded && !gitMissing ? <Banners /> : null}
       {content}
-      {showStashDiff ? <PortalDiff target="stashes-diff-slot" path={stashesView.selectedFile} status={stashesView.files.find((f) => f.path === stashesView.selectedFile)?.status ?? null} mode="stash" /> : null}
+      {showStashDiff ? <PortalDiff target="stashes-diff-slot" path={stashSelectedFile} status={stashFile?.status ?? null} mode="stash" /> : null}
       {showReviewDiff ? <PortalDiff target="review-diff-slot" path={reviewPath} oldPath={reviewFile?.oldPath ?? null} status={reviewFile?.status ?? null} mode="review" /> : null}
-      {showCommitDiff ? <PortalDiff target="commit-diff-slot" path={history.selectedFile} oldPath={history.details?.files.find((f) => f.path === history.selectedFile)?.oldPath ?? null} status={history.details?.files.find((f) => f.path === history.selectedFile)?.status ?? null} mode="commit" /> : null}
+      {repo && !reviewOpen && view === 'history' && showCommitDiff ? <PortalDiff target="commit-diff-slot" path={historySelectedFile} oldPath={commitDiffFile?.oldPath ?? null} status={commitDiffFile?.status ?? null} mode="commit" /> : null}
       <Dialogs />
       <InboxPanel />
       <Toasts />

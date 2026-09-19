@@ -186,22 +186,18 @@ export function bumpSettingsSyncVersion(): void {
   store.set((s) => ({ settingsSyncVersion: s.settingsSyncVersion + 1 }));
 }
 
-let repoChangeTimer: ReturnType<typeof setTimeout> | null = null;
+/** The main process already coalesces watcher bursts (watcher.ts DEBOUNCE_MS); a second debounce here only added latency. Status refreshes dedupe via statusInFlight. */
 async function handleRepoChanged(reason: 'worktree' | 'refs' | 'both'): Promise<void> {
-  if (repoChangeTimer) clearTimeout(repoChangeTimer);
-  repoChangeTimer = setTimeout(async () => {
-    repoChangeTimer = null;
-    clearBlameCache();
-    await refreshStatus();
-    if (reason !== 'worktree') {
-      await Promise.all([refreshBranches(), refreshStashes()]);
-      if (store.get().view === 'history') await loadHistory(true);
-    }
-    await loadDiff(true);
-    if (store.get().precommitReview.run) void refreshPrecommitStaleness();
-    const repo = store.get().currentRepo;
-    if (repo && reason !== 'refs') void pruneStaleConflictTints(repo.path);
-  }, 150);
+  clearBlameCache();
+  await refreshStatus();
+  if (reason !== 'worktree') {
+    await Promise.all([refreshBranches(), refreshStashes()]);
+    if (store.get().view === 'history') await loadHistory(true);
+  }
+  await loadDiff(true);
+  if (store.get().precommitReview.run) void refreshPrecommitStaleness();
+  const repo = store.get().currentRepo;
+  if (repo && reason !== 'refs') void pruneStaleConflictTints(repo.path);
 }
 
 // ---------------------------------------------------------------------------

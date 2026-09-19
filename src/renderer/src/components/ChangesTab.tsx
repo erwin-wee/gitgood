@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CommitFile, ReviewFinding, ReviewSeverity, WorkingFile } from '@shared/types';
 import { extname } from '@shared/util';
 import { invoke, isMac } from '../api';
@@ -7,12 +7,17 @@ import { openDialog, patchChanges, store, useAppStore } from '../state/store';
 import { liveFindings, SEVERITY_ICON, SEVERITY_TONE } from './review/ReviewView';
 import { onListKeyDown } from '../lib/listKeys';
 import { Avatar, Button, Checkbox, Icon, PathLabel, Spinner, openContextMenu, statusIcon, statusLabel, type MenuItem } from './ui';
+import { useWindowedRows } from '../lib/windowing';
 
 const SUMMARY_LIMIT = 72;
 
+const FILE_ROW_ESTIMATES = { row: 30 };
+
 export function ChangesTab(): React.JSX.Element {
   const status = useAppStore((s) => s.status);
-  const changes = useAppStore((s) => s.changes);
+  const selectedPaths = useAppStore((s) => s.changes.selectedPaths);
+  const excluded = useAppStore((s) => s.changes.excluded);
+  const partial = useAppStore((s) => s.changes.partial);
   const stashes = useAppStore((s) => s.stashes);
   const focused = useAppStore((s) => s.focused);
   const ai = useAppStore((s) => s.ai);
@@ -22,13 +27,19 @@ export function ChangesTab(): React.JSX.Element {
     const q = filter.trim().toLowerCase();
     return q ? files.filter((f) => f.path.toLowerCase().includes(q)) : files;
   }, [files, filter]);
+  const excludedSet = useMemo(() => new Set(excluded), [excluded]);
+  const selectedSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
 
-  const includedCount = files.filter((f) => !changes.excluded.includes(f.path)).length;
-  const partialCount = Object.keys(changes.partial).length;
+  const includedCount = files.length - files.reduce((n, f) => n + (excludedSet.has(f.path) ? 1 : 0), 0);
+  const partialCount = Object.keys(partial).length;
   const allState: boolean | 'indeterminate' = files.length === 0 ? false : includedCount === files.length && partialCount === 0 ? true : includedCount === 0 ? false : 'indeterminate';
 
-  const contextMenu = (e: React.MouseEvent, file: WorkingFile) => {
+  const [listEl, setListEl] = useState<HTMLElement | null>(null);
+  const win = useWindowedRows(listEl, { count: visible.length, kindOf: () => 'row', estimates: FILE_ROW_ESTIMATES, resetKey: status });
+
+  const contextMenu = useCallback((e: React.MouseEvent, file: WorkingFile) => {
     const s = store.get();
+    const files = s.status?.files ?? [];
     const selected = s.changes.selectedPaths.includes(file.path) ? s.changes.selectedPaths : [file.path];
     if (!s.changes.selectedPaths.includes(file.path)) actions.selectWorkingFile(file.path);
     const ext = extname(file.path);
@@ -65,7 +76,14 @@ export function ChangesTab(): React.JSX.Element {
       { label: selected.length > 1 ? `Stash ${selected.length} selected files…` : 'Stash selected files…', onClick: () => openDialog({ kind: 'stash-selected-files', paths: selected }) },
     );
     openContextMenu(e, items);
-  };
+  }, []);
+
+  const rows: React.ReactNode[] = [];
+  for (let i = win.start; i < win.end; i++) {
+    const file = visible[i];
+    const aiState = ai[file.path];
+    rows.push(<FileRow key={file.path} rowRef={win.rowRef(i)} file={file} included={excludedSet.has(file.path) ? false : partial[file.path] ? 'indeterminate' : true} selected={selectedSet.has(file.path)} inactive={!focused} busy={!!aiState && aiState.phase !== 'done' && aiState.phase !== 'error'} onContextMenu={contextMenu} />);
+  }
 
   return (
     <>
@@ -82,39 +100,16 @@ export function ChangesTab(): React.JSX.Element {
           </span>
         ) : null}
       </div>
-      <div className="file-list" role="listbox" aria-multiselectable aria-label="Changed files" onKeyDown={onListKeyDown} onContextMenu={(e) => { if ((e.target as HTMLElement).closest('.file-row')) return; if (files.length) openContextMenu(e, [{ label: 'Discard all changes…', danger: true, onClick: () => actions.requestDiscard(files.map((f) => f.path), true) }, { label: 'Stash all changes', onClick: () => void actions.stashAll() }]); }}>
+      <div ref={setListEl} className="file-list" role="listbox" aria-multiselectable aria-label="Changed files" onKeyDown={onListKeyDown} onContextMenu={(e) => { if ((e.target as HTMLElement).closest('.file-row')) return; if (files.length) openContextMenu(e, [{ label: 'Discard all changes…', danger: true, onClick: () => actions.requestDiscard(files.map((f) => f.path), true) }, { label: 'Stash all changes', onClick: () => void actions.stashAll() }]); }}>
         {status && files.length === 0 ? (
           <div className="empty-state" style={{ padding: 24 }}>
             <Icon name="check-circle" size={28} />
             <p>{status.branch.unborn ? 'This repository has no commits yet. Add some files to make your first commit.' : 'No local changes.'}</p>
           </div>
         ) : null}
-        {visible.map((file) => {
-          const included = changes.excluded.includes(file.path) ? false : changes.partial[file.path] ? 'indeterminate' : true;
-          const selected = changes.selectedPaths.includes(file.path);
-          const aiState = ai[file.path];
-          return (
-            <div
-              key={file.path}
-              tabIndex={0}
-              role="option"
-              aria-selected={selected}
-              className={`file-row ${selected ? 'selected' : ''} ${selected && !focused ? 'inactive' : ''}`}
-              onClick={(e) => actions.selectWorkingFile(file.path, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
-              onContextMenu={(e) => contextMenu(e, file)}
-              onDoubleClick={() => void actions.openInEditor(file.path)}
-            >
-              <Checkbox checked={included} onChange={() => actions.toggleIncluded(file.path)} disabled={!!file.conflict} title={file.conflict ? 'Resolve the conflict before committing' : included === true ? 'Exclude from commit' : 'Include in commit'} />
-              <PathLabel path={file.path} />
-              {aiState && aiState.phase !== 'done' && aiState.phase !== 'error' ? <Spinner /> : null}
-              {file.conflict ? <span className="badge danger" title={file.conflict.replace(/-/g, ' ')}>conflict</span> : null}
-              {file.lfs ? <Icon name="download" size={12} className="muted" title="Git LFS pointer" /> : null}
-              <span className={`status-icon ${file.status}`} title={file.status === 'renamed' && file.oldPath ? `Renamed from ${file.oldPath}` : statusLabel(file.status)}>
-                <Icon name={statusIcon(file.status)} />
-              </span>
-            </div>
-          );
-        })}
+        {win.top > 0 ? <div style={{ height: win.top }} /> : null}
+        {rows}
+        {win.bottom > 0 ? <div style={{ height: win.bottom }} /> : null}
       </div>
       {stashes.length ? (
         <button type="button" className="stash-nav-button" onClick={() => actions.setView('stashes')} title="Open the Stashes view">
@@ -128,6 +123,30 @@ export function ChangesTab(): React.JSX.Element {
     </>
   );
 }
+
+const FileRow = memo(function FileRow({ file, included, selected, inactive, busy, rowRef, onContextMenu }: { file: WorkingFile; included: boolean | 'indeterminate'; selected: boolean; inactive: boolean; busy: boolean; rowRef: (el: HTMLElement | null) => void; onContextMenu: (e: React.MouseEvent, file: WorkingFile) => void }): React.JSX.Element {
+  return (
+    <div
+      ref={rowRef}
+      tabIndex={0}
+      role="option"
+      aria-selected={selected}
+      className={`file-row ${selected ? 'selected' : ''} ${selected && inactive ? 'inactive' : ''}`}
+      onClick={(e) => actions.selectWorkingFile(file.path, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
+      onContextMenu={(e) => onContextMenu(e, file)}
+      onDoubleClick={() => void actions.openInEditor(file.path)}
+    >
+      <Checkbox checked={included} onChange={() => actions.toggleIncluded(file.path)} disabled={!!file.conflict} title={file.conflict ? 'Resolve the conflict before committing' : included === true ? 'Exclude from commit' : 'Include in commit'} />
+      <PathLabel path={file.path} />
+      {busy ? <Spinner /> : null}
+      {file.conflict ? <span className="badge danger" title={file.conflict.replace(/-/g, ' ')}>conflict</span> : null}
+      {file.lfs ? <Icon name="download" size={12} className="muted" title="Git LFS pointer" /> : null}
+      <span className={`status-icon ${file.status}`} title={file.status === 'renamed' && file.oldPath ? `Renamed from ${file.oldPath}` : statusLabel(file.status)}>
+        <Icon name={statusIcon(file.status)} />
+      </span>
+    </div>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Pre-commit AI review findings strip
@@ -227,6 +246,7 @@ export function CommitFileRow({ file, selected, onSelect, onContextMenu }: { fil
 
 function CommitForm(): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
+  const repoPath = repo?.path ?? null;
   const status = useAppStore((s) => s.status);
   const changes = useAppStore((s) => s.changes);
   const settings = useAppStore((s) => s.settings);
@@ -241,21 +261,22 @@ function CommitForm(): React.JSX.Element {
   const summaryRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!repo) return;
+    if (!repoPath) return;
     let cancelled = false;
-    void invoke('repo.config', repo.path)
+    void invoke('repo.config', repoPath)
       .then((c) => !cancelled && setIdentity(c.effective))
       .catch(() => undefined);
-    void invoke('repo.signing.get', repo.path)
+    void invoke('repo.signing.get', repoPath)
       .then((s) => !cancelled && setWillSign(s.effective.signCommits))
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [repo, signingConfigVersion]);
+  }, [repoPath, signingConfigVersion]);
 
   const files = status?.files ?? [];
-  const included = files.filter((f) => !changes.excluded.includes(f.path));
+  const excludedSet = new Set(changes.excluded);
+  const included = files.filter((f) => !excludedSet.has(f.path));
   const inMerge = status?.operation.kind === 'merge' || status?.operation.kind === 'cherry-pick' || status?.operation.kind === 'revert';
   const summaryTooLong = changes.summary.length > SUMMARY_LIMIT;
   const branchName = status?.branch.name ?? 'HEAD';
