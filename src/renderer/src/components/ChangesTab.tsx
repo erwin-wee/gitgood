@@ -5,6 +5,7 @@ import { invoke, isMac } from '../api';
 import * as actions from '../state/actions';
 import { openDialog, patchChanges, store, useAppStore } from '../state/store';
 import { liveFindings, SEVERITY_ICON, SEVERITY_TONE } from './review/ReviewView';
+import { onListKeyDown } from '../lib/listKeys';
 import { Avatar, Button, Checkbox, Icon, PathLabel, Spinner, openContextMenu, statusIcon, statusLabel, type MenuItem } from './ui';
 
 const SUMMARY_LIMIT = 72;
@@ -81,7 +82,7 @@ export function ChangesTab(): React.JSX.Element {
           </span>
         ) : null}
       </div>
-      <div className="file-list" onContextMenu={(e) => { if ((e.target as HTMLElement).closest('.file-row')) return; if (files.length) openContextMenu(e, [{ label: 'Discard all changes…', danger: true, onClick: () => actions.requestDiscard(files.map((f) => f.path), true) }, { label: 'Stash all changes', onClick: () => void actions.stashAll() }]); }}>
+      <div className="file-list" role="listbox" aria-multiselectable aria-label="Changed files" onKeyDown={onListKeyDown} onContextMenu={(e) => { if ((e.target as HTMLElement).closest('.file-row')) return; if (files.length) openContextMenu(e, [{ label: 'Discard all changes…', danger: true, onClick: () => actions.requestDiscard(files.map((f) => f.path), true) }, { label: 'Stash all changes', onClick: () => void actions.stashAll() }]); }}>
         {status && files.length === 0 ? (
           <div className="empty-state" style={{ padding: 24 }}>
             <Icon name="check-circle" size={28} />
@@ -95,6 +96,9 @@ export function ChangesTab(): React.JSX.Element {
           return (
             <div
               key={file.path}
+              tabIndex={0}
+              role="option"
+              aria-selected={selected}
               className={`file-row ${selected ? 'selected' : ''} ${selected && !focused ? 'inactive' : ''}`}
               onClick={(e) => actions.selectWorkingFile(file.path, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
               onContextMenu={(e) => contextMenu(e, file)}
@@ -201,7 +205,7 @@ function PrecommitFindingRow({ finding, stale, active }: { finding: ReviewFindin
 
 export function CommitFileRow({ file, selected, onSelect, onContextMenu }: { file: CommitFile; selected: boolean; onSelect: () => void; onContextMenu?: (e: React.MouseEvent) => void }): React.JSX.Element {
   return (
-    <div className={`file-row ${selected ? 'selected' : ''}`} onClick={onSelect} onContextMenu={onContextMenu}>
+    <div tabIndex={0} role="option" aria-selected={selected} className={`file-row ${selected ? 'selected' : ''}`} onClick={onSelect} onContextMenu={onContextMenu}>
       <PathLabel path={file.path} />
       {file.lfs ? <Icon name="download" size={12} className="muted" title="Git LFS pointer" /> : null}
       {file.additions !== null || file.deletions !== null ? (
@@ -299,33 +303,6 @@ function CommitForm(): React.JSX.Element {
           spellCheck
           autoComplete="off"
         />
-        {willSign ? <Icon name="lock" size={14} className="muted" title="Commits are signed" /> : null}
-        {settings?.ai.provider !== 'disabled' ? (
-          <Button variant="ghost" iconOnly icon="sparkle" className="sparkle" loading={aiCommitBusy} title="Generate commit message with AI" onClick={() => void actions.generateCommitMessage()} disabled={included.length === 0 || changes.committing} />
-        ) : null}
-        {settings?.ai.provider !== 'disabled' ? (
-          <Button variant="ghost" iconOnly icon="eye" loading={precommitReview.running} title="Review changes with AI before committing" onClick={() => void actions.reviewChangesBeforeCommit()} disabled={included.length === 0 || changes.committing} />
-        ) : null}
-        {actions.splitEntryVisible() ? (
-          <Button
-            variant="ghost"
-            iconOnly
-            icon="kebab"
-            title="More AI actions"
-            disabled={changes.committing}
-            onClick={(e) =>
-              openContextMenu(e, [
-                {
-                  label: 'Split into commits with AI…',
-                  icon: 'sparkle',
-                  disabled: !actions.splitEntryEnabled(),
-                  title: actions.splitEntryEnabled() ? undefined : 'At least two changed files are needed to split into commits.',
-                  onClick: () => actions.openSplitDialog(),
-                },
-              ])
-            }
-          />
-        ) : null}
       </div>
       {summaryTooLong && settings?.showCommitLengthWarning !== false ? (
         <span className="length-warning">
@@ -366,6 +343,33 @@ function CommitForm(): React.JSX.Element {
       <div className="form-actions">
         <div className="left">
           <Button variant="ghost" size="sm" icon="person" title={changes.showCoAuthors ? 'Remove co-authors' : 'Add co-authors'} onClick={() => patchChanges((c) => ({ showCoAuthors: !c.showCoAuthors }))} />
+          {willSign ? <Icon name="lock" size={14} className="muted" title="Commits are signed" /> : null}
+          {settings?.ai.provider !== 'disabled' ? (
+            <Button variant="ghost" iconOnly icon="sparkle" className="sparkle" loading={aiCommitBusy} title="Generate commit message with AI" onClick={() => void actions.generateCommitMessage()} disabled={included.length === 0 || changes.committing} />
+          ) : null}
+          {settings?.ai.provider !== 'disabled' ? (
+            <Button variant="ghost" iconOnly icon="eye" loading={precommitReview.running} title="Review changes with AI before committing" onClick={() => void actions.reviewChangesBeforeCommit()} disabled={included.length === 0 || changes.committing} />
+          ) : null}
+          {actions.splitEntryVisible() ? (
+            <Button
+              variant="ghost"
+              iconOnly
+              icon="kebab"
+              title="More AI actions"
+              disabled={changes.committing}
+              onClick={(e) =>
+                openContextMenu(e, [
+                  {
+                    label: 'Split into commits with AI…',
+                    icon: 'sparkle',
+                    disabled: !actions.splitEntryEnabled(),
+                    title: actions.splitEntryEnabled() ? undefined : 'At least two changed files are needed to split into commits.',
+                    onClick: () => actions.openSplitDialog(),
+                  },
+                ])
+              }
+            />
+          ) : null}
           {repo?.github ? <Button variant="ghost" size="sm" icon="issue" title="Reference an issue" onClick={() => actions.openIssuesDialog()}>#</Button> : null}
           <Checkbox checked={changes.amend} onChange={(v) => void actions.setAmend(v)} label="Amend last commit" disabled={changes.committing || !!status?.branch.unborn || inMerge} />
         </div>

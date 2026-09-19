@@ -5,6 +5,7 @@ import * as actions from '../state/actions';
 import { historyFilterActive, historyReorderDisabled } from '../state/actions';
 import { openDialog, patchHistory, setPopover, store, useAppStore } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
+import { onListKeyDown } from '../lib/listKeys';
 import { Avatar, Badge, Button, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
 
 const SIGNATURE_BADGES: Partial<Record<SignatureStatus, { icon: IconName; className: string; label: (signer: string | null) => string }>> = {
@@ -133,6 +134,10 @@ export function HistoryTab(): React.JSX.Element {
       ) : null}
       <div
         className="commit-list"
+        role="listbox"
+        aria-multiselectable
+        aria-label="Commits"
+        onKeyDown={onListKeyDown}
         onDragOver={(e) => {
           if (history.dragging) {
             e.preventDefault();
@@ -148,7 +153,24 @@ export function HistoryTab(): React.JSX.Element {
             <Spinner /> Loading history…
           </div>
         ) : null}
-        {!history.loading && !history.commits.length ? <div className="list-empty">{filterActive ? 'No commits match your search.' : status?.branch.unborn ? 'No commits yet.' : 'No history to show.'}</div> : null}
+        {!history.loading && !history.commits.length ? (
+          <div className="list-empty">
+            {history.error ? (
+              <>
+                {history.error}
+                <div>
+                  <Button size="sm" onClick={() => void actions.loadHistory(true)}>Retry</Button>
+                </div>
+              </>
+            ) : filterActive ? (
+              'No commits match your search.'
+            ) : status?.branch.unborn ? (
+              'No commits yet.'
+            ) : (
+              'No history to show.'
+            )}
+          </div>
+        ) : null}
         {dragOver === 'top' && history.dragging ? <div style={{ height: 2, background: 'var(--accent)' }} /> : null}
         {history.commits.map((c, index) => {
           const selected = history.selectedShas.includes(c.sha);
@@ -158,6 +180,9 @@ export function HistoryTab(): React.JSX.Element {
           return (
             <div
               key={c.sha}
+              tabIndex={0}
+              role="option"
+              aria-selected={selected}
               className={`commit-row ${selected ? 'selected' : ''} ${selected && !focused ? 'inactive' : ''} ${dragOver === c.sha ? 'drag-over' : ''}`}
               onClick={(e) => actions.selectCommit(c.sha, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
               onContextMenu={(e) => {
@@ -307,8 +332,11 @@ export function CommitDetailsPane(): React.JSX.Element {
   if (!details) {
     return (
       <div className="empty-state">
-        {history.detailsLoading ? <Spinner large /> : <Icon name="history" size={32} />}
-        <p>{history.detailsLoading ? 'Loading commit…' : 'Select a commit to view its changes.'}</p>
+        {history.detailsLoading ? <Spinner large /> : <Icon name={history.detailsError ? 'alert' : 'history'} size={32} />}
+        <p>{history.detailsLoading ? 'Loading commit…' : history.detailsError ?? 'Select a commit to view its changes.'}</p>
+        {history.detailsError ? (
+          <Button size="sm" onClick={() => void actions.loadCommitDetails(history.selectedShas[0])}>Retry</Button>
+        ) : null}
       </div>
     );
   }
@@ -370,7 +398,7 @@ export function CommitDetailsPane(): React.JSX.Element {
               {visibleFiles.length} {history.matchingFiles ? 'matching' : 'changed'} file{visibleFiles.length === 1 ? '' : 's'}
             </span>
           </div>
-          <div className="file-list">
+          <div className="file-list" role="listbox" aria-label="Changed files" onKeyDown={onListKeyDown}>
             {visibleFiles.map((f) => (
               <CommitFileRow
                 key={f.path}

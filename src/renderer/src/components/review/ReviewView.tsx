@@ -3,6 +3,7 @@ import type { ReviewFinding, ReviewRun, ReviewSeverity } from '@shared/types';
 import { isMac } from '../../api';
 import * as actions from '../../state/actions';
 import { useAppStore, type PrReviewRun } from '../../state/store';
+import { onListKeyDown } from '../../lib/listKeys';
 import { CommitFileRow } from '../ChangesTab';
 import { Badge, Button, Icon, PathLabel, Spinner, openContextMenu, type IconName } from '../ui';
 
@@ -67,7 +68,7 @@ export function ReviewView(): React.JSX.Element {
           <span className="count truncate" title={run.target.kind === 'pr' ? run.target.title : undefined}>{targetLabel(run)}</span>
           <Button size="sm" variant="ghost" iconOnly icon="x" title="Close review" onClick={() => actions.closeReview()} />
         </div>
-        <div className="file-list">
+        <div className="file-list" role="listbox" aria-label="Reviewed files" onKeyDown={onListKeyDown}>
           {reviewedFiles.map((entry) => {
             const f = entry.file;
             const c = countByPath.get(f.path);
