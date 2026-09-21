@@ -1,0 +1,23 @@
+{
+  "name": "windowed-intraline",
+  "repoKind": "basic",
+  "steps": [
+    {
+      "wait": 1500
+    },
+    {
+      "js": "(async () => {\n const {store,actions}=window.__gitgood;\n const pause=()=>new Promise(r=>setTimeout(r,80));\n const wait=async f=>{for(let i=0;i<100;i++){if(f())return;await pause();}throw Error('Diff did not settle');};\n const assert=(v,message)=>{if(!v)throw Error(message);};\n await actions.addLocalRepository(__REPO_PATH__);await pause();\n await actions.updateSettings({diffSyntaxHighlighting:false,diffShowIntraline:true,diffViewMode:'unified',diffWrapLines:false});\n const count=250;\n const show=(oldWord,newWord)=>{\n  const lines=['delete','add'].flatMap(type=>Array.from({length:count},(_,i)=>({type,text:`const value${i} = ${type==='delete'?oldWord:newWord};`,oldLineNumber:type==='delete'?i+1:null,newLineNumber:type==='add'?i+1:null})));\n  const diff={kind:'text',oldPath:'src/app.ts',newPath:'src/app.ts',language:'typescript',oldContent:null,newContent:null,hasCRLF:false,lineCount:lines.length,hunks:[{header:'@@ -1,250 +1,250 @@',oldStart:1,oldLines:count,newStart:1,newLines:count,lines}]};\n  store.set(s=>({changes:{...s.changes,selectedPaths:['src/app.ts']},diff:{...s.diff,key:'working:src/app.ts|ws=false',diff,loading:false,error:null}}));\n };\n const marks=cls=>[...document.querySelectorAll('.'+cls)].map(e=>e.textContent);\n const expectMarks=async(cls,word)=>{await wait(()=>marks(cls).includes(word));assert(marks(cls).every(v=>v===word),'Incorrect '+cls+' highlights');};\n show('oldValue','newValue');await expectMarks('word-del','oldValue');\n const body=document.querySelector('.diff-body');\n body.scrollTop=body.scrollHeight;await expectMarks('word-add','newValue');\n body.scrollTop=0;await expectMarks('word-del','oldValue');\n await actions.updateSettings({diffViewMode:'split'});await expectMarks('word-del','oldValue');await expectMarks('word-add','newValue');\n body.scrollTop=body.scrollHeight;await wait(()=>document.querySelector('tr[data-new-line=\"250\"]'));await expectMarks('word-add','newValue');\n await actions.updateSettings({diffShowIntraline:false});await wait(()=>!document.querySelector('.word-add,.word-del'));\n await actions.updateSettings({diffShowIntraline:true});await expectMarks('word-add','newValue');\n show('previousIdentifier','replacementIdentifier');await expectMarks('word-add','replacementIdentifier');await expectMarks('word-del','previousIdentifier');\n return JSON.stringify({passed:true});\n})()",
+      "dump": "result.json"
+    },
+    {
+      "shot": "screenshot.png"
+    }
+  ],
+  "expect": [
+    {
+      "dump": "result.json",
+      "jsonPath": "passed",
+      "equals": true
+    }
+  ]
+}

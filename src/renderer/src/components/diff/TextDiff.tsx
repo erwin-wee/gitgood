@@ -413,9 +413,11 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
 
   // Split-view pairs per hunk, and lazily computed intraline ranges per line key.
   const pairsCache = useRef(new Map<number, Pair[]>());
+  const pairByKey = useRef(new Map<string, Pair>());
   const intralineCache = useRef(new Map<string, CharRange[]>());
   useMemo(() => {
     pairsCache.current.clear();
+    pairByKey.current.clear();
     intralineCache.current.clear();
   }, [diff.hunks, intraline]);
   const pairsOf = useCallback((hunkIndex: number): Pair[] => {
@@ -426,11 +428,8 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
       if (intraline) {
         for (const pair of pairs) {
           if (pair.left && pair.right && pair.left.line.type === 'delete' && pair.right.line.type === 'add') {
-            const r = intralineDiff(pair.left.line.text, pair.right.line.text);
-            if (r) {
-              intralineCache.current.set(pair.left.key, r.old);
-              intralineCache.current.set(pair.right.key, r.new);
-            }
+            pairByKey.current.set(pair.left.key, pair);
+            pairByKey.current.set(pair.right.key, pair);
           }
         }
       }
@@ -444,8 +443,15 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
       if (line.type === 'delete' && line.oldLineNumber !== null && oldLines && oldLines[line.oldLineNumber - 1] === line.text) html = highlighted('old', line.oldLineNumber);
       else if (line.type !== 'delete' && line.newLineNumber !== null && newLines && newLines[line.newLineNumber - 1] === line.text) html = highlighted('new', line.newLineNumber);
       if (html === undefined) html = escapeHtml(line.text);
-      if (intraline) {
+      if (intraline && line.type !== 'context') {
         pairsOf(hunkIndex);
+        // Only diff pairs whose rows render, not every pair in a large hunk.
+        const pair = pairByKey.current.get(key);
+        if (!intralineCache.current.has(key) && pair?.left && pair.right) {
+          const r = intralineDiff(pair.left.line.text, pair.right.line.text);
+          intralineCache.current.set(pair.left.key, r?.old ?? []);
+          intralineCache.current.set(pair.right.key, r?.new ?? []);
+        }
         const ranges = intralineCache.current.get(key);
         if (ranges && ranges.length) html = markHtml(html, ranges, line.type === 'add' ? 'word-add' : 'word-del');
       }
