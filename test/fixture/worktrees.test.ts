@@ -209,13 +209,9 @@ describe.skipIf(!hasGitSync())('RepositoryWatcher cross-worktree refs', () => {
     expect(worktreeGitDir).not.toBe(commonDir);
 
     const events: string[] = [];
-    // The change-detection debounce (watcher.ts DEBOUNCE_MS, 120ms) resets on every poll tick, so
-    // the poll interval must be longer than that for a change to ever surface.
-    const watcherB = new RepositoryWatcher(dir, worktreeGitDir, (reason) => events.push(reason), { commonDir, forcePolling: true, pollIntervalMs: 500 });
-    watcherB.start();
+    const watcherB = new RepositoryWatcher(dir, worktreeGitDir, (reason) => events.push(reason), { commonDir, gitPath: repo.gitBin, env: repo.env, forcePolling: true, pollIntervalMs: 500 });
+    await watcherB.start();
     try {
-      // Let the first poll tick establish its baseline mtimes before making the change.
-      await new Promise((r) => setTimeout(r, 600));
       // Create a branch in the main worktree; its ref lives in the shared common dir.
       repo.git(['branch', 'new-shared-branch']);
 
@@ -225,7 +221,7 @@ describe.skipIf(!hasGitSync())('RepositoryWatcher cross-worktree refs', () => {
       }
       expect(events.some((e) => e === 'refs' || e === 'both')).toBe(true);
     } finally {
-      watcherB.stop();
+      await watcherB.stop();
     }
   });
 

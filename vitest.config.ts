@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
-const sharedAlias = { '@shared': resolve('src/shared') };
+const sharedAlias = { '@shared': resolve('src/shared'), './watcher-worker?nodeWorker': resolve('test/helpers/watcher-worker.ts') };
 
 export default defineConfig({
   test: {

@@ -19,7 +19,7 @@ src/
                   after every run, read by terminal coding agents; see plugin/)
     update/       auto-update: UpdateProvider seam, electron-updater-backed provider, pure
                   semver/channel/reducer/gate logic (update-core.ts), orchestration (updater.ts)
-    repo/         repository list, file-system watcher (recursive fs.watch with polling fallback),
+    repo/         repository list, Git-pruned directory watcher in a worker thread,
                   watched folders: a pure bounded directory walker (scan.ts) plus the scan
                   orchestration, exclusions and folder validation (watched-folders.ts); path
                   comparison with the platform's case rules lives in paths.ts
@@ -34,5 +34,11 @@ src/
 ```
 
 Renderer and main process communicate over one typed channel (`src/shared/ipc.ts`). All git commands run with `GIT_TERMINAL_PROMPT=0`, so nothing ever blocks on a hidden prompt; errors are classified (auth, network, non-fast-forward, conflicts, protected branch, …) to drive the right dialog.
+
+Repository watching runs in `repo/watcher-worker.ts`; `watcher.ts` only owns the worker and forwards coalesced change notifications. Git enumerates cached and non-ignored files, preserving tracked files inside ignored directories and honoring nested, negated, global and repository-local ignore rules. Only their containing directories and relevant Git metadata directories receive non-recursive `fs.watch` subscriptions; ignored output trees and Git object storage are not recursively scanned. Git commands, file metadata comparisons, directory subscription updates and polling all stay off the Electron main thread.
+
+Native events trigger bounded 120 ms reconciliation. A four-second reconciliation also detects missed events, changes to external ignore rules and files added inside previously empty directories; submodule dirty status is refreshed on reconciliation. If native watching fails, the same worker continues polling. File metadata includes nanosecond modification/change times, so editing an already-modified file still refreshes its diff. Switching repositories stops the old worker and suppresses late notifications; shutdown aborts its Git child. electron-vite's `?nodeWorker` import bundles the worker alongside the main entry, including in ASAR packages.
+
+History, changes, and text diffs window their rendered rows. `TextDiff` computes word-level changes only when either row of a paired deletion/addition renders, caches both sides, and invalidates them when the hunks or word-highlighting setting change. Syntax highlighting remains lazy per 400-line block.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for how to build and test this, and [RELEASING.md](RELEASING.md) for how packaged builds and releases work.

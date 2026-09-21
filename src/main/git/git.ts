@@ -80,6 +80,10 @@ export interface GitRunOptions {
 export class GitClient {
   constructor(private readonly tools: ToolLocator) {}
 
+  async executable(): Promise<string> {
+    await this.tools.ensureLocated();
+    return this.tools.gitPath();
+  }
   async baseEnv(extra?: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
     const env: NodeJS.ProcessEnv = { ...(await this.tools.env()) };
     env.GIT_TERMINAL_PROMPT = '0';
@@ -99,8 +103,7 @@ export class GitClient {
    * Runs git in the given repository. Throws GitError on failure.
    */
   async run(repoPath: string | null, args: string[], opts: GitRunOptions = {}): Promise<ExecResult> {
-    await this.tools.ensureLocated();
-    const gitPath = this.tools.gitPath();
+    const gitPath = await this.executable();
     const env = await this.baseEnv(opts.env);
     if (opts.readOnly) env.GIT_OPTIONAL_LOCKS = '0';
     const fullArgs = ['-c', 'core.quotePath=false', '-c', 'color.ui=never', '-c', 'advice.detachedHead=false'];
