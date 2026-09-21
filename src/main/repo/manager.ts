@@ -68,6 +68,8 @@ export function repositoryId(path: string): string {
 export class RepositoryManager {
   private watchers = new Map<string, RepositoryWatcher>();
   private githubCache = new Map<string, GitHubRepoRef | null>();
+  private watchGeneration = 0;
+  private watchingPath: string | null = null;
 
   constructor(
     private readonly store: Store,
@@ -484,26 +486,33 @@ export class RepositoryManager {
 
   async watch(repoPath: string): Promise<void> {
     if (this.watchers.has(repoPath)) return;
-    // Only the active repository is watched; stop the others.
-    for (const [p, w] of this.watchers) {
-      if (p !== repoPath) {
-        w.stop();
-        this.watchers.delete(p);
-      }
-    }
+    const generation = ++this.watchGeneration;
+    this.watchingPath = repoPath;
+    for (const w of this.watchers.values()) void w.stop();
+    this.watchers.clear();
+    let watcher: RepositoryWatcher | undefined;
     try {
       const gitDir = await getGitDir(this.git, repoPath);
       const commonDir = await getCommonDir(this.git, repoPath).catch(() => gitDir);
-      const watcher = new RepositoryWatcher(repoPath, gitDir, (reason) => this.send('repo.changed', { repoPath, reason }), { commonDir });
-      watcher.start();
+      const gitPath = await this.git.executable();
+      const env = await this.git.baseEnv();
+      if (generation !== this.watchGeneration) return;
+      watcher = new RepositoryWatcher(repoPath, gitDir, (reason) => this.send('repo.changed', { repoPath, reason }), { commonDir, gitPath, env });
       this.watchers.set(repoPath, watcher);
+      await watcher.start();
     } catch (err) {
-      log.warn(`Failed to watch ${repoPath}: ${(err as Error).message}`);
+      if (watcher && this.watchers.get(repoPath) === watcher) this.watchers.delete(repoPath);
+      if (watcher) void watcher.stop();
+      if (generation === this.watchGeneration) log.warn(`Failed to watch ${repoPath}: ${(err as Error).message}`);
     }
   }
 
   stopWatching(repoPath: string): void {
-    this.watchers.get(repoPath)?.stop();
+    if (this.watchingPath === repoPath) {
+      this.watchingPath = null;
+      this.watchGeneration++;
+    }
+    void this.watchers.get(repoPath)?.stop();
     this.watchers.delete(repoPath);
   }
 
@@ -582,7 +591,9 @@ export class RepositoryManager {
   }
 
   dispose(): void {
-    for (const w of this.watchers.values()) w.stop();
+    this.watchGeneration++;
+    this.watchingPath = null;
+    for (const w of this.watchers.values()) void w.stop();
     this.watchers.clear();
   }
 }

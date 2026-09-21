@@ -55,11 +55,11 @@ export async function getMergedBranchNames(git: GitClient, repoPath: string, ref
 export async function getDefaultBranch(git: GitClient, repoPath: string): Promise<string | null> {
   const head = await git.tryRun(repoPath, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], { readOnly: true });
   if (head && head.stdout.trim()) return head.stdout.trim().replace(/^refs\/remotes\/origin\//, '');
-  for (const candidate of ['main', 'master', 'develop', 'trunk']) {
-    const exists = await git.tryRun(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${candidate}`], { readOnly: true });
-    if (exists) return candidate;
-    const remoteExists = await git.tryRun(repoPath, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${candidate}`], { readOnly: true });
-    if (remoteExists) return candidate;
+  const candidates = ['main', 'master', 'develop', 'trunk'];
+  const refs = await git.tryRun(repoPath, ['for-each-ref', '--format=%(refname)', ...candidates.flatMap((c) => [`refs/heads/${c}`, `refs/remotes/origin/${c}`])], { readOnly: true });
+  const present = new Set(refs?.stdout.split('\n').map((l) => l.trim()) ?? []);
+  for (const candidate of candidates) {
+    if (present.has(`refs/heads/${candidate}`) || present.has(`refs/remotes/origin/${candidate}`)) return candidate;
   }
   const configured = await git.tryRun(repoPath, ['config', '--get', 'init.defaultBranch'], { readOnly: true });
   return configured?.stdout.trim() || null;
