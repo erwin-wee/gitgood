@@ -1,6 +1,6 @@
 {
   "name": "gitgood",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A GitHub Desktop-style Git client for Windows, macOS and Linux that drives the git and gh CLIs",
   "main": "./out/main/index.js",
   "author": "Erwin Wee",
