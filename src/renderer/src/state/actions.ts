@@ -1345,6 +1345,7 @@ export async function fetchRemote(): Promise<void> {
   const repo = store.get().currentRepo;
   if (!repo) return;
   await runOperation('Fetch', () => invoke('git.fetch', repo.path, null));
+  void loadCurrentPullRequest(true);
 }
 
 export async function pull(): Promise<void> {
@@ -1353,6 +1354,7 @@ export async function pull(): Promise<void> {
   const outcome = await runOperation('Pull', () => invoke('git.pull', repo.path));
   if (outcome?.status === 'conflicts') reportOutcome(outcome, 'Pull');
   else if (outcome?.status === 'complete') showToast({ kind: 'success', title: 'Pulled latest changes' });
+  void loadCurrentPullRequest(true);
 }
 
 export async function push(force = false): Promise<void> {
