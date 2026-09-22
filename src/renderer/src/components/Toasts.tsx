@@ -1,4 +1,5 @@
 import React from 'react';
+import '../styles/motion.css';
 import * as actions from '../state/actions';
 import { dismissToast, useAppStore } from '../state/store';
 import { Button, Icon, Spinner } from './ui';
@@ -21,7 +22,7 @@ export function Toasts(): React.JSX.Element | null {
         </div>
       ) : null}
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind}`} role="status">
+        <div key={t.id} className={`toast ${t.kind}${t.kind === 'success' && t.title.startsWith('Committed ') ? ' toast-commit-celebrate' : ''}`} role="status">
           <Icon className="toast-icon" name={t.kind === 'success' ? 'check-circle' : t.kind === 'error' ? 'x-circle' : t.kind === 'warning' ? 'alert' : 'info'} />
           <div className="toast-body">
             <strong>{t.title}</strong>

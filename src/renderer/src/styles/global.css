@@ -21,6 +21,7 @@
   --accent-emphasis: #0969da;
   --accent-muted: rgba(84, 174, 255, 0.4);
   --accent-subtle: #ddf4ff;
+  --accent-signature: #b45309;
   --success: #1a7f37;
   --success-emphasis: #1f883d;
   --success-hover: #1a7f37;
@@ -84,6 +85,7 @@
   --accent-emphasis: #1f6feb;
   --accent-muted: rgba(56, 139, 253, 0.4);
   --accent-subtle: rgba(56, 139, 253, 0.15);
+  --accent-signature: #f0a35e;
   --success: #3fb950;
   --success-emphasis: #238636;
   --success-hover: #207b32;
