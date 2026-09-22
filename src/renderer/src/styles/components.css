@@ -1062,3 +1062,59 @@
   margin: 0;
   font-size: 12px;
 }
+
+/* Interaction states */
+.btn:focus-visible,
+.context-menu .item:focus-visible,
+.stash-nav-button:focus-visible,
+.commit-form .coauthor-chip button:focus-visible,
+.segmented button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.btn:active:not(:disabled),
+.context-menu .item:active:not(:disabled),
+.stash-nav-button:active,
+.commit-form .coauthor-chip button:active,
+.segmented button:active {
+  transform: translateY(0.5px);
+}
+.btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-hover) 90%, var(--bg-inset) 10%);
+}
+.btn.primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--success-hover) 90%, var(--bg-inset) 10%);
+}
+.btn.accent:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-emphasis) 90%, var(--bg-inset) 10%);
+  filter: none;
+}
+.btn.danger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--danger-emphasis) 90%, var(--bg-inset) 10%);
+  color: var(--fg-on-emphasis);
+  border-color: var(--danger-emphasis);
+}
+.btn.ghost:active:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-hover) 90%, var(--bg-inset) 10%);
+}
+.btn.link:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-subtle) 90%, var(--bg-inset) 10%);
+}
+.context-menu .item:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-emphasis) 90%, var(--bg-inset) 10%);
+  color: var(--fg-on-emphasis);
+}
+.context-menu .item.danger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--danger-emphasis) 90%, var(--bg-inset) 10%);
+  color: var(--fg-on-emphasis);
+}
+.stash-nav-button:active {
+  background: color-mix(in srgb, var(--bg-hover) 90%, var(--bg-inset) 10%);
+}
+.commit-form .coauthor-chip button:active {
+  background: color-mix(in srgb, var(--accent-subtle) 90%, var(--bg-inset) 10%);
+  border-radius: 3px;
+}
+.segmented button:active {
+  background: color-mix(in srgb, var(--bg-hover) 90%, var(--bg-inset) 10%);
+}
