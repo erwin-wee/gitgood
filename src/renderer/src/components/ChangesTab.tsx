@@ -11,7 +11,7 @@ import { useWindowedRows } from '../lib/windowing';
 
 const SUMMARY_LIMIT = 72;
 
-const FILE_ROW_ESTIMATES = { row: 30 };
+const FILE_ROW_ESTIMATES = { row: 28 };
 
 export function ChangesTab(): React.JSX.Element {
   const status = useAppStore((s) => s.status);
@@ -20,7 +20,6 @@ export function ChangesTab(): React.JSX.Element {
   const partial = useAppStore((s) => s.changes.partial);
   const stashes = useAppStore((s) => s.stashes);
   const focused = useAppStore((s) => s.focused);
-  const ai = useAppStore((s) => s.ai);
   const [filter, setFilter] = useState('');
   const files = status?.files ?? [];
   const visible = useMemo(() => {
@@ -81,8 +80,7 @@ export function ChangesTab(): React.JSX.Element {
   const rows: React.ReactNode[] = [];
   for (let i = win.start; i < win.end; i++) {
     const file = visible[i];
-    const aiState = ai[file.path];
-    rows.push(<FileRow key={file.path} rowRef={win.rowRef(i)} file={file} included={excludedSet.has(file.path) ? false : partial[file.path] ? 'indeterminate' : true} selected={selectedSet.has(file.path)} inactive={!focused} busy={!!aiState && aiState.phase !== 'done' && aiState.phase !== 'error'} onContextMenu={contextMenu} />);
+    rows.push(<FileRow key={file.path} rowRef={win.rowRef(i)} file={file} included={excludedSet.has(file.path) ? false : partial[file.path] ? 'indeterminate' : true} selected={selectedSet.has(file.path)} inactive={!focused} onContextMenu={contextMenu} />);
   }
 
   return (
@@ -112,11 +110,10 @@ export function ChangesTab(): React.JSX.Element {
         {win.bottom > 0 ? <div style={{ height: win.bottom }} /> : null}
       </div>
       {stashes.length ? (
-        <button type="button" className="stash-nav-button" onClick={() => actions.setView('stashes')} title="Open the Stashes view">
-          <Icon name="stash" />
+        <Button className="stash-nav-button" variant="ghost" icon="stash" onClick={() => actions.setView('stashes')} title="Open the Stashes view">
           <span>{stashes.length} stash{stashes.length === 1 ? '' : 'es'}</span>
           <Icon name="chevron-right" size={12} />
-        </button>
+        </Button>
       ) : null}
       <PrecommitFindingsStrip />
       <CommitForm />
@@ -124,24 +121,22 @@ export function ChangesTab(): React.JSX.Element {
   );
 }
 
-const FileRow = memo(function FileRow({ file, included, selected, inactive, busy, rowRef, onContextMenu }: { file: WorkingFile; included: boolean | 'indeterminate'; selected: boolean; inactive: boolean; busy: boolean; rowRef: (el: HTMLElement | null) => void; onContextMenu: (e: React.MouseEvent, file: WorkingFile) => void }): React.JSX.Element {
+const FileRow = memo(function FileRow({ file, included, selected, inactive, rowRef, onContextMenu }: { file: WorkingFile; included: boolean | 'indeterminate'; selected: boolean; inactive: boolean; rowRef: (el: HTMLElement | null) => void; onContextMenu: (e: React.MouseEvent, file: WorkingFile) => void }): React.JSX.Element {
   return (
     <div
       ref={rowRef}
       tabIndex={0}
       role="option"
       aria-selected={selected}
-      className={`file-row ${selected ? 'selected' : ''} ${selected && inactive ? 'inactive' : ''}`}
+      className={'file-row' + (selected ? ' selected' : '') + (selected && inactive ? ' inactive' : '')}
       onClick={(e) => actions.selectWorkingFile(file.path, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })}
       onContextMenu={(e) => onContextMenu(e, file)}
       onDoubleClick={() => void actions.openInEditor(file.path)}
     >
       <Checkbox checked={included} onChange={() => actions.toggleIncluded(file.path)} disabled={!!file.conflict} title={file.conflict ? 'Resolve the conflict before committing' : included === true ? 'Exclude from commit' : 'Include in commit'} />
       <PathLabel path={file.path} />
-      {busy ? <Spinner /> : null}
       {file.conflict ? <span className="badge danger" title={file.conflict.replace(/-/g, ' ')}>conflict</span> : null}
-      {file.lfs ? <Icon name="download" size={12} className="muted" title="Git LFS pointer" /> : null}
-      <span className={`status-icon ${file.status}`} title={file.status === 'renamed' && file.oldPath ? `Renamed from ${file.oldPath}` : statusLabel(file.status)}>
+      <span className={'status-icon ' + file.status} title={file.status === 'renamed' && file.oldPath ? 'Renamed from ' + file.oldPath : statusLabel(file.status)}>
         <Icon name={statusIcon(file.status)} />
       </span>
     </div>
@@ -178,7 +173,7 @@ function PrecommitFindingsStrip(): React.JSX.Element | null {
 
   return (
     <div className={`precommit-strip ${review.expanded ? 'expanded' : ''}`}>
-      <button type="button" className="precommit-strip-header" onClick={() => actions.togglePrecommitReviewStrip()}>
+      <Button variant="ghost" className="precommit-strip-header" onClick={() => actions.togglePrecommitReviewStrip()}>
         <Icon name="sparkle" />
         {review.running ? <Spinner /> : null}
         {counts.blocker ? <span className="finding-count danger" title={`${counts.blocker} blocker${counts.blocker === 1 ? '' : 's'}`}>{counts.blocker}</span> : null}
@@ -187,7 +182,7 @@ function PrecommitFindingsStrip(): React.JSX.Element | null {
         <span className="muted truncate" style={{ flex: 1, textAlign: 'left' }}>{findings.length ? run.summary || `${findings.length} finding${findings.length === 1 ? '' : 's'}` : `No issues found in ${reviewedFiles} file${reviewedFiles === 1 ? '' : 's'}`}</span>
         {staleCount ? <span className="badge attention" title="Some reviewed files changed since this run">{staleCount} stale</span> : null}
         <Icon name={review.expanded ? 'chevron-down' : 'chevron-right'} size={12} />
-      </button>
+      </Button>
       {review.expanded ? (
         <div className="precommit-strip-body">
           {findings.map((f) => (
@@ -217,7 +212,7 @@ function PrecommitFindingRow({ finding, stale, active }: { finding: ReviewFindin
           {stale ? ' · stale' : ''}
         </span>
       </span>
-      <Button size="sm" variant="ghost" iconOnly icon="x" title="Dismiss" onClick={(e) => { e.stopPropagation(); void actions.dismissPrecommitFinding(finding); }} />
+      <Button size="sm" variant="ghost" iconOnly icon="x" title="Dismiss" aria-label="Dismiss finding" onClick={(e) => { e.stopPropagation(); void actions.dismissPrecommitFinding(finding); }} />
     </div>
   );
 }
@@ -226,13 +221,6 @@ export function CommitFileRow({ file, selected, onSelect, onContextMenu }: { fil
   return (
     <div tabIndex={0} role="option" aria-selected={selected} className={`file-row ${selected ? 'selected' : ''}`} onClick={onSelect} onContextMenu={onContextMenu}>
       <PathLabel path={file.path} />
-      {file.lfs ? <Icon name="download" size={12} className="muted" title="Git LFS pointer" /> : null}
-      {file.additions !== null || file.deletions !== null ? (
-        <span className="stats">
-          {file.additions ? <span className="stat-add">+{file.additions}</span> : null}
-          {file.deletions ? <span className="stat-del">−{file.deletions}</span> : null}
-        </span>
-      ) : null}
       <span className={`status-icon ${file.status}`} title={file.status === 'renamed' && file.oldPath ? `Renamed from ${file.oldPath}` : statusLabel(file.status)}>
         <Icon name={statusIcon(file.status)} />
       </span>
@@ -341,9 +329,7 @@ function CommitForm(): React.JSX.Element {
           {changes.coAuthors.map((a) => (
             <span key={a.email} className="coauthor-chip" title={a.email}>
               {a.name}
-              <button type="button" onClick={() => patchChanges((c) => ({ coAuthors: c.coAuthors.filter((x) => x.email !== a.email) }))} title="Remove">
-                <Icon name="x" size={12} />
-              </button>
+              <Button size="sm" variant="ghost" iconOnly icon="x" onClick={() => patchChanges((c) => ({ coAuthors: c.coAuthors.filter((x) => x.email !== a.email) }))} title="Remove co-author" aria-label="Remove co-author" />
             </span>
           ))}
           <input
@@ -366,15 +352,16 @@ function CommitForm(): React.JSX.Element {
           <Button variant="ghost" size="sm" icon="person" title={changes.showCoAuthors ? 'Remove co-authors' : 'Add co-authors'} onClick={() => patchChanges((c) => ({ showCoAuthors: !c.showCoAuthors }))} />
           {willSign ? <Icon name="lock" size={14} className="muted" title="Commits are signed" /> : null}
           {settings?.ai.provider !== 'disabled' ? (
-            <Button variant="ghost" iconOnly icon="sparkle" className="sparkle" loading={aiCommitBusy} title="Generate commit message with AI" onClick={() => void actions.generateCommitMessage()} disabled={included.length === 0 || changes.committing} />
+            <Button variant="ghost" iconOnly icon="sparkle" className="sparkle" loading={aiCommitBusy} title="Generate commit message with AI" aria-label="Generate commit message with AI" onClick={() => void actions.generateCommitMessage()} disabled={included.length === 0 || changes.committing} />
           ) : null}
           {settings?.ai.provider !== 'disabled' ? (
-            <Button variant="ghost" iconOnly icon="eye" loading={precommitReview.running} title="Review changes with AI before committing" onClick={() => void actions.reviewChangesBeforeCommit()} disabled={included.length === 0 || changes.committing} />
+            <Button variant="ghost" iconOnly icon="eye" loading={precommitReview.running} title="Review changes with AI before committing" aria-label="Review changes with AI before committing" onClick={() => void actions.reviewChangesBeforeCommit()} disabled={included.length === 0 || changes.committing} />
           ) : null}
           {actions.splitEntryVisible() ? (
             <Button
               variant="ghost"
               iconOnly
+              aria-label="More AI actions"
               icon="kebab"
               title="More AI actions"
               disabled={changes.committing}
