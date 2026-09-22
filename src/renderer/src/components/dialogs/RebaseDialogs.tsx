@@ -3,7 +3,7 @@ import type { RebasePlan, RebasePlanAction, RebasePlanRow } from '@shared/types'
 import * as actions from '../../state/actions';
 import { useAppStore } from '../../state/store';
 import { Badge, Button, Callout, Dialog, Icon, Spinner, TextField } from '../ui';
-
+import { HelpPopover } from '../HelpPopover';
 const DND_ROW = 'application/x-gitgood-rebase-row';
 
 const ACTION_LABELS: Record<RebasePlanAction, string> = { pick: 'Pick', squash: 'Squash into', reword: 'Reword', drop: 'Drop' };
@@ -177,9 +177,8 @@ export function TidyBranchDialog(): React.JSX.Element {
       ) : null}
     </>
   );
-
   return (
-    <Dialog title="Tidy up branch with AI" icon="sparkle" onClose={() => actions.closeRebaseDialog()} dismissible={!applying} width="xwide" footer={footer}>
+    <Dialog title={<span className="dialog-title-with-help"><span>Tidy up branch with AI</span><HelpPopover title="What tidy changes" explanation="Tidy proposes a cleaner history by squashing fixups, rewording messages, and dropping empty commits." note="Rewriting changes commit IDs and may require a force push for published work. Reset all or close before Apply to recover." /></span>} icon="sparkle" onClose={() => actions.closeRebaseDialog()} dismissible={!applying} width="xwide" footer={footer}>
       {!plan ? <PreflightCard /> : null}
       {planLoading ? <p style={{ marginTop: 10 }}><Spinner /> Proposing a cleanup…</p> : null}
       {plan && alreadyTidy ? <Callout tone="info">This branch already looks tidy: every commit stays as-is, in order.</Callout> : null}

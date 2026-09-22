@@ -3,15 +3,15 @@ import { parseConflicts } from '@shared/diff/conflicts';
 import * as actions from '../../state/actions';
 import { closeDialog, useAppStore } from '../../state/store';
 import { Button, Callout, Dialog } from '../ui';
-
+import { HelpPopover } from '../HelpPopover';
 /** Collapsible read-only excerpt of one side of the original conflict block. */
 function SideExcerpt({ label, lines }: { label: string; lines: string[] }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   return (
     <div className="resolution-side">
-      <button type="button" className="resolution-side-toggle" onClick={() => setOpen((v) => !v)}>
-        {open ? '▾' : '▸'} {label} ({lines.length} line{lines.length === 1 ? '' : 's'})
-      </button>
+      <Button variant="ghost" size="sm" className="resolution-side-toggle" icon={open ? 'chevron-down' : 'chevron-right'} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {label} ({lines.length} line{lines.length === 1 ? '' : 's'})
+      </Button>
       {open ? <pre className="details-block">{lines.join('\n') || '(empty)'}</pre> : null}
     </div>
   );
@@ -37,7 +37,7 @@ export function ResolutionPopoverDialog({ path, blockId }: { path: string; block
 
   return (
     <Dialog
-      title={`Conflict ${blockId} in ${path}`}
+      title={<span className="dialog-title-with-help"><span>Conflict {blockId} in {path}</span><HelpPopover title="Ours and theirs" explanation="Ours is the version from your current branch. Theirs is the incoming version from the branch or commit being merged." note="If neither side is clearly right, edit the file and keep only the intended result before marking the conflict resolved." /></span>}
       icon="sparkle"
       onClose={closeDialog}
       footer={

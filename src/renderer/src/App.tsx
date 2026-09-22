@@ -7,6 +7,7 @@ import { Dialogs } from './components/dialogs';
 import { DiffPane } from './components/diff/DiffPane';
 import { HealthView } from './components/HealthView';
 import { CommitDetailsPane, HistoryTab } from './components/HistoryTab';
+import { HelpPanel } from './components/HelpPanel';
 import { InboxPanel } from './components/Inbox';
 import { SetupScreen } from './components/Setup';
 import { StashesView } from './components/StashesTab';
@@ -147,6 +148,7 @@ export function App(): React.JSX.Element {
       {showReviewDiff ? <PortalDiff target="review-diff-slot" path={reviewPath} oldPath={reviewFile?.oldPath ?? null} status={reviewFile?.status ?? null} mode="review" /> : null}
       {repo && !reviewOpen && view === 'history' && showCommitDiff ? <PortalDiff target="commit-diff-slot" path={historySelectedFile} oldPath={commitDiffFile?.oldPath ?? null} status={commitDiffFile?.status ?? null} mode="commit" /> : null}
       <Dialogs />
+      <HelpPanel />
       <InboxPanel />
       <Toasts />
       <ContextMenuHost />

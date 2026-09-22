@@ -26,16 +26,19 @@ export function Welcome(): React.JSX.Element {
             <Icon name="download" size={20} />
             <strong>Clone a repository</strong>
             <span>From GitHub.com or any URL</span>
+            <span className="welcome-action-hint">Use this when the project lives online.</span>
           </button>
           <button type="button" className="welcome-action" onClick={() => openDialog({ kind: 'new-repo' })}>
             <Icon name="plus" size={20} />
             <strong>Create a new repository</strong>
             <span>Start fresh on your hard drive</span>
+            <span className="welcome-action-hint">Use this for a brand-new project.</span>
           </button>
           <button type="button" className="welcome-action" onClick={() => openDialog({ kind: 'add-repo' })}>
             <Icon name="folder" size={20} />
             <strong>Add an existing repository</strong>
             <span>Pick a folder that already has a .git directory</span>
+            <span className="welcome-action-hint">Use this for a project already on your computer.</span>
           </button>
         </div>
         {!account ? (

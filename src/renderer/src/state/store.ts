@@ -401,6 +401,7 @@ export interface AppState {
   settings: AppSettings | null;
   tools: ToolsState | null;
   dark: boolean;
+  helpOpen: boolean;
   repos: RepositoryInfo[];
   currentRepo: RepositoryInfo | null;
   status: RepositoryStatus | null;
@@ -494,6 +495,7 @@ const initialState: AppState = {
   settings: null,
   tools: null,
   dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+  helpOpen: false,
   repos: [],
   currentRepo: null,
   status: null,

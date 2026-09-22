@@ -4,6 +4,7 @@ import { errorMessage, invoke } from '../../api';
 import * as actions from '../../state/actions';
 import { useAppStore } from '../../state/store';
 import { Badge, Button, Callout, Dialog, Icon, PathLabel, Spinner } from '../ui';
+import { HelpPopover } from '../HelpPopover';
 import { TextDiff } from '../diff/TextDiff';
 
 const DND_HUNK = 'application/x-gitgood-split-hunk';
@@ -314,9 +315,8 @@ export function SplitPlanDialog(): React.JSX.Element {
       ) : null}
     </>
   );
-
   return (
-    <Dialog title="Split into commits with AI" icon="sparkle" onClose={() => actions.closeSplitDialog()} dismissible={!applying} width="xwide" footer={footer}>
+    <Dialog title={<span className="dialog-title-with-help"><span>Split into commits with AI</span><HelpPopover title="How splitting works" explanation="AI groups related hunks into an ordered set of commits. You review and edit that plan before anything changes." note="Split needs Claude configured in Settings → AI. Nothing is applied until Apply; close the dialog before Apply to undo the proposal." /></span>} icon="sparkle" onClose={() => actions.closeSplitDialog()} dismissible={!applying} width="xwide" footer={footer}>
       {!plan ? <PreflightCard /> : null}
       {planLoading ? (
         <p style={{ marginTop: 10 }}>
