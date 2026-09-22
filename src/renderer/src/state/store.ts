@@ -131,6 +131,8 @@ export interface HistoryState {
   error: string | null;
   /** Set when the most recent commit-details load failed; cleared on the next successful load and when a new load starts. */
   detailsError: string | null;
+  /** Set when refs changed (commit/branch move) while the History tab was not the active view, so switching back reloads instead of showing a cached list. */
+  stale: boolean;
 }
 
 export interface ReviewState {
@@ -484,7 +486,7 @@ export const initialChanges: ChangesState = {
 
 export const initialStashesView: StashesViewState = { loading: false, selectedSha: null, files: [], filesLoading: false, selectedFile: null };
 
-export const initialHistory: HistoryState = { commits: [], hasMore: false, loading: false, search: '', query: EMPTY_HISTORY_QUERY, freeText: '', queryError: null, slowSearch: false, selectedShas: [], details: null, detailsLoading: false, selectedFile: null, matchingFiles: null, dragging: null, path: null, pathHistory: null, error: null, detailsError: null };
+export const initialHistory: HistoryState = { commits: [], hasMore: false, loading: false, search: '', query: EMPTY_HISTORY_QUERY, freeText: '', queryError: null, slowSearch: false, selectedShas: [], details: null, detailsLoading: false, selectedFile: null, matchingFiles: null, dragging: null, path: null, pathHistory: null, error: null, detailsError: null, stale: false };
 
 export const initialDiff: DiffState = { key: null, diff: null, loading: false, error: null, selectedLines: null, blameOn: false, blame: null, blameLoading: false, activeBlameId: null, highlightTerm: null };
 

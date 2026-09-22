@@ -193,6 +193,7 @@ async function handleRepoChanged(reason: 'worktree' | 'refs' | 'both'): Promise<
   if (reason !== 'worktree') {
     await Promise.all([refreshBranches(), refreshStashes()]);
     if (store.get().view === 'history') await loadHistory(true);
+    else patchHistory({ stale: true });
   }
   await loadDiff(true);
   if (store.get().precommitReview.run) void refreshPrecommitStaleness();
@@ -760,7 +761,7 @@ export function setView(view: View): void {
   store.set({ view });
   if (view === 'history') {
     const h = store.get().history;
-    if (!h.commits.length) void loadHistory(true);
+    if (!h.commits.length || h.stale) void loadHistory(true);
     else if (!h.selectedShas.length) selectCommit(h.commits[0].sha);
   } else if (view === 'stashes') {
     void loadStashesView();
@@ -931,7 +932,7 @@ export async function loadHistory(reset: boolean): Promise<void> {
     if (store.get().currentRepo?.path !== repo.path) return;
     const commits = reset ? page.commits : [...h.commits, ...page.commits];
     const stillSelected = store.get().history.selectedShas.filter((sha) => commits.some((c) => c.sha === sha));
-    patchHistory({ commits, hasMore: page.hasMore, loading: false, slowSearch: false, error: null, selectedShas: stillSelected, details: stillSelected.length === 1 ? store.get().history.details : null });
+    patchHistory({ commits, hasMore: page.hasMore, loading: false, slowSearch: false, error: null, selectedShas: stillSelected, details: stillSelected.length === 1 ? store.get().history.details : null, stale: store.get().history.stale && !(reset && h.stale) });
     if (store.get().view === 'history' && stillSelected.length === 0 && commits.length) selectCommit(commits[0].sha);
     else if (stillSelected.length === 1 && reset) void loadCommitDetails(stillSelected[0]);
   } catch (err) {
@@ -1344,6 +1345,7 @@ export async function fetchRemote(): Promise<void> {
   const repo = store.get().currentRepo;
   if (!repo) return;
   await runOperation('Fetch', () => invoke('git.fetch', repo.path, null));
+  void loadCurrentPullRequest(true);
 }
 
 export async function pull(): Promise<void> {
@@ -1352,6 +1354,7 @@ export async function pull(): Promise<void> {
   const outcome = await runOperation('Pull', () => invoke('git.pull', repo.path));
   if (outcome?.status === 'conflicts') reportOutcome(outcome, 'Pull');
   else if (outcome?.status === 'complete') showToast({ kind: 'success', title: 'Pulled latest changes' });
+  void loadCurrentPullRequest(true);
 }
 
 export async function push(force = false): Promise<void> {
