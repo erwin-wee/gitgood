@@ -4,7 +4,7 @@ import { errorMessage, invoke, isMac, modKey, on } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type SettingsTab } from '../../state/store';
 import { AGENT_PRESETS, agentTemplate, validateAgentTemplate } from '@shared/agent-presets';
-import { Avatar, Button, Callout, Checkbox, Dialog, Icon, Spinner, TextField, type IconName } from '../ui';
+import { Avatar, Button, Callout, Checkbox, Dialog, FilterInput, Icon, Spinner, TextField, type IconName } from '../ui';
 import { LinkifiedText } from './IssueDialogs';
 import { SettingsSyncCard } from './SettingsSyncDialogs';
 
@@ -986,58 +986,78 @@ export function UpdateNotesDialog({ version, notes, url }: { version: string; no
 
 export function ShortcutsDialog(): React.JSX.Element {
   const m = modKey;
-  const rows: [string, string][] = [
-    ['New repository', `${m}+N`],
-    ['Add local repository', `${m}+O`],
-    ['Clone repository', `${m}+Shift+O`],
-    ['Options', `${m}+,`],
-    ['Ask GitGood (command palette)', `${m}+K`],
-    ['Show Changes', `${m}+1`],
-    ['Show History', `${m}+2`],
-    ['Show Stashes', `${m}+Shift+S`],
-    ['Repository health', `${m}+Shift+K`],
-    ['Repository list', `${m}+T`],
-    ['Branch list', `${m}+B`],
-    ['Notifications inbox', `${m}+Shift+J`],
-    ['Go to commit summary', `${m}+G`],
-    ['Commit', `${m}+Enter`],
-    ['Toggle split diff', `${m}+Shift+D`],
-    ['Toggle blame', 'Alt+B'],
-    ['Push', `${m}+P`],
-    ['Pull', `${m}+Shift+P`],
-    ['Fetch', `${m}+Shift+T`],
-    ['New branch', `${m}+Shift+N`],
-    ['Merge into current branch', `${m}+Shift+M`],
-    ['Rebase current branch', `${m}+Shift+E`],
-    ['Update from default branch', `${m}+Shift+U`],
-    ['Create pull request', `${m}+R`],
-    ['Review pull request with AI', `${m}+Shift+R`],
-    ['View on GitHub', `${m}+Shift+G`],
-    ['Open in terminal', 'Ctrl+`'],
-    ['Show in folder', `${m}+Shift+F`],
-    ['Open in external editor', `${m}+Shift+A`],
-    ['Discard all changes', `${m}+Shift+Backspace`],
-    ['Zoom in / out / reset', `${m}+= / ${m}+- / ${m}+0`],
+  const categories = ['Navigation', 'Editing', 'AI', 'Git ops', 'View'] as const;
+  type ShortcutCategory = (typeof categories)[number];
+  const rows: { category: ShortcutCategory; label: string; keys: string }[] = [
+    { category: 'Git ops', label: 'New repository', keys: `${m}+N` },
+    { category: 'Git ops', label: 'Add local repository', keys: `${m}+O` },
+    { category: 'Git ops', label: 'Clone repository', keys: `${m}+Shift+O` },
+    { category: 'View', label: 'Options', keys: `${m}+,` },
+    { category: 'AI', label: 'Ask GitGood (command palette)', keys: `${m}+K` },
+    { category: 'Navigation', label: 'Show Changes', keys: `${m}+1` },
+    { category: 'Navigation', label: 'Show History', keys: `${m}+2` },
+    { category: 'Navigation', label: 'Show Stashes', keys: `${m}+Shift+S` },
+    { category: 'Navigation', label: 'Repository health', keys: `${m}+Shift+K` },
+    { category: 'Navigation', label: 'Repository list', keys: `${m}+T` },
+    { category: 'Navigation', label: 'Branch list', keys: `${m}+B` },
+    { category: 'Navigation', label: 'Notifications inbox', keys: `${m}+Shift+J` },
+    { category: 'Navigation', label: 'Go to commit summary', keys: `${m}+G` },
+    { category: 'Editing', label: 'Commit', keys: `${m}+Enter` },
+    { category: 'View', label: 'Toggle split diff', keys: `${m}+Shift+D` },
+    { category: 'View', label: 'Toggle blame', keys: 'Alt+B' },
+    { category: 'Git ops', label: 'Push', keys: `${m}+P` },
+    { category: 'Git ops', label: 'Pull', keys: `${m}+Shift+P` },
+    { category: 'Git ops', label: 'Fetch', keys: `${m}+Shift+T` },
+    { category: 'Git ops', label: 'New branch', keys: `${m}+Shift+N` },
+    { category: 'Git ops', label: 'Merge into current branch', keys: `${m}+Shift+M` },
+    { category: 'Git ops', label: 'Rebase current branch', keys: `${m}+Shift+E` },
+    { category: 'Git ops', label: 'Update from default branch', keys: `${m}+Shift+U` },
+    { category: 'Git ops', label: 'Create pull request', keys: `${m}+R` },
+    { category: 'AI', label: 'Review pull request with AI', keys: `${m}+Shift+R` },
+    { category: 'Git ops', label: 'View on GitHub', keys: `${m}+Shift+G` },
+    { category: 'Navigation', label: 'Open in terminal', keys: 'Ctrl+`' },
+    { category: 'Navigation', label: 'Show in folder', keys: `${m}+Shift+F` },
+    { category: 'Navigation', label: 'Open in external editor', keys: `${m}+Shift+A` },
+    { category: 'Editing', label: 'Discard all changes', keys: `${m}+Shift+Backspace` },
+    { category: 'View', label: 'Zoom in / out / reset', keys: `${m}+= / ${m}+- / ${m}+0` },
   ];
+  const [query, setQuery] = useState('');
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const filteredRows = rows.filter(({ category, label, keys }) => {
+    const haystack = `${category} ${label} ${keys}`.toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
   return (
     <Dialog title="Keyboard shortcuts" icon="info" onClose={closeDialog} footer={<Button variant="primary" onClick={closeDialog}>Close</Button>}>
-      <table className="shortcut-table">
-        <tbody>
-          {rows.map(([label, keys]) => (
-            <tr key={label}>
-              <td>{label}</td>
-              <td>
-                {keys.split(' / ').map((k, i) => (
-                  <span key={i}>
-                    {i > 0 ? ' / ' : ''}
-                    <kbd>{k}</kbd>
-                  </span>
+      <FilterInput value={query} onChange={setQuery} placeholder="Filter shortcuts" label="Filter keyboard shortcuts" autoFocus />
+      {categories.map((category) => {
+        const categoryRows = filteredRows.filter((row) => row.category === category);
+        if (categoryRows.length === 0) return null;
+        const headingId = `shortcut-category-${category.toLowerCase().replace(/ /g, '-')}`;
+        return (
+          <section key={category} aria-labelledby={headingId}>
+            <h3 id={headingId} style={{ margin: '14px 0 4px', fontSize: 12 }}>{category}</h3>
+            <table className="shortcut-table">
+              <tbody>
+                {categoryRows.map(({ label, keys }) => (
+                  <tr key={label}>
+                    <td>{label}</td>
+                    <td>
+                      {keys.split(' / ').map((k, i) => (
+                        <span key={i}>
+                          {i > 0 ? ' / ' : ''}
+                          <kbd>{k}</kbd>
+                        </span>
+                      ))}
+                    </td>
+                  </tr>
                 ))}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </tbody>
+            </table>
+          </section>
+        );
+      })}
+      {filteredRows.length === 0 ? <p className="muted" style={{ marginTop: 12 }}>No matching shortcuts.</p> : null}
     </Dialog>
   );
 }

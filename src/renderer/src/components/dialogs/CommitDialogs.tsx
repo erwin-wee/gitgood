@@ -3,6 +3,7 @@ import type { Commit, ErrorFix, GitErrorInfo } from '@shared/types';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, useAppStore } from '../../state/store';
 import { Button, Callout, Checkbox, Dialog, Spinner, TextField } from '../ui';
+import { DISCARD_CHANGES_BODY, DISCARD_CHANGES_TITLE } from '../../state/strings';
 
 /** Codes with their own dedicated recovery flow elsewhere; the "Explain with AI" row never shows for them. */
 const DEDICATED_FLOW_CODES = new Set<GitErrorInfo['code']>(['conflicts', 'gh-not-authenticated', 'ai-not-configured', 'cancelled']);
@@ -107,11 +108,9 @@ export function DiscardDialog({ paths, all }: { paths: string[]; all: boolean })
   const settings = useAppStore((s) => s.settings);
   const [dontAsk, setDontAsk] = useState(false);
   const trash = settings?.confirmDiscardChangesPermanently !== false;
-  const platform = window.gitgoodBridge.platform;
-  const binName = platform === 'win32' ? 'Recycle Bin' : 'Trash';
   return (
     <Dialog
-      title={all ? 'Discard all changes?' : paths.length === 1 ? 'Discard changes?' : `Discard ${paths.length} changes?`}
+      title={DISCARD_CHANGES_TITLE}
       icon="trash"
       onClose={closeDialog}
       footer={
@@ -129,6 +128,7 @@ export function DiscardDialog({ paths, all }: { paths: string[]; all: boolean })
         </>
       }
     >
+      <p style={{ marginBottom: 8 }}><strong>{trash ? DISCARD_CHANGES_BODY : 'Changes are discarded permanently.'}</strong></p>
       <p>{all ? 'Are you sure you want to discard all changes in this repository?' : paths.length === 1 ? <>Are you sure you want to discard all changes to <strong>{paths[0]}</strong>?</> : 'Are you sure you want to discard changes to the following files?'}</p>
       {!all && paths.length > 1 ? (
         <div className="file-preview-list">
@@ -138,7 +138,6 @@ export function DiscardDialog({ paths, all }: { paths: string[]; all: boolean })
           {paths.length > 20 ? <div className="muted">…and {paths.length - 20} more</div> : null}
         </div>
       ) : null}
-      <p className="muted" style={{ fontSize: 12 }}>{trash ? `Changed files are moved to the ${binName} so you can recover them if needed.` : 'Changes are discarded permanently.'}</p>
       <Checkbox checked={dontAsk} onChange={setDontAsk} label="Do not show this message again" />
     </Dialog>
   );

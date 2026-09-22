@@ -171,21 +171,22 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
                 value={viewMode}
                 onChange={(v) => void actions.updateSettings({ diffViewMode: v })}
                 options={[
-                  { value: 'unified', label: <Icon name="rows" size={14} />, title: 'Unified view' },
-                  { value: 'split', label: <Icon name="columns" size={14} />, title: 'Split view' },
+                  { value: 'unified', label: <span aria-label="Unified diff view"><Icon name="rows" size={14} /></span>, title: 'Unified view' },
+                  { value: 'split', label: <span aria-label="Split diff view"><Icon name="columns" size={14} /></span>, title: 'Split view' },
                 ]}
               />
-              <Button variant={hideWhitespace ? 'accent' : 'ghost'} size="sm" iconOnly icon="eye" title={hideWhitespace ? 'Showing diff without whitespace changes (line selection disabled)' : 'Hide whitespace changes'} onClick={() => void actions.updateSettings({ diffHideWhitespace: !hideWhitespace })} />
-              <Button variant={wrap ? 'accent' : 'ghost'} size="sm" iconOnly icon="wrap" title={wrap ? 'Disable line wrapping' : 'Wrap long lines'} onClick={() => void actions.updateSettings({ diffWrapLines: !wrap })} />
+              <Button variant={hideWhitespace ? 'accent' : 'ghost'} size="sm" iconOnly icon="eye" aria-label={hideWhitespace ? 'Show whitespace changes' : 'Hide whitespace changes'} title={hideWhitespace ? 'Showing diff without whitespace changes (line selection disabled)' : 'Hide whitespace changes'} onClick={() => void actions.updateSettings({ diffHideWhitespace: !hideWhitespace })} />
+              <Button variant={wrap ? 'accent' : 'ghost'} size="sm" iconOnly icon="wrap" aria-label={wrap ? 'Disable line wrapping' : 'Enable line wrapping'} title={wrap ? 'Disable line wrapping' : 'Wrap long lines'} onClick={() => void actions.updateSettings({ diffWrapLines: !wrap })} />
             </>
           ) : null}
-          {blameEligibleMode ? <Button variant={diffState.blameOn ? 'accent' : 'ghost'} size="sm" iconOnly icon="person" loading={diffState.blameOn && diffState.blameLoading} title={blameTitle} disabled={blameDisabled} onClick={() => actions.toggleBlame()} /> : null}
+          {blameEligibleMode ? <Button variant={diffState.blameOn ? 'accent' : 'ghost'} size="sm" iconOnly icon="person" aria-label={diffState.blameOn ? 'Hide blame' : 'Toggle blame'} loading={diffState.blameOn && diffState.blameLoading} title={blameTitle} disabled={blameDisabled} onClick={() => actions.toggleBlame()} /> : null}
           {explainEligibleMode && aiExplainEnabled ? (
             <Button
               variant={explain.open ? 'accent' : 'ghost'}
               size="sm"
               iconOnly
               icon="sparkle"
+              aria-label="Explain with AI"
               title={explainNotActionable ? `Nothing to explain (${explainReason ?? 'not a text diff'})` : 'Explain this file'}
               disabled={explainNotActionable}
               onClick={() => actions.explainCurrentFile()}
@@ -196,6 +197,7 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
             size="sm"
             iconOnly
             icon="kebab"
+            aria-label="More diff options"
             title="More"
             onClick={(e) =>
               openContextMenu(e, [
