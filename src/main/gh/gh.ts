@@ -42,14 +42,16 @@ interface RawPr {
   labels?: { name: string }[];
   assignees?: { login: string }[];
   reviewRequests?: { login?: string; name?: string }[];
-  commits?: unknown[];
   files?: { path?: string; additions?: number; deletions?: number }[];
   reviews?: unknown[];
   latestReviews?: { author?: { login?: string }; state?: string }[];
   comments?: unknown[];
 }
 
-const PR_FIELDS = 'number,title,url,author,headRefName,baseRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,isDraft,state,createdAt,updatedAt,statusCheckRollup,reviewDecision,body,additions,deletions,changedFiles,mergeable,mergeStateStatus,labels,assignees,reviewRequests,commits,files,reviews,latestReviews,comments';
+// Bulk list (up to 100 PRs) must stay under GitHub's GraphQL cost limits: no `commits` (nested authors: 100×100×100 nodes, over the
+// 500k cap) and no mergeability (computed per PR on demand; times out on repos with many open PRs). Single-PR calls add mergeability back.
+const PR_LIST_FIELDS = 'number,title,url,author,headRefName,baseRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,isDraft,state,createdAt,updatedAt,statusCheckRollup,reviewDecision,body,additions,deletions,changedFiles,labels,assignees,reviewRequests,files,reviews,latestReviews,comments';
+const PR_FIELDS = `${PR_LIST_FIELDS},mergeable,mergeStateStatus`;
 
 const ISSUE_FIELDS = 'number,title,url,state,author,labels,assignees,milestone,createdAt,updatedAt,comments,body';
 
@@ -174,7 +176,6 @@ export function toPullRequest(raw: RawPr): PullRequest {
     labels: (raw.labels ?? []).map((l) => l.name),
     assignees: (raw.assignees ?? []).map((a) => a.login),
     reviewRequests: (raw.reviewRequests ?? []).map((r) => r.login ?? r.name ?? '').filter(Boolean),
-    commitsCount: Array.isArray(raw.commits) ? raw.commits.length : 0,
     filesChanged: (raw.files ?? []).filter((f) => f.path).map((f) => ({ path: f.path!, additions: f.additions ?? 0, deletions: f.deletions ?? 0 })),
     reviewsCount: Array.isArray(raw.reviews) ? raw.reviews.length : 0,
     latestReviews: (raw.latestReviews ?? []).map((r) => ({ author: r.author?.login ?? 'unknown', state: r.state ?? '' })),
@@ -485,7 +486,7 @@ export class GhClient {
   // ---------- pull requests ----------
 
   async prList(ref: GitHubRepoRef, state: 'open' | 'closed' | 'merged' | 'all'): Promise<PullRequest[]> {
-    const raw = await this.json<RawPr[]>(['pr', 'list', '--repo', repoSelector(ref), '--state', state, '--limit', '100', '--json', PR_FIELDS], { timeoutMs: 120000 });
+    const raw = await this.json<RawPr[]>(['pr', 'list', '--repo', repoSelector(ref), '--state', state, '--limit', '100', '--json', PR_LIST_FIELDS], { timeoutMs: 120000 });
     return (raw ?? []).map(toPullRequest);
   }
 

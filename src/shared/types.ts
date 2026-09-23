@@ -683,8 +683,6 @@ export interface PullRequest {
   labels: string[];
   assignees: string[];
   reviewRequests: string[];
-  /** Number of commits in the pull request. */
-  commitsCount: number;
   /** Per-file addition/deletion counts, as reported by `gh pr list`'s `files` field. */
   filesChanged: { path: string; additions: number; deletions: number }[];
   /** Total number of reviews left on the pull request (including stale ones superseded by a later review). */

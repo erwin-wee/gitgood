@@ -347,17 +347,15 @@ describe('pull request list parsing (triage fields)', () => {
     updatedAt: '2026-01-02T00:00:00Z',
   };
 
-  it('parses commit/review/comment counts, latest reviews and file stats', () => {
+  it('parses review/comment counts, latest reviews and file stats', () => {
     const pr = toPullRequest({
       ...baseRaw,
-      commits: [{ oid: '1' }, { oid: '2' }],
       files: [{ path: 'src/a.ts', additions: 3, deletions: 1 }, { path: '', additions: 1, deletions: 0 }],
       reviews: [{ author: { login: 'reviewer1' }, state: 'COMMENTED' }, { author: { login: 'reviewer1' }, state: 'APPROVED' }],
       latestReviews: [{ author: { login: 'reviewer1' }, state: 'APPROVED' }],
       comments: [{ author: { login: 'hubot' }, body: 'ping' }],
     });
     expect(pr.headSha).toBe('abc123');
-    expect(pr.commitsCount).toBe(2);
     expect(pr.filesChanged).toEqual([{ path: 'src/a.ts', additions: 3, deletions: 1 }]);
     expect(pr.reviewsCount).toBe(2);
     expect(pr.latestReviews).toEqual([{ author: 'reviewer1', state: 'APPROVED' }]);
@@ -366,7 +364,6 @@ describe('pull request list parsing (triage fields)', () => {
 
   it('defaults every triage field to empty/zero when gh omits them', () => {
     const pr = toPullRequest({ ...baseRaw });
-    expect(pr.commitsCount).toBe(0);
     expect(pr.filesChanged).toEqual([]);
     expect(pr.reviewsCount).toBe(0);
     expect(pr.latestReviews).toEqual([]);
