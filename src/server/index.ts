@@ -16,6 +16,7 @@ import { ReviewService } from '../main/ai/review';
 import { SplitterService } from '../main/ai/splitter';
 import { TriageService } from '../main/ai/triage';
 import { EventBus } from '../main/core/bus';
+import { clientContext } from '../main/core/client-context';
 import { createHandlers, type HandlerDeps } from '../main/core/handlers';
 import { GitClient } from '../main/git/git';
 import { GhClient } from '../main/gh/gh';
@@ -30,9 +31,9 @@ import { Store } from '../main/store';
 import { ToolLocator } from '../main/tools';
 import { GhCliReleaseProvider } from '../main/update/github-provider';
 import { Updater } from '../main/update/updater';
-import { auditLine, isMutating, KeyedMutex, mutationKey, RateLimiter } from './limits';
+import { auditLine, isMutating, KeyedMutex, locksRepo, mutationKey, RateLimiter } from './limits';
 import { loadServerConfig, type ServerConfig } from './config';
-import { hostOk, identityOk, offendingPath, originOk, tokenOk } from './security';
+import { hostOk, identityOk, offendingPath, originOk, pathArgs, tokenOk } from './security';
 import { WebHost } from './web-host';
 import { BRIDGE_TAG, bridgeScript } from './web-bridge';
 import { WsHub } from './ws';
@@ -176,15 +177,17 @@ async function main(): Promise<void> {
     }
   };
 
-  const runInvoke = async (method: string, args: unknown[], clientId: string | null): Promise<IpcResult<unknown>> => {
+  const runInvoke = async (method: string, args: unknown[], clientId: string): Promise<IpcResult<unknown>> => {
     if (method === 'app.listDir') return listDir(typeof args[0] === 'string' ? args[0] : null);
-    const bad = offendingPath(args, allowedRoots());
-    if (bad) return errorResult(`Path "${bad}" is outside the registered repositories.`, 'unsupported');
-    if (!isMutating(method)) return dispatch(method as ApiMethodName, args);
-    // Concurrent mutations to the same repo are serialized so multiple clients can't race git's index/locks.
+    const bad = offendingPath(pathArgs(method, args), allowedRoots());
+    if (bad) return errorResult(`Path "${bad}" is outside the allowed locations.`, 'unsupported');
+    // Per-client state (open repository watcher, in-flight history load) is keyed by this context.
+    const run = () => clientContext.run(clientId, () => dispatch(method as ApiMethodName, args));
+    if (!isMutating(method)) return run();
     const key = mutationKey(method, args);
-    const result = await mutex.run(key, () => dispatch(method as ApiMethodName, args));
-    log.info(auditLine(clientId ?? '', method, key, result.ok));
+    // Concurrent mutations to the same repo are serialized so multiple clients can't race git's index/locks.
+    const result = locksRepo(method) ? await mutex.run(key, run) : await run();
+    log.info(auditLine(clientId, method, key, result.ok));
     return result;
   };
 
@@ -203,7 +206,7 @@ async function main(): Promise<void> {
     }
     if (typeof parsed.method !== 'string') return fail(res, 400, 'Missing "method".');
     const args = Array.isArray(parsed.args) ? parsed.args : [];
-    const clientId = typeof req.headers['x-gitgood-client'] === 'string' ? (req.headers['x-gitgood-client'] as string) : null;
+    const clientId = typeof req.headers['x-gitgood-client'] === 'string' ? req.headers['x-gitgood-client'] : '';
     const result = await runInvoke(parsed.method, args, clientId);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify(result));
   };
@@ -214,7 +217,13 @@ async function main(): Promise<void> {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' }).end(bridgeScript(config.token, process.platform));
       return;
     }
-    const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(url.pathname);
+    } catch {
+      return fail(res, 400, 'Malformed URL.');
+    }
+    const rel = normalize(decoded).replace(/^(\.\.[/\\])+/, '');
     const filePath = resolve(config.rendererDir, `.${rel.startsWith('/') ? rel : `/${rel}`}`);
     // SPA fallback: any non-asset route (and "/") serves the injected index.html.
     if (!filePath.startsWith(resolve(config.rendererDir)) || !existsSync(filePath) || !extname(filePath)) {
@@ -261,7 +270,13 @@ async function main(): Promise<void> {
       socket.destroy();
       return;
     }
-    wsHub.accept(req, socket, () => undefined);
+    const clientId = url.searchParams.get('client') ?? '';
+    wsHub.accept(req, socket, clientId, () => {
+      // A page reconnects within seconds after a network blip; only a client gone for good gives up its watcher.
+      setTimeout(() => {
+        if (!wsHub.has(clientId)) repos.releaseClient(clientId);
+      }, 60_000).unref();
+    });
   });
 
   // A failed bind (e.g. EADDRINUSE) must kill the process, not leave a live-but-deaf server behind.
@@ -299,7 +314,11 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-  process.on('uncaughtException', (err) => log.error('Uncaught exception', err));
+  // State after an uncaught exception is unknown: log it and let systemd (Restart=on-failure) start a clean process.
+  process.on('uncaughtException', (err) => {
+    log.error('Uncaught exception', err);
+    process.exit(1);
+  });
   process.on('unhandledRejection', (reason) => log.error('Unhandled rejection', reason));
 }
 

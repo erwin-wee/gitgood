@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { isInside } from '../main/repo/paths';
 
 /** Reads the persisted bearer token, generating and storing a fresh 256-bit one on first run. */
@@ -88,20 +88,58 @@ export function originOk(req: IncomingMessage): boolean {
   }
 }
 
+/** Methods under `repo.`/`git.`/`gh.`/`ai.` whose first argument is not a repository path. */
+const NO_REPO_ARG = /^(gh\.(auth|repos|orgs|inbox)\.|gh\.(gitignoreTemplates|licenses|avatar)$|ai\.(cancel|test)$)/;
+/** Other methods whose first argument is a filesystem path. */
+const FIRST_ARG_PATH = /^(repos\.(add|watchedFolders\.add|isInWatchedFolder|exclusions\.remove)|app\.(showItemInFolder|openPath|pathExists|isRepository|moveToTrash|openInEditor|openInShell)|settings\.(exportToFile|previewImport|import))$/;
+
+function field(value: unknown, key: string): unknown {
+  return value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;
+}
+
 /**
- * Confines filesystem access to the allowlisted roots. Every absolute-path
- * string argument to an invoke must resolve inside a registered repository or
- * an allowed root; anything else (an unregistered repo path, a scan/enumeration
- * escape) is rejected before the handler runs. Relative arguments (branch
- * names, SHAs, messages, repo-relative file paths) pass through untouched.
+ * The filesystem paths an invoke names, by method signature (`src/shared/ipc.ts`):
+ * repository paths, path parameters and path fields of option objects. Content
+ * arguments (file text, .gitignore lines, comments) are never paths, even when
+ * they start with "/".
  *
- * ponytail: absolute-arg scan, not per-method schemas. If a legitimate absolute
- * arg outside every root ever needs through, gate that method by name instead.
+ * ponytail: a hand-kept table of path positions; a new path-taking method must
+ * be added here. Tool/editor executable paths in settings are not confined,
+ * since /usr/bin is outside every root by design.
  */
-export function offendingPath(args: unknown[], roots: string[]): string | null {
-  for (const arg of args) {
-    if (typeof arg !== 'string' || !isAbsolute(arg)) continue;
-    if (!roots.some((root) => isInside(root, arg))) return arg;
+export function pathArgs(method: string, args: unknown[]): unknown[] {
+  const [first, second] = args;
+  switch (method) {
+    case 'repos.create':
+    case 'repos.clone':
+      return [field(first, 'directory')];
+    case 'git.worktree.add':
+      return [first, field(second, 'path')];
+    case 'git.worktree.remove':
+    case 'git.worktree.lock':
+      return [first, second];
+    case 'app.settings.set': {
+      const folders = field(first, 'watchedFolders');
+      return [field(first, 'defaultCloneDirectory'), ...(Array.isArray(folders) ? folders.map((f) => field(f, 'path')) : [])];
+    }
+  }
+  if (/^(repo|git|gh|ai)\./.test(method) && !NO_REPO_ARG.test(method)) return [first];
+  if (FIRST_ARG_PATH.test(method)) return [first];
+  return [];
+}
+
+/**
+ * Confines filesystem access to the allowlisted roots: each path from
+ * `pathArgs` must be absolute and, once `..` is resolved, inside a root.
+ * Null, undefined and '' mean "no path" (optional repository, unset field) and pass.
+ * Returns the first offending value, or null.
+ */
+export function offendingPath(paths: unknown[], roots: string[]): string | null {
+  for (const p of paths) {
+    if (p === null || p === undefined || p === '') continue;
+    if (typeof p !== 'string' || !isAbsolute(p)) return String(p);
+    const target = resolve(p);
+    if (!roots.some((root) => isInside(resolve(root), target))) return p;
   }
   return null;
 }

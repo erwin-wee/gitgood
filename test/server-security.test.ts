@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import { describe, expect, it } from 'vitest';
-import { hostOk, identityOk, loadOrCreateToken, offendingPath, originOk, safeEqual, tokenOk } from '../src/server/security';
+import { hostOk, identityOk, loadOrCreateToken, offendingPath, originOk, pathArgs, safeEqual, tokenOk } from '../src/server/security';
 
 function req(headers: Record<string, string>, url = '/invoke'): IncomingMessage {
   return { headers, url } as unknown as IncomingMessage;
@@ -11,13 +11,9 @@ function req(headers: Record<string, string>, url = '/invoke'): IncomingMessage 
 
 const root = `${sep}repos${sep}app`;
 
-describe('offendingPath (repo-path confinement)', () => {
-  it('allows an absolute path inside an allowed root', () => {
-    expect(offendingPath([`${root}${sep}src${sep}a.ts`, 'main'], [root])).toBeNull();
-  });
-
-  it('allows the root itself', () => {
-    expect(offendingPath([root], [root])).toBeNull();
+describe('offendingPath (path confinement)', () => {
+  it('allows an absolute path inside an allowed root, and the root itself', () => {
+    expect(offendingPath([`${root}${sep}src${sep}a.ts`, root], [root])).toBeNull();
   });
 
   it('rejects an absolute path outside every root', () => {
@@ -28,8 +24,38 @@ describe('offendingPath (repo-path confinement)', () => {
     expect(offendingPath([`${sep}repos${sep}app-evil`], [root])).toBe(`${sep}repos${sep}app-evil`);
   });
 
-  it('ignores relative arguments (branches, shas, messages)', () => {
-    expect(offendingPath(['feature/x', 'HEAD~3', 'a message'], [root])).toBeNull();
+  it('rejects ".." climbing out of a root', () => {
+    const escape = `${root}${sep}..${sep}..${sep}etc`;
+    expect(offendingPath([escape], [root])).toBe(escape);
+  });
+
+  it('rejects a relative path, which would resolve against the server working directory', () => {
+    expect(offendingPath(['..'], [root])).toBe('..');
+  });
+
+  it('treats null, undefined and empty as no path', () => {
+    expect(offendingPath([null, undefined, ''], [root])).toBeNull();
+  });
+});
+
+describe('pathArgs', () => {
+  it('finds paths inside option objects', () => {
+    expect(pathArgs('repos.create', [{ name: 'x', directory: '/tmp' }])).toEqual(['/tmp']);
+    expect(pathArgs('repos.clone', [{ url: 'u', directory: '/tmp', branch: null }])).toEqual(['/tmp']);
+    expect(pathArgs('git.worktree.add', ['/repos/app', { path: '/tmp/wt' }])).toEqual(['/repos/app', '/tmp/wt']);
+    expect(pathArgs('app.settings.set', [{ defaultCloneDirectory: '/tmp', watchedFolders: [{ path: '/srv' }] }])).toEqual(['/tmp', '/srv']);
+  });
+
+  it('never treats content arguments as paths, even when they start with "/"', () => {
+    expect(pathArgs('repo.writeFile', ['/repos/app', 'a.c', '// header\n'])).toEqual(['/repos/app']);
+    expect(pathArgs('repo.gitignore.write', ['/repos/app', '/node_modules\n'])).toEqual(['/repos/app']);
+    expect(pathArgs('gh.pr.comment', ['/repos/app', 1, '/approve'])).toEqual(['/repos/app']);
+  });
+
+  it('skips methods whose first argument is not a repository', () => {
+    expect(pathArgs('gh.auth.login', ['github.com'])).toEqual([]);
+    expect(pathArgs('gh.avatar', ['me@example.com'])).toEqual([]);
+    expect(pathArgs('repos.remove', ['abc123', true])).toEqual([]);
   });
 });
 

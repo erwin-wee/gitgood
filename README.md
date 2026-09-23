@@ -97,7 +97,7 @@ Environment variables: `GITGOOD_SERVER_PORT` (default `4600`), `GITGOOD_USER_DAT
 
 ### Web-mode differences
 
-Because the browser is not the host machine, desktop-only actions degrade gracefully: **Copy** uses the browser clipboard and **external links** open in a new tab, while **open-in-editor/terminal** are disabled in the browser (they would run on the server's machine) and the folder picker browses the server's allowed locations. Several clients can be connected at once; mutations to the same repository are serialized.
+Because the browser is not the host machine, desktop-only actions degrade gracefully: **Copy** uses the browser clipboard and **external links** open in a new tab, while **open-in-editor/terminal** are disabled in the browser (they would run on the server's machine) and the folder picker browses the server's allowed locations. Anything moved to the trash (discarded changes, removed repositories) goes to `trash/` in the server's data directory (`~/.config/gitgood-server/trash`). Several clients can be connected at once, each with its own open repository and live updates; changes to the same repository are serialized.
 
 ### Phones and tablets
 

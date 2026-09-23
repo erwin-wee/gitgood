@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { auditLine, isMutating, KeyedMutex, mutationKey, RateLimiter } from '../src/server/limits';
+import { auditLine, isMutating, KeyedMutex, locksRepo, mutationKey, RateLimiter } from '../src/server/limits';
 
 describe('isMutating / mutationKey', () => {
   it('flags writes and leaves reads alone', () => {
@@ -9,9 +9,18 @@ describe('isMutating / mutationKey', () => {
     expect(isMutating('app.settings.get')).toBe(false);
   });
 
-  it('keys a mutation by its repo-path argument, else the method', () => {
+  it('keys a mutation by its repository path, never by content, else the method', () => {
     expect(mutationKey('git.push', ['/repos/app', { branch: 'main' }])).toBe('/repos/app');
-    expect(mutationKey('settings.import', ['relative/file', 'merge'])).toBe('settings.import');
+    expect(mutationKey('repo.writeFile', ['/repos/app', 'a.c', '/* header */'])).toBe('/repos/app');
+    expect(mutationKey('gh.auth.logout', ['github.com'])).toBe('gh.auth.logout');
+  });
+
+  it('does not hold the repository lock through long network/AI calls', () => {
+    expect(locksRepo('git.commit')).toBe(true);
+    expect(locksRepo('ai.split.apply')).toBe(true);
+    expect(locksRepo('git.fetch')).toBe(false);
+    expect(locksRepo('git.push')).toBe(false);
+    expect(locksRepo('ai.review.start')).toBe(false);
   });
 });
 

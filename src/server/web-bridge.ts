@@ -11,15 +11,38 @@
 export const WEB_BRIDGE_JS = `(function () {
   var cfg = window.__GITGOOD__ || {};
   var token = cfg.token || '';
-  var clientId = (window.crypto && crypto.randomUUID && crypto.randomUUID()) || (String(Date.now()) + Math.random().toString(36).slice(2));
+  // Stable across reloads of this tab, so the server keeps this page's repository watcher through a reload or a brief disconnect.
+  var clientId = sessionStorage.getItem('gitgood.client');
+  if (!clientId) {
+    clientId = (window.crypto && crypto.randomUUID && crypto.randomUUID()) || (String(Date.now()) + Math.random().toString(36).slice(2));
+    sessionStorage.setItem('gitgood.client', clientId);
+  }
+  // The repository this page has open, re-opened after a reconnect in case the server released it meanwhile.
+  var openRepo = null;
   var listeners = new Set();
   var native = window.gitgoodNative || null;
   function emit(name, payload) { listeners.forEach(function (l) { l(name, payload); }); }
   if (native) native.onEvent(emit);
+  else {
+    // The renderer refreshes status on focus; the desktop preload reports it, a browser tab reports it here.
+    var reportFocus = function () { emit('window.focus', { focused: document.visibilityState === 'visible' && document.hasFocus() }); };
+    document.addEventListener('visibilitychange', reportFocus);
+    window.addEventListener('focus', reportFocus);
+    window.addEventListener('blur', reportFocus);
+  }
+  var connectedBefore = false;
   var socket = null;
   function connect() {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(proto + '//' + location.host + '/events?token=' + encodeURIComponent(token) + '&client=' + encodeURIComponent(clientId));
+    socket.onopen = function () {
+      // Events sent while disconnected are lost: re-open the repository and let the renderer refresh (it does so when focused;
+      // an unfocused page refreshes on its next focus event).
+      if (connectedBefore) {
+        (openRepo ? httpInvoke('repo.open', [openRepo]) : Promise.resolve()).then(function () { emit('window.focus', { focused: document.visibilityState === 'visible' && document.hasFocus() }); });
+      }
+      connectedBefore = true;
+    };
     socket.onmessage = function (ev) {
       var msg;
       try { msg = JSON.parse(ev.data); } catch (e) { return; }
@@ -131,6 +154,8 @@ export const WEB_BRIDGE_JS = `(function () {
   }
   function webInvoke(method, args) {
     var ok = { ok: true, value: undefined };
+    if (method === 'repo.open') openRepo = args[0];
+    else if (method === 'repo.close' && openRepo === args[0]) openRepo = null;
     var unsupported = function (msg) { return Promise.resolve({ ok: false, error: { message: msg, command: '', exitCode: null, stderr: '', stdout: '', code: 'unsupported' } }); };
     // Web stories for host-only capabilities: run them in the browser instead of round-tripping to the server.
     if (method === 'app.clipboard.write') {

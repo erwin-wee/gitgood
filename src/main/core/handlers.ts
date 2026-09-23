@@ -31,6 +31,7 @@ import * as ops from '../git/operations';
 import { gpgKeyExists, listGpgSecretKeys, listSshPublicKeys, normalizeSshSigningKey, sshKeyFileExists, testGpgSigning, testSshSigning } from '../git/signing';
 import { getStatus } from '../git/status';
 import { getSubmodules, syncSubmodules, updateSubmodules } from '../git/submodules';
+import { currentClient } from './client-context';
 import { addWorktree, listWorktrees, lockWorktree, pruneWorktrees, removeWorktree } from '../git/worktree';
 import { repoSelector, type GhClient } from '../gh/gh';
 import { findPullRequestTemplate } from '../gh/pr-template';
@@ -92,7 +93,7 @@ const RELEASE_NOTES_PROGRESS_PATH = '<release notes>';
 
 const commitCache = new Map<string, { commit: Commit; files: CommitFile[] }>();
 
-/** Per-repository "latest history request wins": a new `repo.history` call aborts whatever git process the previous one started. */
+/** Per-client, per-repository "latest history request wins": a new `repo.history` call aborts whatever git process the same client's previous one started, never another client's. */
 const historyControllers = new Map<string, AbortController>();
 
 /** Long-running operations (submodule update, LFS fetch/pull) keyed by their progress event id, cancellable via `app.operations.cancel`. */
@@ -426,8 +427,10 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'repos.list': async () => repos.list(),
     'repos.add': async (path) => repos.add(path),
     'repos.remove': async (id, moveToTrash) => {
-      const repo = await repos.remove(id);
-      if (repo && moveToTrash && existsSync(repo.path)) await host.trashItem(repo.path);
+      // Trash first: if that fails, the repository stays registered instead of vanishing from the list with its folder left behind.
+      const path = repos.get(id)?.path;
+      if (path && moveToTrash && existsSync(path)) await host.trashItem(path);
+      await repos.remove(id);
     },
     'repos.create': async (opts) => {
       const dir = resolve(opts.directory, opts.name);
@@ -513,7 +516,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
 
     // ---------------- repository reads ----------------
     'repo.open': async (path) => repos.open(path),
-    'repo.close': async (path) => repos.stopWatching(path),
+    'repo.close': async (path) => repos.release(path),
     'repo.status': async (repoPath) => freshStatus(repoPath),
     'repo.branches': async (repoPath) => getBranches(git, repoPath),
     'repo.defaultBranch': async (repoPath) => getDefaultBranch(git, repoPath),
@@ -521,13 +524,14 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'repo.remotes': async (repoPath) => ops.getRemotes(git, repoPath),
     'repo.stashes': async (repoPath) => ops.getStashes(git, repoPath),
     'repo.history': async (repoPath, opts: HistoryOptions) => {
-      historyControllers.get(repoPath)?.abort();
+      const key = `${currentClient()}\0${repoPath}`;
+      historyControllers.get(key)?.abort();
       const controller = new AbortController();
-      historyControllers.set(repoPath, controller);
+      historyControllers.set(key, controller);
       try {
         return await getHistory(git, repoPath, opts, controller.signal);
       } finally {
-        if (historyControllers.get(repoPath) === controller) historyControllers.delete(repoPath);
+        if (historyControllers.get(key) === controller) historyControllers.delete(key);
       }
     },
     'repo.history.matchingFiles': async (repoPath, sha, query) => getMatchingFiles(git, repoPath, sha, query),

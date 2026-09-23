@@ -5,6 +5,7 @@ import type { EventPayloads } from '@shared/ipc';
 import { repositoryOrigin, type GitHubRepoRef, type RepositoryInfo, type RepoWork } from '@shared/types';
 import { mapWithConcurrency, parseRemoteUrl } from '@shared/util';
 import { getBranches } from '../git/branches';
+import { currentClient } from '../core/client-context';
 import type { GitClient } from '../git/git';
 import { getRemotes, getStashes, getTopLevel } from '../git/operations';
 import { getGitDir, getStatus } from '../git/status';
@@ -68,8 +69,10 @@ export function repositoryId(path: string): string {
 export class RepositoryManager {
   private watchers = new Map<string, RepositoryWatcher>();
   private githubCache = new Map<string, GitHubRepoRef | null>();
-  private watchGeneration = 0;
-  private watchingPath: string | null = null;
+  /** Repository each client is watching; the desktop app is the single '' client. */
+  private watching = new Map<string, string>();
+  /** Paths whose watcher is being set up, so a second client opening the same repository does not start a duplicate. */
+  private starting = new Set<string>();
 
   constructor(
     private readonly store: Store,
@@ -484,34 +487,67 @@ export class RepositoryManager {
     return this.getByPath(path) ?? (await this.add(path));
   }
 
+  /**
+   * Watches `repoPath` for the calling client (see core/client-context), which
+   * watches one repository at a time: opening another releases its previous
+   * one. A watcher stops once no client wants it, so on the server one client
+   * switching repositories never stops another's live updates.
+   */
   async watch(repoPath: string): Promise<void> {
-    if (this.watchers.has(repoPath)) return;
-    const generation = ++this.watchGeneration;
-    this.watchingPath = repoPath;
-    for (const w of this.watchers.values()) void w.stop();
-    this.watchers.clear();
+    const owner = currentClient();
+    const previous = this.watching.get(owner);
+    this.watching.set(owner, repoPath);
+    if (previous && previous !== repoPath) this.stopIfUnwanted(previous);
+    if (this.watchers.has(repoPath) || this.starting.has(repoPath)) return;
+    this.starting.add(repoPath);
     let watcher: RepositoryWatcher | undefined;
     try {
       const gitDir = await getGitDir(this.git, repoPath);
       const commonDir = await getCommonDir(this.git, repoPath).catch(() => gitDir);
       const gitPath = await this.git.executable();
       const env = await this.git.baseEnv();
-      if (generation !== this.watchGeneration) return;
+      if (!this.wanted(repoPath)) return;
       watcher = new RepositoryWatcher(repoPath, gitDir, (reason) => this.send('repo.changed', { repoPath, reason }), { commonDir, gitPath, env });
       this.watchers.set(repoPath, watcher);
       await watcher.start();
     } catch (err) {
       if (watcher && this.watchers.get(repoPath) === watcher) this.watchers.delete(repoPath);
       if (watcher) void watcher.stop();
-      if (generation === this.watchGeneration) log.warn(`Failed to watch ${repoPath}: ${(err as Error).message}`);
+      if (this.wanted(repoPath)) log.warn(`Failed to watch ${repoPath}: ${(err as Error).message}`);
+    } finally {
+      this.starting.delete(repoPath);
     }
   }
 
+  /** The calling client no longer shows `repoPath` (`repo.close`). */
+  release(repoPath: string): void {
+    const owner = currentClient();
+    if (this.watching.get(owner) !== repoPath) return;
+    this.watching.delete(owner);
+    this.stopIfUnwanted(repoPath);
+  }
+
+  /** A server client disconnected for good: drop whatever it was watching. */
+  releaseClient(owner: string): void {
+    const repoPath = this.watching.get(owner);
+    if (!repoPath) return;
+    this.watching.delete(owner);
+    this.stopIfUnwanted(repoPath);
+  }
+
+  /** Stops watching `repoPath` for every client (the repository was removed). */
   stopWatching(repoPath: string): void {
-    if (this.watchingPath === repoPath) {
-      this.watchingPath = null;
-      this.watchGeneration++;
-    }
+    for (const [owner, path] of this.watching) if (path === repoPath) this.watching.delete(owner);
+    this.stopIfUnwanted(repoPath);
+  }
+
+  private wanted(repoPath: string): boolean {
+    for (const path of this.watching.values()) if (path === repoPath) return true;
+    return false;
+  }
+
+  private stopIfUnwanted(repoPath: string): void {
+    if (this.wanted(repoPath)) return;
     void this.watchers.get(repoPath)?.stop();
     this.watchers.delete(repoPath);
   }
@@ -591,8 +627,7 @@ export class RepositoryManager {
   }
 
   dispose(): void {
-    this.watchGeneration++;
-    this.watchingPath = null;
+    this.watching.clear();
     for (const w of this.watchers.values()) void w.stop();
     this.watchers.clear();
   }

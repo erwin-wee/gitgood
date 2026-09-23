@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptKey, decodeFrame, encodeTextFrame } from '../src/server/ws';
+import { acceptKey, decodeFrame, encodeTextFrame, frameRejected } from '../src/server/ws';
 
 /** Masks a payload the way a browser client must (RFC6455 §5.3) so decodeFrame can be exercised. */
 function maskedClientFrame(text: string, opcode = 0x1): Buffer {
@@ -33,6 +33,14 @@ describe('WebSocket framing', () => {
     const full = maskedClientFrame('partial-payload');
     expect(decodeFrame(full.subarray(0, 4))).toBeNull();
     expect(decodeFrame(full)).not.toBeNull();
+  });
+
+  it('rejects a client frame before buffering when it is unmasked or larger than a control frame', () => {
+    expect(frameRejected(maskedClientFrame('ping', 0x9))).toBe(false);
+    expect(frameRejected(Buffer.from([0x89, 0x04]))).toBe(true); // unmasked
+    expect(frameRejected(Buffer.from([0x82, 0x80 | 127]))).toBe(true); // declares a 64-bit length
+    expect(frameRejected(Buffer.from([0x82, 0x80 | 126]))).toBe(true); // declares a 16-bit length
+    expect(frameRejected(Buffer.from([0x89]))).toBe(false); // header incomplete: wait
   });
 
   it('encodes a server frame with the 126 extended-length path for >125 bytes', () => {
