@@ -212,11 +212,20 @@ describe('transfer progress', () => {
     const a = p.feed('remote: Counting objects: 100% (10/10), done.\r');
     expect(a?.percent).toBeGreaterThan(0);
     const b = p.feed('Receiving objects:  50% (5/10)\r');
-    expect(b!.percent).toBeGreaterThan(a!.percent);
+    expect(b!.percent).toBeGreaterThan(a!.percent!);
     expect(b!.description).toContain('Receiving objects');
     const c = p.feed('Resolving deltas: 100% (3/3), done.\n');
     expect(c!.percent).toBeGreaterThan(0.8);
-    expect(p.feed('some unrelated line')).toBeNull();
+    // Non-progress lines (remote messages) become the description without moving the bar.
+    expect(p.feed('To github.com:o/r.git\n')).toEqual({ percent: c!.percent, description: 'To github.com:o/r.git' });
+    expect(p.feed('\n')).toBeNull();
+  });
+
+  it('surfaces hook output before any transfer phase', () => {
+    // A pre-push hook runs before git writes objects; without this the UI sits on "Starting…".
+    const p = new TransferProgressParser('push');
+    expect(p.feed('pre-push: running verify:prepush\n')).toEqual({ percent: null, description: 'pre-push: running verify:prepush' });
+    expect(p.feed('Writing objects:  50% (5/10)\r')!.percent).toBeGreaterThan(0);
   });
 });
 
