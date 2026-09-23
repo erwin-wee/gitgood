@@ -283,6 +283,13 @@ if (!gotLock) {
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
     win.webContents.once('did-finish-load', async () => {
       try {
+        await win.webContents.executeJavaScript(`new Promise((resolve) => {
+          const waitForBootstrap = () => {
+            if (window.__gitgood?.store?.get().settings) return resolve();
+            setTimeout(waitForBootstrap, 25);
+          };
+          waitForBootstrap();
+        })`, true);
         for (const step of steps) {
           if (step.wait) await delay(step.wait);
           // `rm` deletes a path between steps, for scenarios that have to
