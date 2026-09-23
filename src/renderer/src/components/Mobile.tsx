@@ -32,8 +32,9 @@ let ownPops = 0;
 function pushPane(pane: PhonePane): void {
   const current = store.get().phonePane;
   if (DEPTH[pane] > DEPTH[current]) {
-    history.pushState({ gitgoodPane: pane }, '');
+    // The entry records how many entries we have pushed, not the pane's depth: review jumps list → file in one entry.
     pushed += 1;
+    history.pushState({ gitgoodPane: pane, gitgoodPushed: pushed }, '');
   }
   store.set({ phonePane: pane });
 }
@@ -50,8 +51,10 @@ export function installPhoneNavigation(): () => void {
       ownPops -= 1;
       return;
     }
-    const pane: PhonePane = (e.state as { gitgoodPane?: PhonePane } | null)?.gitgoodPane ?? 'list';
-    pushed = DEPTH[pane];
+    const state: unknown = e.state;
+    const entry = state !== null && typeof state === 'object' ? state : {};
+    const pane = PANES.find((p) => 'gitgoodPane' in entry && entry.gitgoodPane === p) ?? 'list';
+    pushed = 'gitgoodPushed' in entry && typeof entry.gitgoodPushed === 'number' ? entry.gitgoodPushed : 0;
     store.set({ phonePane: pane });
   };
   let prev = store.get();
