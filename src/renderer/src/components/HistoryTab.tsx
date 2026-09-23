@@ -473,7 +473,7 @@ export function CommitDetailsPane(): React.JSX.Element {
               {visibleFiles.length} {history.matchingFiles ? 'matching' : 'changed'} file{visibleFiles.length === 1 ? '' : 's'}
             </span>
           </div>
-          <div className="file-list" role="listbox" aria-label="Changed files" onKeyDown={onListKeyDown}>
+          <div className="file-list" role="listbox" aria-label="Changed files" data-phone-next="file" onKeyDown={onListKeyDown}>
             {visibleFiles.map((f) => (
               <CommitFileRow
                 key={f.path}

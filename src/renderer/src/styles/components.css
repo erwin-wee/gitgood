@@ -235,9 +235,10 @@
   position: relative;
   flex: 1;
 }
-.filter-input input {
+/* Mirrors the touch-input selector in global.css so its `padding: 8px 10px` cannot push the text under the icon. */
+.filter-input input:not([type='checkbox']):not([type='radio']) {
   width: 100%;
-  padding-left: 28px;
+  padding-left: 32px;
 }
 .filter-input .icon {
   position: absolute;
@@ -320,14 +321,16 @@
 .list-row.disabled {
   opacity: 0.5;
 }
-.list-row .row-main {
+.list-row .row-main,
+.health-row .row-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   line-height: 1.3;
 }
-.list-row .row-sub {
+.list-row .row-sub,
+.health-row .row-sub {
   color: var(--fg-muted);
   font-size: 11px;
 }
@@ -1162,4 +1165,650 @@
 }
 .segmented button:active {
   background: color-mix(in srgb, var(--bg-hover) 90%, var(--bg-inset) 10%);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Touch sizing: fingers need ~44px targets; mouse layouts stay dense.     */
+/* ---------------------------------------------------------------------- */
+
+@media (pointer: coarse) {
+  .btn {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+  .btn.sm {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  .btn.icon-only,
+  .btn.sm.icon-only {
+    width: 44px;
+    height: 44px;
+    min-height: 0;
+    padding: 0;
+  }
+  .btn.link {
+    min-height: 0;
+    padding: 0;
+  }
+  .checkbox input,
+  .checkbox-inline input,
+  .file-row input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+  }
+  .segmented button {
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+  .file-row {
+    height: 48px;
+    padding: 0 14px;
+    gap: 12px;
+  }
+  .file-row .stats {
+    font-size: 12px;
+  }
+  .list-row {
+    min-height: 48px;
+    padding: 8px 14px;
+  }
+  .list-row .row-sub,
+  .list-row .row-meta {
+    font-size: 12px;
+  }
+  .changes-header {
+    min-height: 48px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .popover-header {
+    padding: 10px 12px;
+  }
+  .popover-tabs .tab {
+    min-height: 44px;
+  }
+  .popover-footer {
+    padding: 10px 12px;
+  }
+  .context-menu .item {
+    min-height: 44px;
+    padding: 0 12px;
+  }
+  .stash-nav-button {
+    min-height: 48px;
+    padding: 0 14px;
+    font-size: 14px;
+  }
+  .commit-form {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+  .commit-form textarea {
+    min-height: 56px;
+  }
+  .commit-form .commit-btn {
+    min-height: 44px;
+  }
+}
+
+/* Phone: popovers and context menus become bottom sheets over a scrim (rendered by App / ContextMenuHost). */
+@media (max-width: 767px) {
+  .popover {
+    position: fixed;
+    top: auto !important;
+    right: 0 !important;
+    bottom: 0;
+    left: 0 !important;
+    width: auto;
+    max-height: calc(100dvh - env(safe-area-inset-top) - 40px);
+    border: none;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -10px 40px rgba(1, 4, 9, 0.28);
+    animation: sheet-up 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* Grabber: the sheet's affordance, not a control. */
+  .popover::before {
+    content: '';
+    flex: 0 0 auto;
+    width: 36px;
+    height: 5px;
+    margin: 8px auto 0;
+    border-radius: 3px;
+    background: var(--border);
+  }
+  .popover-list {
+    max-height: none;
+    min-height: 200px;
+    overscroll-behavior: contain;
+  }
+
+  .context-menu-scrim {
+    display: block;
+    z-index: 299;
+  }
+  .context-menu {
+    top: auto !important;
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: 8px !important;
+    min-width: 0;
+    max-height: calc(100dvh - env(safe-area-inset-top) - 48px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 6px;
+    border-radius: 16px;
+    animation: sheet-up 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .context-menu .item {
+    min-height: 50px;
+    padding: 0 14px;
+    border-radius: 10px;
+    font-size: 16px;
+  }
+  .context-menu .item .icon {
+    width: 18px;
+    height: 18px;
+  }
+  .context-menu .item .shortcut {
+    display: none;
+  }
+  .context-menu .separator {
+    margin: 6px 10px;
+  }
+}
+/* Touch: a tap leaves a sticky :hover on whatever lands under the finger (e.g. the sheet item that opens beneath it); only :active gives feedback. */
+@media (hover: none) {
+  .context-menu .item:hover:not(:disabled):not(:active),
+  .list-row:hover:not(.selected),
+  .file-row:hover:not(.selected),
+  .commit-row:hover:not(.selected) {
+    background: none;
+  }
+  .context-menu .item:hover:not(:disabled):not(:active) {
+    color: var(--fg);
+  }
+  .context-menu .item.danger:hover:not(:disabled):not(:active) {
+    color: var(--danger);
+  }
+  .btn:hover:not(:disabled):not(:active) {
+    background: var(--bg-subtle);
+    border-color: var(--border);
+  }
+  .btn.ghost:hover:not(:disabled):not(:active) {
+    background: transparent;
+    border-color: transparent;
+  }
+  .btn.primary:hover:not(:disabled):not(:active) {
+    background: var(--success-emphasis);
+  }
+  .btn.accent:hover:not(:disabled):not(:active) {
+    background: var(--accent-emphasis);
+    filter: none;
+  }
+  .btn.danger:hover:not(:disabled):not(:active) {
+    background: var(--bg-subtle);
+    border-color: var(--border);
+    color: var(--danger);
+  }
+}
+/* Mobile list/detail surfaces and touch sheets. Desktop styles above stay unchanged. */
+@media (max-width: 1023px), (pointer: coarse) {
+  .stashes-view {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+    grid-template-rows: minmax(0, 1fr) minmax(260px, 1fr);
+  }
+  .stashes-list,
+  .stashes-files {
+    width: auto;
+    min-width: 0;
+  }
+  .stashes-list {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .stashes-files {
+    grid-column: 2;
+    grid-row: 1;
+    border-right: none;
+    border-left: 1px solid var(--border);
+  }
+  #stashes-diff-slot {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+    min-height: 260px;
+    border-top: 1px solid var(--border);
+  }
+  .stash-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Commit/history detail drill-down. */
+  .history-header {
+    gap: 4px;
+    padding: 8px;
+  }
+  .history-search-shell {
+    min-width: 0;
+  }
+  .history-filter-toggle {
+    flex: 0 0 auto;
+  }
+  .history-filter-popover {
+    width: auto !important;
+    max-height: calc(100dvh - env(safe-area-inset-top) - 40px);
+  }
+  .history-filter-body {
+    max-height: min(58dvh, 440px);
+  }
+  .history-filter-body > .field-row {
+    flex-wrap: wrap;
+  }
+  .history-filter-body > .field-row > .field {
+    flex: 1 1 130px;
+    min-width: 0;
+  }
+
+  .commit-row {
+    height: auto;
+    min-height: 60px;
+    align-items: flex-start;
+    padding: 10px 12px;
+  }
+  .commit-row .commit-primary {
+    align-items: flex-start;
+  }
+  .commit-row .commit-secondary {
+    font-size: 12px;
+  }
+  .commit-row .commit-row-tail {
+    padding-top: 1px;
+  }
+  .commit-row .commit-row-deferred {
+    opacity: 1;
+  }
+  /* HTML drag-and-drop doesn't reach touch reliably, and long-press opens the commit menu; reorder via the rebase dialog instead. */
+  .commit-row .commit-drag-handle {
+    display: none;
+  }
+
+  .commit-summary {
+    padding: 12px 14px;
+    overflow-y: auto;
+  }
+  .commit-summary .meta-row {
+    align-items: flex-start;
+    row-gap: 6px;
+  }
+  .commit-summary .meta-row > [style*='flex: 1'] {
+    display: none;
+  }
+  .commit-summary .meta-row > .btn {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+  .commit-body {
+    flex-direction: column;
+  }
+  .app[data-view='history'][data-pane='detail'] .commit-files {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    border-right: none;
+  }
+  .app[data-view='history'][data-pane='detail'] #commit-diff-slot {
+    display: none !important;
+  }
+  .app[data-view='history'][data-pane='file'] .commit-summary,
+  .app[data-view='history'][data-pane='file'] .commit-files {
+    display: none;
+  }
+  .app[data-view='history'][data-pane='file'] #commit-diff-slot {
+    display: flex !important;
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    min-width: 0;
+  }
+  .multi-select-summary {
+    width: 100%;
+    padding: 16px;
+    align-items: stretch;
+  }
+  .multi-select-summary > div {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .multi-select-summary > div > .btn {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .multi-select-summary > ul {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Changes form and compact list controls. */
+  .changes-header {
+    gap: 6px;
+  }
+  .changes-header .filter-input {
+    flex: 0 1 124px !important;
+    min-width: 88px;
+  }
+  .changes-header .filter-input input {
+    min-width: 0;
+  }
+  .commit-form {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .commit-form textarea {
+    min-height: 40px;
+    max-height: 140px;
+  }
+  .commit-form textarea:focus {
+    min-height: 72px;
+  }
+  .commit-form .form-actions {
+    gap: 6px;
+  }
+  .commit-form .form-actions .left {
+    gap: 4px;
+    min-width: 0;
+  }
+  .commit-form .form-actions .left > .btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .commit-form .form-actions .left > .btn:not(.icon-only) {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .commit-form .form-actions .left > .checkbox {
+    flex-basis: 100%;
+    min-height: 36px;
+  }
+  .precommit-strip,
+  .precommit-strip-body {
+    min-width: 0;
+  }
+  .precommit-strip-actions {
+    flex-wrap: wrap;
+  }
+  .precommit-strip-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  /* Stash list -> files -> diff. */
+  .stashes-view {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+  .stashes-list,
+  .stashes-files,
+  #stashes-diff-slot {
+    display: none;
+    width: 100%;
+    min-width: 0;
+    border-left: none;
+    border-right: none;
+  }
+  .app[data-view='stashes'][data-pane='list'] .stashes-list,
+  .app[data-view='stashes'][data-pane='detail'] .stashes-files,
+  .app[data-view='stashes'][data-pane='file'] #stashes-diff-slot {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+  }
+  .app[data-view='stashes'] .stashes-list > .changes-header > .btn.icon-only {
+    display: none;
+  }
+  .stashes-files .file-list {
+    min-height: 0;
+  }
+  .stash-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 10px 12px;
+  }
+  .stash-actions > span {
+    display: none;
+  }
+  .stash-actions > .btn {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+  }
+
+  /* Health and setup stay readable without relying on a hover affordance. */
+  .health-view > .changes-header > .btn.icon-only {
+    display: none;
+  }
+  .health-grid {
+    padding: 8px;
+    gap: 8px;
+  }
+  .health-card {
+    min-height: 0;
+    max-height: none;
+  }
+  .health-card-header {
+    min-height: 48px;
+    padding: 8px 12px;
+  }
+  .health-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: 10px 12px;
+  }
+  .health-row .row-main {
+    flex: 1 1 calc(100% - 30px);
+    min-width: 0;
+  }
+  .health-row-actions {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    padding-left: 24px;
+  }
+  .health-row-actions .btn {
+    flex: 0 0 auto;
+    min-height: 40px;
+  }
+  .health-card-actions .btn {
+    flex: 1 1 110px;
+    min-height: 40px;
+  }
+  .health-card-actions {
+    align-items: stretch;
+  }
+  .health-stats dd {
+    text-align: right;
+  }
+
+  .setup-screen {
+    align-items: flex-start;
+    padding: 20px 14px calc(20px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
+  .setup-card {
+    width: 100%;
+    padding: 18px;
+  }
+  .setup-card h1 {
+    font-size: 18px;
+    overflow-wrap: anywhere;
+  }
+  .setup-item > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .setup-card > div:last-child {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .setup-card > div:last-child .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  /* Toolbar sheets: every header/filter/footer item fits a narrow viewport. */
+  .popover-header {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .popover-header > .filter-input {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .popover-header > .filter-input input {
+    min-width: 0;
+  }
+  .repository-popover .popover-header > .filter-input {
+    flex-basis: 100%;
+  }
+  .repository-popover .popover-header > div {
+    width: 100%;
+  }
+  .repository-popover .popover-header > div > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .branch-popover > .popover-header > .filter-input {
+    flex-basis: 100%;
+  }
+  .branch-popover > .popover-header > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .branch-popover .popover-tabs .tab {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+  }
+  .branch-popover > .popover-footer {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .branch-popover > .popover-footer > .muted {
+    flex: 1 1 100%;
+  }
+  .branch-popover > .popover-footer > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .triage-bar .checkbox-inline {
+    min-height: 36px;
+  }
+  .triage-line {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .triage-line .triage-summary {
+    flex: 1 1 calc(100% - 90px);
+    min-width: 0;
+  }
+  .triage-line .btn {
+    min-height: 36px;
+  }
+  .pr-row {
+    align-items: flex-start;
+  }
+  .pr-row .row-main {
+    padding-top: 2px;
+  }
+
+  /* Banners wrap content and actions rather than forcing a horizontal scroll. */
+  .banner .banner-text {
+    overflow-wrap: anywhere;
+  }
+  .banner .banner-actions {
+    flex: 1 1 100%;
+    padding-left: 28px;
+    flex-wrap: wrap;
+  }
+  .banner .banner-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+/* Inline diff targets are portals; pane visibility must win over their inline display. */
+@media (max-width: 767px) {
+  .app[data-view='stashes'][data-pane='list'] .stashes-files,
+  .app[data-view='stashes'][data-pane='list'] #stashes-diff-slot,
+  .app[data-view='stashes'][data-pane='detail'] .stashes-list,
+  .app[data-view='stashes'][data-pane='detail'] #stashes-diff-slot,
+  .app[data-view='stashes'][data-pane='file'] .stashes-list,
+  .app[data-view='stashes'][data-pane='file'] .stashes-files {
+    display: none !important;
+  }
+  .app[data-view='stashes'][data-pane='list'] .stashes-list,
+  .app[data-view='stashes'][data-pane='detail'] .stashes-files,
+  .app[data-view='stashes'][data-pane='file'] #stashes-diff-slot {
+    display: flex !important;
+  }
+}
+@media (max-width: 767px) {
+  .branch-popover {
+    width: auto !important;
+  }
+  .branch-popover > .popover-header > .btn,
+  .branch-popover > .popover-footer > .btn {
+    min-height: 44px;
+  }
+}
+@media (max-width: 767px) {
+  .changes-header {
+    min-height: 48px;
+  }
+  .file-row,
+  .list-row {
+    min-height: 48px;
+  }
+  .stash-nav-button {
+    min-height: 48px;
+  }
+  .commit-form .commit-btn {
+    min-height: 44px;
+  }
+  .popover-header > .btn,
+  .popover-footer > .btn,
+  .popover .btn.icon-only {
+    min-height: 44px;
+  }
+  .popover .btn.icon-only {
+    width: 44px;
+    height: 44px;
+  }
+}
+@media (max-width: 767px) {
+  .health-card {
+    max-height: min(56dvh, 520px);
+  }
+}
+
+/* Portrait tablets: beside the commit list there is no room for files | diff side by side, so the file list sits above a full-width diff. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .commit-body {
+    flex-direction: column;
+  }
+  .commit-files {
+    width: auto;
+    min-width: 0;
+    max-height: 30%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  #commit-diff-slot {
+    min-height: 0;
+  }
 }

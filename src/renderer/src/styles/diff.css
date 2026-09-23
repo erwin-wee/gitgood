@@ -4,6 +4,23 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
+}
+/* Narrow panes above phone width (tablet commit view, slim desktop windows): the controls drop below the path instead of overlapping it. Phone has its own header layout. */
+@media (min-width: 768px) {
+  @container (max-width: 600px) {
+    .diff-pane .diff-header {
+      flex-wrap: wrap;
+      row-gap: 4px;
+    }
+    .diff-pane .diff-header .file-path {
+      flex: 1 1 100%;
+      overflow: hidden;
+    }
+    .diff-pane .diff-header .controls {
+      margin-left: auto;
+    }
+  }
 }
 .diff-header {
   display: flex;
@@ -552,5 +569,232 @@ table.diff tr.flash-highlight td {
   }
   100% {
     background: transparent;
+  }
+}
+.diff-header .file-path-main,
+.diff-header .file-meta {
+  display: contents;
+}
+.file-path-name {
+  font-weight: inherit;
+}
+/* Mobile diff refinements: keep the desktop diff unchanged while making every action thumb-safe. */
+@media (pointer: coarse) {
+  table.diff .sel {
+    touch-action: none;
+  }
+  table.diff tr:hover .sel,
+  table.diff .sel {
+    color: var(--fg-subtle);
+  }
+  table.diff tr.hunk .hunk-actions button {
+    min-height: 40px;
+    padding: 6px 8px;
+  }
+  .conf-badge {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@media (max-width: 767px) {
+  .diff-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  .diff-header .file-path {
+    width: 100%;
+    gap: 6px;
+    align-items: center;
+  }
+  .file-path-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .file-path-text {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    flex: 1 1 auto;
+  }
+  .file-path-dir {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg-muted);
+  }
+  .file-path-name {
+    flex: 0 0 auto;
+    font-weight: 600;
+  }
+  .file-path-old .file-path-name {
+    font-weight: inherit;
+  }
+  .file-meta {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .diff-header .controls {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 2px;
+  }
+  .diff-header .controls > .segmented {
+    display: none;
+  }
+  .diff-header .controls .btn.icon-only {
+    flex: 0 0 44px;
+    width: 44px;
+  }
+  .diff-body {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  table.diff {
+    font-size: max(12px, var(--diff-font-size, 12px));
+    line-height: 21px;
+  }
+  table.diff .num {
+    width: 34px;
+    min-width: 34px;
+    padding: 0 4px 0 2px;
+  }
+  table.diff .sel {
+    width: 26px;
+    min-width: 26px;
+  }
+  table.diff .marker {
+    width: 14px;
+    min-width: 14px;
+  }
+  table.diff .code {
+    padding: 0 6px 0 3px;
+  }
+  table.diff .blame-cell {
+    display: none;
+  }
+  table.diff tr.hunk td {
+    height: auto;
+  }
+  table.diff tr.hunk .hunk-header {
+    min-height: 36px;
+    padding: 4px 6px;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  table.diff tr.hunk .hunk-header > .selectable {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  table.diff tr.hunk .hunk-actions {
+    margin-left: auto;
+  }
+  .diff-selection-bar {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .diff-selection-bar .selection-copy {
+    flex: 1 1 calc(100% - 20px);
+    min-width: 0;
+  }
+  .diff-selection-bar .selection-spacer {
+    display: none;
+  }
+  .diff-selection-bar .btn {
+    flex: 1 1 auto;
+  }
+  table.diff tr.blame-card-row td {
+    display: table-cell;
+  }
+  .blame-card {
+    margin: 6px;
+    padding: 10px;
+  }
+  .blame-card-actions .btn {
+    flex: 1 1 100%;
+  }
+  .image-diff {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px;
+  }
+  .image-diff .modes {
+    align-self: stretch;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .image-diff .modes .segmented {
+    min-width: max-content;
+  }
+  .image-diff .two-up {
+    flex-direction: column;
+    gap: 16px;
+    align-items: stretch;
+  }
+  .image-diff .image-box {
+    max-width: none;
+    width: 100%;
+  }
+  .image-diff .image-box img {
+    max-height: 48vh;
+  }
+  .conflict-toolbar {
+    align-items: stretch;
+    padding: 8px;
+    gap: 6px;
+  }
+  .conflict-toolbar .spacer {
+    display: none;
+  }
+  .conflict-toolbar .conflict-legend {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+  .conflict-toolbar > .btn {
+    flex: 1 1 calc(50% - 6px);
+  }
+  .conflict-line .num {
+    width: 34px;
+    min-width: 34px;
+    padding: 0 4px 0 2px;
+  }
+  .conflict-line .code {
+    padding: 0 6px 0 3px;
+  }
+  .conflict-block-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px 6px 40px;
+  }
+  .conflict-block-actions .label {
+    flex: 1 1 100%;
+    margin-right: 0;
+  }
+  .conflict-block-actions .btn {
+    flex: 1 1 calc(50% - 6px);
+  }
+  .resolution-popover {
+    width: min(420px, calc(100vw - 24px));
+    max-height: 70vh;
+    overflow: auto;
   }
 }

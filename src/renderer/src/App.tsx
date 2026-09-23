@@ -14,6 +14,7 @@ import { StashesView } from './components/StashesTab';
 import { Toasts } from './components/Toasts';
 import { Toolbar } from './components/Toolbar';
 import { ContextMenuHost, Icon } from './components/ui';
+import { TabBar, installLongPress, installPhoneNavigation, onPhoneTap } from './components/Mobile';
 import { Welcome } from './components/Welcome';
 import { ReviewView } from './components/review/ReviewView';
 
@@ -69,7 +70,18 @@ export function App(): React.JSX.Element {
   const reviewOpen = useAppStore((s) => s.review.open);
   const reviewPath = useAppStore((s) => s.review.selectedPath);
   const reviewFile = useAppStore((s) => s.review.run?.files.find((f) => f.file.path === s.review.selectedPath)?.file ?? null);
+  const phonePane = useAppStore((s) => s.phonePane);
+  const popover = useAppStore((s) => s.popover);
   const { width, asideRef, onMouseDown, active } = useSidebarResize();
+
+  useEffect(() => {
+    const stopNavigation = installPhoneNavigation();
+    const stopLongPress = installLongPress();
+    return () => {
+      stopNavigation();
+      stopLongPress();
+    };
+  }, []);
 
   useEffect(() => {
     void bootstrap();
@@ -104,7 +116,7 @@ export function App(): React.JSX.Element {
     const workingFile = selectedWorking ? status?.files.find((f) => f.path === selectedWorking) ?? null : null;
     content = (
       <div className="main">
-        <aside ref={asideRef} className="sidebar" style={{ width }}>
+        <aside ref={asideRef} className="sidebar" style={{ width }} data-phone-next="detail">
           <div className="tabs">
             <button type="button" className={`tab ${view === 'changes' ? 'active' : ''}`} onClick={() => setView('changes')} title="Changes (Ctrl+1)">
               Changes {status?.files.length ? <span className="badge">{status.files.length}</span> : null}
@@ -140,10 +152,12 @@ export function App(): React.JSX.Element {
   const showReviewDiff = repo && reviewOpen;
 
   return (
-    <div className="app">
+    <div className="app" data-view={reviewOpen ? 'review' : view} data-pane={phonePane} data-repo={repo ? '' : undefined} onClick={onPhoneTap}>
       <Toolbar />
       {settingsLoaded && !gitMissing ? <Banners /> : null}
       {content}
+      {repo && settingsLoaded && !gitMissing ? <TabBar /> : null}
+      {popover ? <div className="sheet-scrim" onMouseDown={() => store.set({ popover: null })} /> : null}
       {showStashDiff ? <PortalDiff target="stashes-diff-slot" path={stashSelectedFile} status={stashFile?.status ?? null} mode="stash" /> : null}
       {showReviewDiff ? <PortalDiff target="review-diff-slot" path={reviewPath} oldPath={reviewFile?.oldPath ?? null} status={reviewFile?.status ?? null} mode="review" /> : null}
       {repo && !reviewOpen && view === 'history' && showCommitDiff ? <PortalDiff target="commit-diff-slot" path={historySelectedFile} oldPath={commitDiffFile?.oldPath ?? null} status={commitDiffFile?.status ?? null} mode="commit" /> : null}

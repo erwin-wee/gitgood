@@ -5,6 +5,7 @@ import { invoke, isMac } from '../api';
 import * as actions from '../state/actions';
 import { openDialog, setPopover, store, useAppStore } from '../state/store';
 import { Avatar, Badge, Button, FilterInput, Icon, RelativeTime, Spinner, openContextMenu, useFilter, type MenuItem } from './ui';
+import { PHONE_QUERY, PhoneBackButton, useMediaQuery } from './Mobile';
 
 export function Toolbar(): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
@@ -21,6 +22,9 @@ export function Toolbar(): React.JSX.Element {
   const ghLogin = useAppStore((s) => s.tools?.ghAccount?.login ?? null);
   const triageEnabled = settings?.ai.provider !== 'disabled' && !!repo?.github;
   const waitingOnYouCount = useMemo(() => (triageEnabled ? actions.waitingOnYouPrs(prsList, triageCache, ghLogin).length : 0), [triageEnabled, prsList, triageCache, ghLogin]);
+  const phone = useMediaQuery(PHONE_QUERY);
+  const phonePane = useAppStore((s) => s.phonePane);
+  const phoneDrilled = phone && phonePane !== 'list' && !!repo;
 
   const activeProgress = Object.values(progress).find((p) => !p.repoPath || p.repoPath === repo?.path) ?? null;
   const branch = status?.branch ?? null;
@@ -96,7 +100,8 @@ export function Toolbar(): React.JSX.Element {
   const branchLabel = !repo ? '—' : !status ? 'Loading…' : status.operation.kind === 'rebase' ? `Rebasing ${status.operation.headName ?? ''}` : branch?.detached ? 'Detached HEAD' : branch?.unborn ? `${branch.name ?? 'main'} (no commits)` : branch?.name ?? '—';
 
   return (
-    <div className={`toolbar ${isMac ? 'mac' : ''}`}>
+    <div className={`toolbar ${isMac ? 'mac' : ''} ${phoneDrilled ? 'drilled' : ''}`}>
+      {phoneDrilled ? <PhoneBackButton /> : null}
       <Button className={`toolbar-button repo ${popover === 'repos' ? 'open' : ''}`} onClick={() => setPopover('repos')} title="Current repository (Ctrl+T)" aria-label={`Current repository: ${repo ? repo.alias ?? repo.name : 'No repository'}`}>
         <Icon name="repo" className="icon" />
         <span className="labels">
@@ -257,7 +262,7 @@ function RepositoryPopover(): React.JSX.Element {
   );
 
   return (
-    <div className="popover" style={{ left: isMac ? 76 : 0 }}>
+    <div className="popover repository-popover" style={{ left: isMac ? 76 : 0 }}>
       <div className="popover-header">
         <FilterInput value={query} onChange={setQuery} placeholder="Filter repositories" autoFocus />
         <div style={{ position: 'relative' }}>
@@ -373,7 +378,7 @@ function BranchPopover(): React.JSX.Element {
   );
 
   return (
-    <div className="popover" style={{ left: (isMac ? 76 : 0) + 300, width: 420 }}>
+    <div className="popover branch-popover" style={{ left: (isMac ? 76 : 0) + 300, width: 420 }}>
       {repo?.github ? (
         <div className="popover-tabs">
           <button type="button" className={`tab ${tab === 'branches' ? 'active' : ''}`} onClick={() => setTab('branches')}>Branches</button>

@@ -151,6 +151,10 @@ body {
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 a {
@@ -193,6 +197,28 @@ textarea::placeholder {
 }
 select {
   cursor: pointer;
+}
+
+/* Touch: a larger base size, and 16px form fields (iOS Safari zooms the page into anything smaller on focus). */
+@media (pointer: coarse) {
+  :root {
+    --font-size: 15px;
+  }
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+  input:not([type='checkbox']):not([type='radio']),
+  textarea,
+  select {
+    padding: 8px 10px;
+  }
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
 }
 
 
@@ -304,6 +330,11 @@ kbd {
   .dialog-backdrop,
   .dialog,
   .toast,
+  .popover,
+  .context-menu,
+  .sheet-scrim,
+  .context-menu-scrim,
+  .app .main > *,
   table.diff tr.flash-highlight td {
     animation: none !important;
   }
@@ -334,22 +365,25 @@ html {
   scrollbar-width: thin;
 }
 
-::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--fg-subtle);
-  border: 3px solid var(--border);
-  border-radius: 8px;
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--fg);
-  border: 3px solid var(--border);
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-track {
-  background: var(--bg-subtle);
+/* Styled scrollbars only where a mouse drives them; touch platforms keep their native overlay indicators. */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--fg-subtle);
+    border: 3px solid var(--border);
+    border-radius: 8px;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--fg);
+    border: 3px solid var(--border);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg-subtle);
+  }
 }
 

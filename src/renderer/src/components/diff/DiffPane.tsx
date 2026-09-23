@@ -8,6 +8,7 @@ import { openDialog, useAppStore } from '../../state/store';
 import { Avatar, Button, Icon, RelativeTime, Segmented, Spinner, openContextMenu } from '../ui';
 import { ExplainPanel } from '../explain/ExplainPanel';
 import { FindingCard, SEVERITY_TONE } from '../review/ReviewView';
+import { PHONE_QUERY, useMediaQuery } from '../Mobile';
 import { ConflictDiff } from './ConflictDiff';
 import { ImageDiff } from './ImageDiff';
 import { TextDiff, type LineAnnotation } from './TextDiff';
@@ -41,6 +42,17 @@ function BlameCard({ hunk }: { hunk: BlameHunk }): React.JSX.Element {
     </div>
   );
 }
+function PathLabel({ value }: { value: string }): React.JSX.Element {
+  const slash = value.lastIndexOf('/');
+  const dir = slash === -1 ? '' : value.slice(0, slash + 1);
+  const name = slash === -1 ? value : value.slice(slash + 1);
+  return (
+    <span className="file-path-text" title={value}>
+      <span className="file-path-dir">{dir}</span>
+      <strong className="file-path-name">{name}</strong>
+    </span>
+  );
+}
 
 export interface DiffPaneProps {
   /** Path shown in the header; null when nothing is selected. */
@@ -58,9 +70,12 @@ const NO_PATHS: string[] = [];
 export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, emptyMessage }: DiffPaneProps): React.JSX.Element {
   const diffState = useAppStore((s) => s.diff);
   const settings = useAppStore((s) => s.settings);
+  const isPhone = useMediaQuery(PHONE_QUERY);
+  const isTouch = useMediaQuery('(pointer: coarse)');
   const repo = useAppStore((s) => s.currentRepo);
   const historySha = useAppStore((s) => (mode === 'commit' ? s.history.selectedShas[0] ?? null : null));
   const viewMode = settings?.diffViewMode ?? 'unified';
+  const effectiveViewMode = isPhone ? 'unified' : viewMode;
   const hideWhitespace = settings?.diffHideWhitespace ?? false;
   const wrap = settings?.diffWrapLines ?? false;
   const syntax = settings?.diffSyntaxHighlighting ?? true;
@@ -141,13 +156,16 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
     <div className="diff-pane">
       <div className="diff-header">
         <span className="file-path">
+          <span className="file-path-main">
           {oldPath && oldPath !== path ? (
             <>
-              <span className="muted">{oldPath}</span>
+              <span className="muted file-path-old"><PathLabel value={oldPath} /></span>
               <Icon name="chevron-right" size={12} className="arrow" />
             </>
           ) : null}
-          <span>{path}</span>
+          <PathLabel value={path} />
+          </span>
+          <span className="file-meta">
           {status ? <span className={`badge ${status === 'new' || status === 'untracked' ? 'success' : status === 'deleted' || status === 'conflicted' ? 'danger' : status === 'modified' ? 'attention' : 'accent'}`}>{status === 'untracked' ? 'new' : status}</span> : null}
           {diff?.kind === 'text' ? (
             <span className="muted" style={{ fontFamily: 'var(--font-ui)', fontSize: 11 }}>
@@ -163,6 +181,7 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
               })()}
             </span>
           ) : null}
+          </span>
         </span>
         <span className="controls">
           {diff?.kind === 'text' ? (
@@ -225,17 +244,17 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
       {selectable && selectedCount !== null && selectedCount !== total ? (
         <div className="diff-selection-bar">
           <Icon name="check" size={12} />
-          <span>
+          <span className="selection-copy">
             {selectedCount} of {total} changed line{total === 1 ? '' : 's'} will be committed
           </span>
-          <span style={{ flex: 1 }} />
+          <span className="selection-spacer" style={{ flex: 1 }} />
           <Button size="sm" variant="ghost" onClick={() => onSelectionChange(new Set(diff.hunks.flatMap((h, hi) => h.lines.map((l, li) => (l.type !== 'context' ? `${hi}:${li}` : '')).filter(Boolean))), total)}>Select all</Button>
           {selectedCount > 0 ? <Button size="sm" variant="danger" icon="trash" onClick={discardSelected}>Discard {selectedCount} selected line{selectedCount === 1 ? '' : 's'}…</Button> : null}
         </div>
       ) : selectable && total > 0 && mode === 'working' ? (
         <div className="diff-selection-bar" style={{ background: 'var(--bg-subtle)' }}>
-          <span className="muted">Click the check column to choose which lines to commit; drag to select a range.</span>
-          <span style={{ flex: 1 }} />
+          <span className="muted selection-copy">{isTouch ? 'Tap check column to choose lines; drag for a range.' : 'Click check column to choose lines; drag for a range.'}</span>
+          <span className="selection-spacer" style={{ flex: 1 }} />
           <Button size="sm" variant="ghost" icon="trash" onClick={discardSelected}>Discard all lines…</Button>
         </div>
       ) : null}
@@ -260,7 +279,7 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
               diff={diff}
               path={path}
               mode={mode}
-              viewMode={viewMode}
+              viewMode={effectiveViewMode}
               wrap={wrap}
               syntax={syntax}
               intraline={intraline}

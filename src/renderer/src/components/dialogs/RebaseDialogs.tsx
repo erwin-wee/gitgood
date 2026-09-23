@@ -101,6 +101,10 @@ function RowEditor({ row, index, plan }: { row: RebasePlanRow; index: number; pl
         onChange={(e) => actions.setRebaseRowMessage(row.sha, e.target.value)}
         rows={row.message.includes('\n') ? 3 : 1}
       />
+      <span className="rebase-order-controls" aria-label={'Move ' + row.sha.slice(0, 7) + ' in plan'}>
+        <Button size="sm" variant="ghost" icon="arrow-up" iconOnly title="Move up" aria-label="Move up" disabled={index === 0} onClick={() => actions.reorderRebaseRow(index, index - 1)} />
+        <Button size="sm" variant="ghost" icon="arrow-down" iconOnly title="Move down" aria-label="Move down" disabled={index === plan.rows.length - 1} onClick={() => actions.reorderRebaseRow(index, index + 1)} />
+      </span>
       {changed ? <Button size="sm" variant="ghost" icon="undo" title="Reset to original" onClick={() => actions.resetRebaseRow(row.sha)} /> : null}
       {row.rationale ? <span className="muted rebase-rationale" title={row.rationale}>{row.rationale}</span> : null}
     </div>
