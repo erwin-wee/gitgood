@@ -67,6 +67,48 @@ GitGood looks for the tools on `PATH` and in the usual install locations; you ca
 
 **Options → Accounts → Sign in to GitHub.com** runs `gh auth login --web`. GitGood shows the one-time code, opens `github.com/login/device` in your browser and waits for approval. When it completes, GitGood runs `gh auth setup-git`, so Git pushes and pulls to GitHub over HTTPS use the same token. Nothing else is stored by the app.
 
+## Server mode (web access over your tailnet)
+
+GitGood can also run **headless as a web server** so you can reach it from a browser on another device — e.g. your desktop's GitGood open on a laptop or phone — over your [Tailscale](https://tailscale.com) tailnet. The same UI and the same `git`/`gh` backend run; only the transport changes (HTTP + WebSocket instead of Electron IPC).
+
+It executes `git`, `gh`, shell and AI-CLI commands **as the host user**, so it is locked down by default:
+
+- **Loopback only.** The server binds `127.0.0.1` and never `0.0.0.0`; `tailscale serve` is the only way in. Public exposure (`tailscale funnel`) is never enabled. It also only answers to `127.0.0.1`/`localhost` and `*.ts.net` host names, so a web page can't reach it through DNS rebinding.
+- **Bearer token.** A 256-bit token is generated on first start, stored `0600` in the user-data directory, and printed once. It is required on `/invoke` and the `/events` WebSocket.
+- **Tailscale identity.** Every request that comes through `tailscale serve`, including the page itself, must carry the allowed `Tailscale-User-Login`. By default that is the owner of this tailnet node (from `tailscale status`); set `GITGOOD_ALLOWED_LOGIN` to override. Other users and tagged devices are refused, and if no login can be determined nothing from the tailnet gets in.
+- **Path confinement.** Paths are restricted to the server user's home directory, the registered repositories, watched folders, the default clone directory and `GITGOOD_ALLOWED_ROOTS`; a path outside them is refused before any command runs. The web folder picker browses the same locations and accepts a typed path (absolute or `~/…`).
+
+### Run it
+
+```bash
+npm run build          # builds the app, including the renderer (out/renderer) and the headless server (out/server)
+npm run start:server   # data lives in ~/.config/gitgood-server
+
+# Then expose the loopback port on your tailnet (default port 4600):
+tailscale serve --bg 4600
+# GitGood is now at https://<your-host>.<tailnet>.ts.net
+```
+
+To keep it running on Linux, `npm run install:service` installs and starts a systemd user service (`gitgood-server`) for this checkout; set environment variables with `systemctl --user edit gitgood-server`, and re-run it after moving the checkout. To start from your desktop's repositories and settings, copy `settings.json`, `repositories.json` and `state.json` into `~/.config/gitgood-server` once, with the server stopped.
+
+Installed copies of GitGood ship the server too; run it with the app's own runtime, e.g. `ELECTRON_RUN_AS_NODE=1 /path/to/gitgood /path/to/resources/app.asar/out/server/index.mjs` (for the Linux AppImage, `--appimage-extract` it first and use `squashfs-root/`).
+
+Environment variables: `GITGOOD_SERVER_PORT` (default `4600`), `GITGOOD_USER_DATA` (default `~/.config/gitgood-server`), `GITGOOD_ALLOWED_LOGIN` (Tailscale login to allow; defaults to this node's owner), `GITGOOD_ALLOWED_ROOTS` (extra filesystem roots the client may reach, `PATH`-separated), `GITGOOD_RENDERER_DIR` (defaults to the bundled `out/renderer`).
+
+### Web-mode differences
+
+Because the browser is not the host machine, desktop-only actions degrade gracefully: **Copy** uses the browser clipboard and **external links** open in a new tab, while **open-in-editor/terminal** are disabled in the browser (they would run on the server's machine) and the folder picker browses the server's allowed locations. Several clients can be connected at once; mutations to the same repository are serialized.
+
+### Phones and tablets
+
+On a phone the web UI switches to a one-pane-at-a-time layout: a bottom tab bar (Changes, History, Stashes, More), tap a file or commit to drill in, and the in-app back button or the system back gesture to return. The repository and branch pickers, dialogs and right-click menus open as bottom sheets; long-press anything that has a context menu. Portrait tablets keep the two-pane layout with the same tab bar and touch-sized controls. Use your browser's **Add to Home Screen** / **Install app** to run it full-screen like a native app.
+
+### Desktop app as a client
+
+To have one set of settings and repositories everywhere, point the desktop app at the server instead of its own data: put the server URL in `~/.config/gitgood/server-url` (or set `GITGOOD_SERVER_URL`), e.g. `http://127.0.0.1:4600`, and restart GitGood. The window then runs the server's UI, so changes made on the desktop, in a browser, or on another machine show up everywhere. The desktop keeps native clipboard, links, zoom, the unread badge and OS notifications; with a server on the same machine (`127.0.0.1`/`localhost`) it also keeps native file dialogs, reveal/open/trash and open-in-editor/terminal. For a remote server those fall back to the web behavior. Remove the file to run standalone again; the desktop's own settings are left untouched while in client mode.
+
+If the desktop app and the server run different versions, the desktop warns once after connecting; update or rebuild whichever is behind.
+
 ## Documentation
 
 - [docs/AI-FEATURES.md](docs/AI-FEATURES.md) — how each AI feature works, in depth.
