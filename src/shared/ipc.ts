@@ -497,6 +497,8 @@ export interface EventPayloads {
   'tools.changed': ToolsState;
   'window.focus': { focused: boolean };
   'gh.inbox.changed': InboxState;
+  /** Newly-arrived inbox items that pass the notification settings (server mode; the desktop client raises OS notifications for them). */
+  'gh.inbox.new': InboxItem[];
   'app.update.changed': UpdateState;
   'repos.scanProgress': RepositoryScanProgress;
 }

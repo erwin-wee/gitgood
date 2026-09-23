@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { app, safeStorage } from 'electron';
+import { nodeStorePlatform, type StorePlatform } from './core/store-platform';
 import { DEFAULT_SETTINGS, type AppSettings, type ImportPreview, type InboxItem, type IssueFilter, type RepositoryInfo, type SettingsExport, type SettingsSection } from '@shared/types';
 import { log } from './logger';
 import { repositoryId } from './repo/manager';
@@ -108,13 +108,13 @@ export class Store {
   private inbox!: Persisted<InboxCacheFile>;
   private listeners = new Set<(settings: AppSettings) => void>();
 
-  constructor(private readonly dir: string) {}
+  constructor(private readonly dir: string, private readonly platform: StorePlatform = nodeStorePlatform) {}
 
   load(): void {
     const settingsFile = join(this.dir, 'settings.json');
     const loaded = readJson<AppSettings>(settingsFile, DEFAULT_SETTINGS);
     loaded.ai = { ...DEFAULT_SETTINGS.ai, ...(loaded.ai ?? {}) };
-    if (!loaded.defaultCloneDirectory) loaded.defaultCloneDirectory = join(app.getPath('documents'), 'GitHub');
+    if (!loaded.defaultCloneDirectory) loaded.defaultCloneDirectory = join(this.platform.documentsDir(), 'GitHub');
     this.settings = { file: settingsFile, value: loaded };
     this.repos = { file: join(this.dir, 'repositories.json'), value: readJson(join(this.dir, 'repositories.json'), { repositories: [] as RepositoryInfo[] }) };
     this.state = {
@@ -232,10 +232,7 @@ export class Store {
     const stored = this.secrets.value.anthropicApiKey;
     if (!stored) return null;
     try {
-      if (stored.startsWith('enc:')) {
-        if (!safeStorage.isEncryptionAvailable()) return null;
-        return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64'));
-      }
+      if (stored.startsWith('enc:')) return this.platform.decryptSecret(stored.slice(4));
       return stored;
     } catch (err) {
       log.error('Failed to decrypt stored API key', err);
@@ -265,8 +262,9 @@ export class Store {
   setApiKey(key: string | null): void {
     let stored: string | null = null;
     if (key) {
-      if (safeStorage.isEncryptionAvailable()) {
-        stored = `enc:${safeStorage.encryptString(key).toString('base64')}`;
+      const encrypted = this.platform.encryptSecret(key);
+      if (encrypted) {
+        stored = `enc:${encrypted}`;
       } else {
         log.warn('OS encryption unavailable; storing API key with restricted file permissions only');
         stored = key;
@@ -293,7 +291,7 @@ export class Store {
 
   /** Allowlist export builder: only fields covered by PortablePreferences/PortableIntegrations/PortableRepository ever leave this method (see settings/sync-core.ts). */
   buildExport(sections: SettingsSection[], repositories: RepositoryInfo[]): SettingsExport {
-    return buildSettingsExport({ sections, settings: this.settings.value, repositories, appVersion: app.getVersion(), platform: process.platform });
+    return buildSettingsExport({ sections, settings: this.settings.value, repositories, appVersion: this.platform.appVersion(), platform: process.platform });
   }
 
   /** Validates a parsed export file and builds an import preview against the current settings/repositories. Throws when the file is not a valid GitGood export. */

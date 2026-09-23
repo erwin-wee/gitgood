@@ -1171,7 +1171,8 @@ export interface GitErrorInfo {
     | 'signing-failed'
     | 'signing-key-missing'
     | 'rate-limited'
-    | 'split-stale';
+    | 'split-stale'
+    | 'unsupported';
   /** ISO timestamp when a rate limit resets, when known (code 'rate-limited' only). */
   rateLimitResetAt?: string | null;
 }
