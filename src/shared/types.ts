@@ -637,6 +637,7 @@ export type FileDiff =
       lineCount: number;
       /** Full content of the new side (for context expansion / highlighting), when small enough. */
       newContent: string | null;
+      /** Full old-side content only when the new side is absent (for pure deletions or capped new content). */
       oldContent: string | null;
       hasCRLF: boolean;
     }

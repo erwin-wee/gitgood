@@ -73,7 +73,7 @@ export function buildTextDiff(parsed: ParsedDiff, path: string, oldContent: stri
     language: languageFromPath(path),
     lineCount: counts.total,
     newContent,
-    oldContent,
+    oldContent: newContent === null ? oldContent : null,
     hasCRLF,
   };
 }

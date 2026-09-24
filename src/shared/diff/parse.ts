@@ -332,7 +332,7 @@ export function buildFileViewDiff(path: string, content: string, maxLines: numbe
     language: languageFromPath(path),
     lineCount: lines.length,
     newContent: content,
-    oldContent: content,
+    oldContent: null,
     hasCRLF,
   };
 }
