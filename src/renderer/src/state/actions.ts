@@ -42,8 +42,14 @@ let bootstrapped = false;
 export async function bootstrap(): Promise<void> {
   if (bootstrapped) return;
   bootstrapped = true;
-  const [settings, tools, repos, updateState] = await Promise.all([invoke('app.settings.get'), invoke('app.tools', false), invoke('repos.list'), invoke('app.update.state')]);
-  store.set({ settings, tools, repos, updateState });
+  const settingsPromise = invoke('app.settings.get');
+  const toolsPromise = invoke('app.tools', false);
+  const reposPromise = invoke('repos.list');
+  const updateStatePromise = invoke('app.update.state');
+  const toolsWithStore = toolsPromise.then((tools) => { store.set({ tools }); return tools; });
+  const updateStateWithStore = updateStatePromise.then((updateState) => { store.set({ updateState }); return updateState; });
+  const [settings, repos] = await Promise.all([settingsPromise, reposPromise]);
+  store.set({ settings, repos });
   applyTheme(settings, store.get().dark);
   document.documentElement.style.setProperty('--diff-font-size', `${settings.diffFontSize}px`);
 
@@ -129,6 +135,7 @@ export async function bootstrap(): Promise<void> {
 
   const candidates = repos.filter((r) => !r.missing).sort((a, b) => b.lastOpened - a.lastOpened);
   if (candidates.length) await openRepository(candidates[0]);
+  const [tools] = await Promise.all([toolsWithStore, updateStateWithStore]);
 
   if (tools.ghAccount) void loadInboxState();
   void invoke('app.tools', true).then((t) => store.set({ tools: t }));
