@@ -70,6 +70,30 @@ export function showInboxNotification(getWindow: () => BrowserWindow | null, ite
 }
 
 /**
+ * Whether the local server's path confinement allows `path`: `app.pathExists`
+ * is checked against its allowed locations like every other path argument.
+ * The token comes from the served bridge script, the same way the page gets it
+ * (loopback callers are trusted with it); fetched per call since these
+ * actions are rare and the token can change when the server's data is reset.
+ */
+async function serverAllows(serverUrl: string, path: string): Promise<boolean> {
+  try {
+    const script = await (await fetch(`${serverUrl}/gitgood-bridge.js`)).text();
+    const token = /"token":"([0-9a-f]+)"/.exec(script)?.[1];
+    if (!token) return false;
+    const res = await fetch(`${serverUrl}/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ method: 'app.pathExists', args: [path] }),
+    });
+    const result: unknown = await res.json();
+    return result !== null && typeof result === 'object' && 'ok' in result && result.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Client mode: the window runs the server-served renderer and web bridge
  * (`src/server/web-bridge.ts`); everything goes to the server except the
  * native capabilities answered here. The bridge sends every call here first
@@ -95,15 +119,22 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
   const unsupported = async (): Promise<never> => {
     throw new Error('Only available when the GitGood server runs on this machine.');
   };
+  // The page is the server's, so its paths get the server's confinement before the desktop acts on them natively.
+  const confined =
+    (fn: (path: string) => Promise<void>) =>
+    async (path: string): Promise<void> => {
+      if (!(await serverAllows(serverUrl, path))) throw new Error(`"${path}" is outside the server's allowed locations.`);
+      await fn(path);
+    };
   const native: Partial<ApiMethods> = local
     ? {
         ...always,
         'app.chooseDirectory': (opts) => host.chooseDirectory(opts),
         'app.chooseFile': (opts) => host.chooseFile(opts),
         'app.chooseSavePath': (opts) => host.chooseSavePath(opts),
-        'app.openPath': (p) => host.openPath(p),
-        'app.showItemInFolder': (p) => host.showItemInFolder(p),
-        'app.moveToTrash': (p) => host.trashItem(p),
+        'app.openPath': confined((p) => host.openPath(p)),
+        'app.showItemInFolder': confined((p) => host.showItemInFolder(p)),
+        'app.moveToTrash': confined((p) => host.trashItem(p)),
       }
     : { ...always, 'app.openInEditor': unsupported, 'app.openInShell': unsupported };
 

@@ -196,7 +196,10 @@ async function main(): Promise<void> {
     const contentType = req.headers['content-type'] ?? '';
     if (!contentType.includes('application/json')) return fail(res, 415, 'Content-Type must be application/json.');
     if (!tokenOk(req, config.token)) return fail(res, 401, 'Missing or invalid token.');
-    const rateKey = (typeof req.headers['x-gitgood-client'] === 'string' && req.headers['x-gitgood-client']) || req.socket.remoteAddress || 'anon';
+    // Keyed by where the request came from, never a caller-chosen label: tailscale serve sets X-Forwarded-For (the
+    // device's tailnet address); direct loopback callers (the desktop client, local tools) share one budget.
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const rateKey = (typeof forwardedFor === 'string' && forwardedFor) || req.socket.remoteAddress || 'anon';
     if (!limiter.allow(rateKey)) return fail(res, 429, 'Too many requests.');
     let parsed: { method?: unknown; args?: unknown };
     try {
