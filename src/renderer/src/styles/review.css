@@ -618,3 +618,223 @@ table.diff tr.annotation-row td {
   align-items: center;
   gap: 8px;
 }
+
+/* Responsive AI review surfaces: keep files available on tablet and make the
+   review/finding flows single-column on phones without changing desktop. */
+
+@media (max-width: 1023px), (pointer: coarse) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
+  .app[data-view='review'] .review-view {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 36%);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .app[data-view='review'] .review-files {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    width: auto;
+    max-height: 140px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .app[data-view='review'] .review-files .file-list {
+    min-height: 0;
+    max-height: 92px;
+  }
+  .app[data-view='review'] #review-diff-slot {
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+    min-height: 0;
+  }
+  .app[data-view='review'] .review-panel {
+    grid-column: 2;
+    grid-row: 2;
+    width: auto;
+    min-width: 0;
+  }
+  }
+}
+
+@media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
+  .app[data-view='review'] .review-view {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .app[data-view='review'][data-pane='list'] .review-panel {
+    order: 1;
+    width: auto;
+    flex: 0 0 auto;
+    border-left: none;
+  }
+  .app[data-view='review'][data-pane='list'] .review-files {
+    order: 2;
+    width: auto;
+    max-height: none;
+    flex: 0 0 auto;
+    border-right: none;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+  }
+  .app[data-view='review'][data-pane='list'] .review-files .file-list {
+    max-height: none;
+    min-height: 0;
+    flex: 0 0 auto;
+  }
+  .app[data-view='review'][data-pane='list'] #review-diff-slot {
+    display: none !important;
+  }
+  .app[data-view='review'][data-pane='file'] .review-files,
+  .app[data-view='review'][data-pane='file'] .review-panel {
+    display: none;
+  }
+  .app[data-view='review'][data-pane='file'] #review-diff-slot {
+    display: flex !important;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  /* The panel chevron only changes desktop density; phone navigation owns Back. */
+  .app[data-view='review'] .review-panel-title > .btn.icon-only {
+    display: none;
+  }
+  .app[data-view='review'] .review-panel-header {
+    padding: 12px 14px;
+  }
+  .app[data-view='review'] .review-counts {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .app[data-view='review'] .review-counts > .muted:last-child {
+    flex-basis: 100%;
+    margin-left: 0 !important;
+  }
+  .app[data-view='review'] .review-findings {
+    overflow: visible;
+  }
+  .app[data-view='review'] .review-panel-footer {
+    flex-wrap: wrap;
+    align-items: stretch;
+    padding: 10px 14px;
+  }
+  .app[data-view='review'] .review-panel-footer > :first-child {
+    flex: 1 1 100%;
+    min-height: 20px;
+  }
+  .app[data-view='review'] .review-panel-footer > :nth-child(2) {
+    display: none;
+  }
+  .app[data-view='review'] .review-panel-footer > .btn {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+  }
+
+  /* Inline findings and pre-commit findings must wrap rather than widen the page. */
+  .finding-card {
+    max-width: none;
+    margin: 8px 10px;
+    padding: 10px;
+    overflow-wrap: anywhere;
+  }
+  .finding-card-header {
+    min-width: 0;
+  }
+  .finding-card-header > strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .finding-card p {
+    overflow-wrap: anywhere;
+  }
+  .finding-suggestion-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .finding-card-actions,
+  .precommit-strip-actions {
+    flex-wrap: wrap;
+  }
+  .finding-card-actions .btn,
+  .precommit-strip-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .precommit-strip {
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .precommit-strip-header {
+    min-height: 48px;
+    flex-wrap: wrap;
+  }
+  .precommit-strip-body {
+    max-width: 100%;
+  }
+  }
+}
+
+@media (pointer: coarse) {
+  .explain-resize-handle {
+    display: none;
+  }
+  .finding-card-actions .btn,
+  .precommit-strip-actions .btn {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
+  .explain-resize-handle {
+    display: none;
+  }
+  .explain-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 260;
+    width: 100% !important;
+    max-width: none;
+    min-width: 0;
+    height: 100dvh;
+    border: none;
+    box-shadow: 0 -10px 40px rgba(1, 4, 9, 0.28);
+    animation: sheet-up 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .explain-panel-header {
+    padding: 10px 14px;
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+  .explain-body {
+    padding: 12px 14px max(12px, env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+  }
+  .explain-sections p,
+  .explain-sections ul,
+  .explain-followup {
+    font-size: 13px;
+  }
+  .explain-followup-input {
+    position: sticky;
+    bottom: 0;
+    margin: 0 -14px;
+    padding: 10px 14px max(10px, env(safe-area-inset-bottom));
+    background: var(--bg);
+  }
+  .explain-followup-input textarea {
+    min-height: 56px;
+    font-size: 16px;
+  }
+  .explain-followup-actions {
+    justify-content: space-between;
+  }
+  }
+}

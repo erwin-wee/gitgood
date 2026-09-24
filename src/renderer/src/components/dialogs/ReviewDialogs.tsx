@@ -4,6 +4,7 @@ import { errorMessage } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, useAppStore, type WorktreeReviewRun } from '../../state/store';
 import { Badge, Button, Callout, Checkbox, Dialog, Icon, PathLabel, Spinner } from '../ui';
+import { HelpPopover } from '../HelpPopover';
 import { liveFindings, SEVERITY_TONE } from '../review/ReviewView';
 
 /** Shared with the AI PR draft's first-use disclosure (see GitHubDialogs.tsx's CreatePullRequestDialog) so both AI features share one persisted "seen" flag. */
@@ -45,7 +46,7 @@ export function ReviewPreflightDialog({ target }: { target: ReviewTarget }): Rea
 
   return (
     <Dialog
-      title="Review with AI"
+      title={<span className="dialog-title-with-help"><span>Review with AI</span><HelpPopover title="Review severity" explanation="Blocker means a critical issue, warning means a meaningful risk, and nit means a small improvement." note="Treat findings as a review aid: inspect the diff and fix or discuss issues before sharing the change." /></span>}
       icon="sparkle"
       onClose={closeDialog}
       width="wide"
@@ -243,6 +244,7 @@ export function PrecommitReviewGateDialog({ run, onCommitAnyway }: { run: Worktr
     >
       {run.commitMessageMatches === false ? <Callout tone="warning">{run.commitMessageNote || 'The typed commit message may not match the diff.'}</Callout> : null}
       {run.summary ? <p className="selectable">{run.summary}</p> : null}
+      {counts.blocker ? <Callout tone="warning">Blocker findings indicate critical issues. Committing now may ship them; go back and fix them first.</Callout> : null}
       <div className="review-post-findings">
         {(['blocker', 'warning', 'nit'] as ReviewSeverity[]).map((sev) =>
           findings

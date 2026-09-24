@@ -75,7 +75,7 @@ function CheckFailedBanner(): React.JSX.Element | null {
       <span className="banner-actions">
         <Button size="sm" onClick={() => setExpanded((v) => !v)}>{expanded ? 'Hide output' : 'Show output'}</Button>
         {!retried ? <Button size="sm" variant="accent" icon="sparkle" loading={aiBusy} onClick={() => void actions.retryResolutionWithCheckOutput(path)}>Ask AI to fix</Button> : null}
-        <Button size="sm" variant="ghost" iconOnly icon="x" onClick={() => actions.dismissCheckBanner()} />
+        <Button size="sm" variant="ghost" iconOnly icon="x" aria-label="Dismiss check failure" onClick={() => actions.dismissCheckBanner()} />
       </span>
     </div>
   );
@@ -93,6 +93,9 @@ export function Banners(): React.JSX.Element | null {
   const updateState = useAppStore((s) => s.updateState);
   const checkBanner = useAppStore((s) => s.checkBanner);
   const [dismissedMerge, setDismissedMerge] = useState<number | null>(null);
+  const [dismissedLfsRepo, setDismissedLfsRepo] = useState<string | null>(null);
+  const uninitializedSubmodules = submodules.filter((s) => s.state === 'uninitialized');
+  const showLfsBanner = !!(repo && lfsStatus && lfsStatus.usedByRepo && !lfsStatus.installed);
 
   useEffect(() => {
     if (!merge) return;
@@ -100,8 +103,21 @@ export function Banners(): React.JSX.Element | null {
     return () => clearTimeout(t);
   }, [merge]);
 
+  useEffect(() => {
+    if (!uninitializedSubmodules.length || submoduleBannerDismissed) return;
+    const t = setTimeout(() => store.set({ submoduleBannerDismissed: true }), 8000);
+    return () => clearTimeout(t);
+  }, [submoduleBannerDismissed, uninitializedSubmodules.length]);
+
+  useEffect(() => {
+    const repoPath = repo?.path;
+    if (!showLfsBanner || !repoPath || dismissedLfsRepo === repoPath) return;
+    const t = setTimeout(() => setDismissedLfsRepo(repoPath), 8000);
+    return () => clearTimeout(t);
+  }, [dismissedLfsRepo, repo?.path, showLfsBanner]);
+
   const update = updateBanner(updateState);
-  if (!repo || !status) return update;
+  if (!repo || !status) return update ? <div className="banner-stack">{update}</div> : null;
   const banners: React.ReactNode[] = [];
   const op = status.operation;
 
@@ -109,7 +125,7 @@ export function Banners(): React.JSX.Element | null {
     const label = op.kind === 'merge' ? `Merging ${op.targetName ?? op.targetSha?.slice(0, 7) ?? ''} into ${status.branch.name ?? 'current branch'}` : op.kind === 'rebase' ? `Rebasing ${op.headName ?? ''} onto ${op.ontoName ?? op.onto?.slice(0, 7) ?? ''}${op.current && op.total ? ` (${op.current}/${op.total})` : ''}` : op.kind === 'cherry-pick' ? `Cherry-picking ${op.targetSha?.slice(0, 7) ?? ''}` : `Reverting ${op.targetSha?.slice(0, 7) ?? ''}`;
     const conflicts = status.files.filter((f) => f.conflict).length;
     banners.push(
-      <div key="op" className={`banner ${conflicts ? 'danger' : 'info'}`}>
+      <div key="operation-conflicts" className={`banner ${conflicts ? 'danger' : 'info'}`}>
         {aiBusy ? <Spinner /> : <Icon name={conflicts ? 'alert' : op.kind === 'merge' ? 'merge' : 'branch'} />}
         <span className="banner-text">
           <strong>{label}</strong>
@@ -136,7 +152,7 @@ export function Banners(): React.JSX.Element | null {
         <span className="banner-text">
           Successfully merged <strong>{merge.branch}</strong> into <strong>{status.branch.name}</strong>.
         </span>
-        <Button size="sm" variant="ghost" iconOnly icon="x" onClick={() => setDismissedMerge(merge.at)} />
+        <Button size="sm" variant="ghost" iconOnly icon="x" aria-label="Dismiss merge notification" onClick={() => setDismissedMerge(merge.at)} />
       </div>,
     );
   }
@@ -171,7 +187,6 @@ export function Banners(): React.JSX.Element | null {
     );
   }
 
-  const uninitializedSubmodules = submodules.filter((s) => s.state === 'uninitialized');
   if (uninitializedSubmodules.length && !submoduleBannerDismissed) {
     banners.push(
       <div key="submodules" className="banner info">
@@ -181,13 +196,13 @@ export function Banners(): React.JSX.Element | null {
         </span>
         <span className="banner-actions">
           <Button size="sm" variant="primary" onClick={() => void actions.initializeAndUpdateAllSubmodules()}>Initialize and update all</Button>
-          <Button size="sm" variant="ghost" iconOnly icon="x" onClick={() => store.set({ submoduleBannerDismissed: true })} />
+          <Button size="sm" variant="ghost" iconOnly icon="x" aria-label="Dismiss submodule notice" onClick={() => store.set({ submoduleBannerDismissed: true })} />
         </span>
       </div>,
     );
   }
 
-  if (lfsStatus && lfsStatus.usedByRepo && !lfsStatus.installed) {
+  if (showLfsBanner && dismissedLfsRepo !== repo.path) {
     banners.push(
       <div key="lfs" className="banner danger">
         <Icon name="alert" />
@@ -212,5 +227,5 @@ export function Banners(): React.JSX.Element | null {
   }
 
   if (update) banners.push(update);
-  return banners.length ? <>{banners}</> : null;
+  return banners.length ? <div className="banner-stack">{banners}</div> : null;
 }

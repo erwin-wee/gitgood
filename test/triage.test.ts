@@ -33,7 +33,6 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     labels: [],
     assignees: [],
     reviewRequests: [],
-    commitsCount: 1,
     filesChanged: [],
     reviewsCount: 0,
     latestReviews: [],

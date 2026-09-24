@@ -103,6 +103,70 @@
   color: var(--fg);
 }
 
+@media (pointer: coarse) {
+  .dialog-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .dialog-tabs button {
+    min-height: 44px;
+    flex: 0 0 auto;
+  }
+}
+
+/* Phone: every dialog is a bottom sheet; the widest ones fill the screen. Footer actions become full-width thumb targets. */
+@media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
+  .dialog-backdrop {
+    align-items: flex-end;
+  }
+  .dialog,
+  .dialog.wide,
+  .dialog.xwide {
+    width: 100%;
+    max-width: none;
+    max-height: calc(100dvh - env(safe-area-inset-top) - 12px);
+    border: none;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -10px 40px rgba(1, 4, 9, 0.28);
+    animation: sheet-up 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .dialog.wide,
+  .dialog.xwide {
+    height: calc(100dvh - env(safe-area-inset-top) - 12px);
+  }
+  .dialog-header {
+    min-height: 56px;
+    padding: 8px 8px 8px 18px;
+  }
+  .dialog-header h2 {
+    font-size: 17px;
+  }
+  .dialog-body {
+    padding: 16px 18px;
+    overscroll-behavior: contain;
+  }
+  .dialog-footer {
+    flex-wrap: wrap;
+    padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
+    border-radius: 0;
+  }
+  .dialog-footer .left {
+    flex: 1 1 100%;
+    margin-right: 0;
+    flex-wrap: wrap;
+  }
+  .dialog-footer > .btn {
+    flex: 1 1 0;
+    min-height: 44px;
+  }
+  .dialog-tabs {
+    padding: 0 10px;
+  }
+  }
+}
+
 .settings-layout {
   display: flex;
   min-height: 420px;
@@ -654,6 +718,7 @@
 .nl-builtin-row {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   text-align: left;
@@ -735,4 +800,303 @@
   padding: 6px 4px;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
+}
+.setup-next {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.setup-next h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.setup-next p {
+  margin: 5px 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.setup-next strong {
+  color: var(--fg);
+}
+
+.nl-examples {
+  margin: 12px 0 4px;
+}
+.nl-examples-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.nl-example-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.nl-example-row {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dialog .resolution-side-toggle {
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 400;
+  justify-content: flex-start;
+}
+.dialog .resolution-side-toggle:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+}
+/* Mobile dialog content: keep every overlay inside the sheet instead of shrinking controls into unusable slivers. */
+@media (pointer: coarse) {
+  .dialog-header > .btn.icon-only {
+    flex: 0 0 44px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .dialog-footer .left {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
+  .dialog-header h2 {
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .dialog-body,
+  .dialog-body > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .dialog-body input,
+  .dialog-body select,
+  .dialog-body textarea {
+    box-sizing: border-box;
+    max-width: 100%;
+  }
+  .dialog-body [style*='display: flex'],
+  .dialog-body [style*='display:flex'] {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .dialog-body [style*='grid-template-columns'] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    min-height: 0 !important;
+  }
+
+  .settings-layout {
+    display: block;
+    min-height: 0;
+    margin: -16px !important;
+  }
+  .settings-nav {
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 6px;
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-nav button {
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 10px 12px;
+    white-space: nowrap;
+  }
+  .settings-content {
+    max-height: none;
+    overflow: visible;
+    padding: 16px;
+  }
+  .settings-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .settings-row label {
+    flex: 0 0 auto;
+  }
+  .settings-row select,
+  .settings-row input {
+    width: 100%;
+    flex: 0 1 auto;
+  }
+  .watched-folder-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+  .watched-folder-row .watched-folder-path {
+    flex: 1 1 100%;
+  }
+  .watched-folder-row > label {
+    margin-right: auto;
+  }
+
+  .compare-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .compare-columns ul {
+    max-height: 220px;
+  }
+  .import-preview-table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .checks-list,
+  .branch-picker,
+  .repo-list-clone {
+    max-width: 100%;
+  }
+
+  .split-board {
+    flex-direction: column;
+    overflow-x: visible;
+  }
+  .split-commit-card {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+  }
+  .split-item {
+    min-height: 40px;
+    align-items: center;
+  }
+
+  .rebase-board {
+    flex-direction: column;
+  }
+  .rebase-row {
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 10px;
+  }
+  .rebase-row > select {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+  .rebase-message-input {
+    flex: 1 1 100%;
+    min-height: 40px;
+  }
+  .rebase-rationale {
+    flex: 1 1 100%;
+    max-width: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .rebase-preview {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 0;
+    max-height: 260px;
+  }
+  .rebase-order-controls {
+    display: inline-flex;
+    margin-left: auto;
+  }
+  .rebase-order-controls .btn.icon-only {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+  }
+
+  .command-palette-dialog .dialog-body > .filter-input {
+    position: sticky;
+    top: -16px;
+    z-index: 1;
+    padding: 8px 0;
+    background: var(--bg-overlay);
+  }
+  .command-palette-dialog .filter-input input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .nl-builtin-list {
+    max-height: none;
+  }
+  .nl-builtin-row {
+    min-height: 48px;
+    padding: 10px 12px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .nl-step-head {
+    align-items: flex-start;
+  }
+  .nl-step-head code {
+    flex: 1 1 180px;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .nl-step-head .btn.icon-only {
+    flex: 0 0 44px;
+  }
+  .nl-history-entry {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .nl-history-entry > div:last-child {
+    width: 100%;
+  }
+  }
+}
+
+@media (pointer: coarse) {
+  .toast .btn.sm {
+    min-height: 40px;
+  }
+}
+@media (pointer: coarse) {
+  .rebase-order-controls {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: auto;
+  }
+  .rebase-order-controls .btn.icon-only {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+  }
+}
+@media (pointer: fine) {
+  .rebase-order-controls {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
+  .dialog-body .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  }
 }

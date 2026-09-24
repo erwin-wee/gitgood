@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { BrowserWindow, nativeTheme, screen, shell } from 'electron';
 import { debounce } from '@shared/util';
+import { log } from './logger';
 import type { Store } from './store';
 import { sendEvent } from './ipc';
 
@@ -13,7 +14,8 @@ export function smokeHeadless(): boolean {
   return !!process.env.GITGOOD_SMOKE_SCRIPT && process.env.GITGOOD_SMOKE_SHOW !== '1';
 }
 
-export function createMainWindow(store: Store, onFocusChange?: (focused: boolean) => void): BrowserWindow {
+/** `remoteUrl` (client mode) loads the GitGood server's renderer with the client preload instead of the bundled app. */
+export function createMainWindow(store: Store, onFocusChange?: (focused: boolean) => void, remoteUrl?: string): BrowserWindow {
   const state = store.getState();
   const headless = smokeHeadless();
   const bounds = state.window;
@@ -36,6 +38,7 @@ export function createMainWindow(store: Store, onFocusChange?: (focused: boolean
     trafficLightPosition: process.platform === 'darwin' ? { x: 14, y: 14 } : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      additionalArguments: remoteUrl ? ['--gitgood-client'] : [],
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -73,7 +76,7 @@ export function createMainWindow(store: Store, onFocusChange?: (focused: boolean
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {
-    const allowed = process.env.ELECTRON_RENDERER_URL ?? 'file://';
+    const allowed = remoteUrl ? `${remoteUrl}/` : (process.env.ELECTRON_RENDERER_URL ?? 'file://');
     if (!url.startsWith(allowed)) {
       event.preventDefault();
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
@@ -85,7 +88,18 @@ export function createMainWindow(store: Store, onFocusChange?: (focused: boolean
     if (!headless) win.show();
   });
 
-  if (process.env.ELECTRON_RENDERER_URL) {
+  if (remoteUrl) {
+    // The server may still be starting (or be unreachable): show why the window is empty and keep retrying.
+    win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      log.warn(`Could not reach the GitGood server at ${remoteUrl} (${description}); retrying`);
+      void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<body style="font:14px system-ui;padding:2em">Waiting for the GitGood server at ${remoteUrl}…</body>`)}`);
+      setTimeout(() => {
+        if (!win.isDestroyed()) void win.loadURL(remoteUrl);
+      }, 2000);
+    });
+    void win.loadURL(remoteUrl);
+  } else if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'));

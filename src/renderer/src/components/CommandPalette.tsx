@@ -50,6 +50,7 @@ const BUILTIN_ACTIONS: { id: string; label: string }[] = [
   { id: 'settings', label: 'Settings…' },
 ];
 
+const EXAMPLE_PROMPTS = ['Create a branch called feature/login', 'Squash the last 3 commits', 'Review my changes', 'Split these changes into focused commits'];
 const RISK_TONE: Record<NlRisk, 'neutral' | 'attention' | 'danger'> = { safe: 'neutral', 'changes-history': 'attention', 'discards-work': 'danger', 'touches-remote': 'danger' };
 const RISK_LABEL: Record<NlRisk, string> = { safe: 'safe', 'changes-history': 'changes history', 'discards-work': 'discards work', 'touches-remote': 'touches remote' };
 const STEP_ICON: Record<'running' | 'done' | 'error', IconName> = { running: 'sync', done: 'check-circle', error: 'x-circle' };
@@ -145,19 +146,31 @@ export function CommandPalette(): React.JSX.Element {
               spellCheck={false}
             />
           </div>
+          {!nl.query.trim() ? (
+            <div className="nl-examples">
+              <span className="nl-examples-label">Try an example</span>
+              <div className="nl-example-list">
+                {EXAMPLE_PROMPTS.map((prompt) => (
+                  <Button key={prompt} size="sm" variant="ghost" className="nl-example-row" onClick={() => actions.setPaletteQuery(prompt)}>
+                    {prompt}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <ul className="nl-builtin-list">
             {matches.map((m) => (
               <li key={m.id}>
-                <button type="button" className="nl-builtin-row" onClick={() => runBuiltin(m.id)}>
+                <Button variant="ghost" className="nl-builtin-row" onClick={() => runBuiltin(m.id)}>
                   {m.label}
-                </button>
+                </Button>
               </li>
             ))}
             {aiAvailable ? (
               <li>
-                <button type="button" className="nl-builtin-row nl-ask-ai-row" onClick={askAi} disabled={!nl.query.trim()}>
+                <Button variant="ghost" className="nl-builtin-row nl-ask-ai-row" onClick={askAi} disabled={!nl.query.trim()}>
                   <Icon name="sparkle" /> Ask AI: “{nl.query.trim() || '…'}”
-                </button>
+                </Button>
               </li>
             ) : null}
           </ul>

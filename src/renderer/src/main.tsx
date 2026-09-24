@@ -11,7 +11,7 @@ import './styles/components.css';
 import './styles/diff.css';
 import './styles/dialogs.css';
 import './styles/review.css';
-
+import './styles/help.css';
 // Exposed for automated smoke tests and debugging from the devtools console.
 // `invoke` lets a smoke script drive a raw IPC method a friendly action does not cover (e.g. forcing
 // a push with no upstream set, to reproduce a specific error for the error-explanation smoke test).

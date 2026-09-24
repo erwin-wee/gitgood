@@ -154,6 +154,7 @@ export class GitClient {
 export class TransferProgressParser {
   private readonly phases: Record<string, { weight: number; value: number }>;
   private readonly order: string[];
+  private started = false;
   constructor(kind: 'fetch' | 'push') {
     if (kind === 'push') {
       this.order = ['Enumerating objects', 'Counting objects', 'Compressing objects', 'Writing objects'];
@@ -177,29 +178,39 @@ export class TransferProgressParser {
     }
   }
 
-  /** Feed a chunk of stderr; returns latest {percent, description} if progress was recognized. */
-  feed(chunk: string): { percent: number; description: string } | null {
-    let latest: { percent: number; description: string } | null = null;
-    for (const line of chunk.split(/[\r\n]+/)) {
-      const m = /^(remote: )?([A-Za-z ]+?):\s+(\d+)%/.exec(line.trim());
-      if (!m) continue;
-      const key = `${m[1] ?? ''}${m[2]}`;
-      const pct = parseInt(m[3], 10) / 100;
-      const phase = this.phases[key] ?? this.phases[m[2]];
-      if (!phase) continue;
-      phase.value = Math.max(phase.value, pct);
-      // Earlier phases are complete once a later phase reports.
-      const idx = this.order.indexOf(key in this.phases ? key : m[2]);
-      for (let i = 0; i < idx; i++) this.phases[this.order[i]].value = 1;
-      let total = 0;
-      let weightSum = 0;
-      for (const name of this.order) {
-        total += this.phases[name].weight * this.phases[name].value;
-        weightSum += this.phases[name].weight;
+  /**
+   * Feed a chunk of stderr; returns the latest {percent, description}. Non-progress lines (hook
+   * output such as a pre-push check, remote messages) become the description so a long hook does
+   * not leave the UI on "Starting…"; percent stays null until a transfer phase reports.
+   */
+  feed(chunk: string): { percent: number | null; description: string } | null {
+    let latest: { percent: number | null; description: string } | null = null;
+    for (const raw of chunk.split(/[\r\n]+/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      const m = /^(remote: )?([A-Za-z ]+?):\s+(\d+)%/.exec(line);
+      const key = m ? `${m[1] ?? ''}${m[2]}` : '';
+      const phase = m ? (this.phases[key] ?? this.phases[m[2]]) : undefined;
+      if (m && phase) {
+        this.started = true;
+        phase.value = Math.max(phase.value, parseInt(m[3], 10) / 100);
+        // Earlier phases are complete once a later phase reports.
+        const idx = this.order.indexOf(key in this.phases ? key : m[2]);
+        for (let i = 0; i < idx; i++) this.phases[this.order[i]].value = 1;
       }
-      latest = { percent: Math.min(1, total / (weightSum || 1)), description: line.trim().replace(/^remote:\s*/, '') };
+      latest = { percent: this.started ? this.total() : null, description: line.replace(/^remote:\s*/, '') };
     }
     return latest;
+  }
+
+  private total(): number {
+    let total = 0;
+    let weightSum = 0;
+    for (const name of this.order) {
+      total += this.phases[name].weight * this.phases[name].value;
+      weightSum += this.phases[name].weight;
+    }
+    return Math.min(1, total / (weightSum || 1));
   }
 }
 

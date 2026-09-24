@@ -32,6 +32,8 @@ function applyTheme(settings: AppSettings | null, systemDark: boolean): void {
   const theme = settings?.theme ?? 'system';
   const dark = theme === 'dark' || (theme === 'system' && systemDark);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  // Browser/PWA chrome (status bar, address bar) matches the toolbar surface, --bg-subtle.
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#161b22' : '#f6f8fa');
   store.set({ dark });
 }
 
@@ -758,7 +760,7 @@ export async function loadTags(): Promise<void> {
 
 export function setView(view: View): void {
   if (store.get().view === view) return;
-  store.set({ view });
+  store.set({ view, phonePane: 'list' });
   if (view === 'history') {
     const h = store.get().history;
     if (!h.commits.length || h.stale) void loadHistory(true);

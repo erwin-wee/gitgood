@@ -212,11 +212,20 @@ describe('transfer progress', () => {
     const a = p.feed('remote: Counting objects: 100% (10/10), done.\r');
     expect(a?.percent).toBeGreaterThan(0);
     const b = p.feed('Receiving objects:  50% (5/10)\r');
-    expect(b!.percent).toBeGreaterThan(a!.percent);
+    expect(b!.percent).toBeGreaterThan(a!.percent!);
     expect(b!.description).toContain('Receiving objects');
     const c = p.feed('Resolving deltas: 100% (3/3), done.\n');
     expect(c!.percent).toBeGreaterThan(0.8);
-    expect(p.feed('some unrelated line')).toBeNull();
+    // Non-progress lines (remote messages) become the description without moving the bar.
+    expect(p.feed('To github.com:o/r.git\n')).toEqual({ percent: c!.percent, description: 'To github.com:o/r.git' });
+    expect(p.feed('\n')).toBeNull();
+  });
+
+  it('surfaces hook output before any transfer phase', () => {
+    // A pre-push hook runs before git writes objects; without this the UI sits on "Starting…".
+    const p = new TransferProgressParser('push');
+    expect(p.feed('pre-push: running verify:prepush\n')).toEqual({ percent: null, description: 'pre-push: running verify:prepush' });
+    expect(p.feed('Writing objects:  50% (5/10)\r')!.percent).toBeGreaterThan(0);
   });
 });
 
@@ -347,17 +356,15 @@ describe('pull request list parsing (triage fields)', () => {
     updatedAt: '2026-01-02T00:00:00Z',
   };
 
-  it('parses commit/review/comment counts, latest reviews and file stats', () => {
+  it('parses review/comment counts, latest reviews and file stats', () => {
     const pr = toPullRequest({
       ...baseRaw,
-      commits: [{ oid: '1' }, { oid: '2' }],
       files: [{ path: 'src/a.ts', additions: 3, deletions: 1 }, { path: '', additions: 1, deletions: 0 }],
       reviews: [{ author: { login: 'reviewer1' }, state: 'COMMENTED' }, { author: { login: 'reviewer1' }, state: 'APPROVED' }],
       latestReviews: [{ author: { login: 'reviewer1' }, state: 'APPROVED' }],
       comments: [{ author: { login: 'hubot' }, body: 'ping' }],
     });
     expect(pr.headSha).toBe('abc123');
-    expect(pr.commitsCount).toBe(2);
     expect(pr.filesChanged).toEqual([{ path: 'src/a.ts', additions: 3, deletions: 1 }]);
     expect(pr.reviewsCount).toBe(2);
     expect(pr.latestReviews).toEqual([{ author: 'reviewer1', state: 'APPROVED' }]);
@@ -366,7 +373,6 @@ describe('pull request list parsing (triage fields)', () => {
 
   it('defaults every triage field to empty/zero when gh omits them', () => {
     const pr = toPullRequest({ ...baseRaw });
-    expect(pr.commitsCount).toBe(0);
     expect(pr.filesChanged).toEqual([]);
     expect(pr.reviewsCount).toBe(0);
     expect(pr.latestReviews).toEqual([]);

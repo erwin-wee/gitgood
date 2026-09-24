@@ -41,6 +41,12 @@ export function SetupScreen({ tools }: { tools: ToolsState }): React.JSX.Element
             )}
           </div>
         </div>
+        <div className="setup-next">
+          <h2>What’s next</h2>
+          <p><strong>Clone:</strong> Bring down a repository from GitHub or another URL.</p>
+          <p><strong>Create:</strong> Start a new repository from an empty folder.</p>
+          <p><strong>Add a repo:</strong> Open a repository that is already on this computer.</p>
+        </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
           <Button variant="primary" icon="sync" onClick={() => void actions.refreshTools()}>Check again</Button>
           <Button onClick={() => openDialog({ kind: 'settings', tab: 'advanced' })}>Set tool locations manually</Button>

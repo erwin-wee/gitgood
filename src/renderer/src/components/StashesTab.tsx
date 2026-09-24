@@ -49,7 +49,7 @@ export function StashesView(): React.JSX.Element {
           <span style={{ flex: 1 }} />
           <Button size="sm" variant="ghost" iconOnly icon="x" title="Back to changes" onClick={() => actions.setView('changes')} />
         </div>
-        <div className="file-list" role="listbox" aria-label="Stashes" onKeyDown={onListKeyDown}>
+        <div className="file-list" role="listbox" aria-label="Stashes" data-phone-next="detail" onKeyDown={onListKeyDown}>
           {view.loading && !stashes.length ? (
             <div className="list-empty">
               <Spinner /> Loading stashes…
@@ -94,7 +94,7 @@ export function StashesView(): React.JSX.Element {
             <div className="changes-header">
               <span className="count">{view.files.length} changed file{view.files.length === 1 ? '' : 's'}</span>
             </div>
-            <div className="file-list" role="listbox" aria-label="Changed files" onKeyDown={onListKeyDown}>
+            <div className="file-list" role="listbox" aria-label="Changed files" data-phone-next="file" onKeyDown={onListKeyDown}>
               {view.filesLoading ? (
                 <div className="list-empty">
                   <Spinner />

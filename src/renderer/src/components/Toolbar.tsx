@@ -5,6 +5,7 @@ import { invoke, isMac } from '../api';
 import * as actions from '../state/actions';
 import { openDialog, setPopover, store, useAppStore } from '../state/store';
 import { Avatar, Badge, Button, FilterInput, Icon, RelativeTime, Spinner, openContextMenu, useFilter, type MenuItem } from './ui';
+import { PHONE_QUERY, PhoneBackButton, useMediaQuery } from './Mobile';
 
 export function Toolbar(): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
@@ -21,6 +22,9 @@ export function Toolbar(): React.JSX.Element {
   const ghLogin = useAppStore((s) => s.tools?.ghAccount?.login ?? null);
   const triageEnabled = settings?.ai.provider !== 'disabled' && !!repo?.github;
   const waitingOnYouCount = useMemo(() => (triageEnabled ? actions.waitingOnYouPrs(prsList, triageCache, ghLogin).length : 0), [triageEnabled, prsList, triageCache, ghLogin]);
+  const phone = useMediaQuery(PHONE_QUERY);
+  const phonePane = useAppStore((s) => s.phonePane);
+  const phoneDrilled = phone && phonePane !== 'list' && !!repo;
 
   const activeProgress = Object.values(progress).find((p) => !p.repoPath || p.repoPath === repo?.path) ?? null;
   const branch = status?.branch ?? null;
@@ -92,19 +96,21 @@ export function Toolbar(): React.JSX.Element {
     syncValue = 'Working…';
   }
 
+  const syncLabel = typeof syncValue === 'string' ? `${syncTitle}: ${syncValue}` : syncTitle;
   const branchLabel = !repo ? '—' : !status ? 'Loading…' : status.operation.kind === 'rebase' ? `Rebasing ${status.operation.headName ?? ''}` : branch?.detached ? 'Detached HEAD' : branch?.unborn ? `${branch.name ?? 'main'} (no commits)` : branch?.name ?? '—';
 
   return (
-    <div className={`toolbar ${isMac ? 'mac' : ''}`}>
-      <button type="button" className={`toolbar-button repo ${popover === 'repos' ? 'open' : ''}`} onClick={() => setPopover('repos')} title="Current repository (Ctrl+T)">
+    <div className={`toolbar ${isMac ? 'mac' : ''} ${phoneDrilled ? 'drilled' : ''}`}>
+      {phoneDrilled ? <PhoneBackButton /> : null}
+      <Button className={`toolbar-button repo ${popover === 'repos' ? 'open' : ''}`} onClick={() => setPopover('repos')} title="Current repository (Ctrl+T)" aria-label={`Current repository: ${repo ? repo.alias ?? repo.name : 'No repository'}`}>
         <Icon name="repo" className="icon" />
         <span className="labels">
           <span className="title">Current repository</span>
           <span className="value truncate">{repo ? repo.alias ?? repo.name : 'No repository'}</span>
         </span>
         <Icon name="chevron-down" className="chevron" />
-      </button>
-      <button type="button" className={`toolbar-button branch ${popover === 'branches' ? 'open' : ''}`} onClick={() => repo && setPopover('branches')} disabled={!repo} title={waitingOnYouCount ? `Current branch — ${waitingOnYouCount} pull request${waitingOnYouCount === 1 ? '' : 's'} waiting on you (Ctrl+B)` : 'Current branch (Ctrl+B)'}>
+      </Button>
+      <Button className={`toolbar-button branch ${popover === 'branches' ? 'open' : ''}`} onClick={() => repo && setPopover('branches')} disabled={!repo} title={waitingOnYouCount ? `Current branch — ${waitingOnYouCount} pull request${waitingOnYouCount === 1 ? '' : 's'} waiting on you (Ctrl+B)` : 'Current branch (Ctrl+B)'} aria-label={`Current branch: ${branchLabel}`}>
         <Icon name={currentPr ? 'pull-request' : 'branch'} className="icon" />
         <span className="labels">
           <span className="title">{currentPr ? `Pull request #${currentPr.number}` : 'Current branch'}</span>
@@ -112,17 +118,17 @@ export function Toolbar(): React.JSX.Element {
         </span>
         {waitingOnYouCount ? <Badge tone="accent">{waitingOnYouCount}</Badge> : null}
         <Icon name="chevron-down" className="chevron" />
-      </button>
-      <button type="button" className="toolbar-button sync" onClick={syncAction} disabled={disabled || !!activeProgress} title={`${syncTitle} (Ctrl+Shift+T fetch, Ctrl+P push, Ctrl+Shift+P pull)`}>
+      </Button>
+      <Button className="toolbar-button sync" onClick={syncAction} disabled={disabled || !!activeProgress} title={`${syncLabel} (Ctrl+Shift+T fetch, Ctrl+P push, Ctrl+Shift+P pull)`} aria-label={syncLabel}>
         {activeProgress || operation ? <Spinner /> : <Icon name={syncIcon} className="icon" />}
         <span className="labels">
           <span className="title">{syncTitle}</span>
           <span className="value truncate">{syncValue}</span>
         </span>
         {activeProgress ? <span className="toolbar-progress" style={{ width: `${Math.round((activeProgress.percent ?? 0.1) * 100)}%` }} /> : null}
-      </button>
+      </Button>
       {activeProgress && activeProgress.kind === 'generic' ? (
-        <Button size="sm" variant="ghost" iconOnly icon="x" title="Cancel" onClick={() => void invoke('app.operations.cancel', activeProgress.id)} />
+        <Button size="sm" variant="ghost" iconOnly icon="x" title="Cancel" aria-label="Cancel operation" onClick={() => void invoke('app.operations.cancel', activeProgress.id)} />
       ) : null}
       <span className="toolbar-spacer" />
       <div className="toolbar-right">
@@ -136,8 +142,9 @@ export function Toolbar(): React.JSX.Element {
             Resolve conflicts
           </Button>
         ) : null}
+        <Button variant="ghost" iconOnly icon="info" title="Help" aria-label="Help" onClick={() => store.set({ helpOpen: true })} />
         <InboxBell />
-        <Button variant="ghost" iconOnly icon="gear" title="Options (Ctrl+,)" onClick={() => openDialog({ kind: 'settings' })} />
+        <Button variant="ghost" iconOnly icon="gear" title="Options (Ctrl+,)" aria-label="Options" onClick={() => openDialog({ kind: 'settings' })} />
       </div>
       {popover === 'repos' ? <RepositoryPopover /> : null}
       {popover === 'branches' && repo ? <BranchPopover /> : null}
@@ -255,7 +262,7 @@ function RepositoryPopover(): React.JSX.Element {
   );
 
   return (
-    <div className="popover" style={{ left: isMac ? 76 : 0 }}>
+    <div className="popover repository-popover" style={{ left: isMac ? 76 : 0 }}>
       <div className="popover-header">
         <FilterInput value={query} onChange={setQuery} placeholder="Filter repositories" autoFocus />
         <div style={{ position: 'relative' }}>
@@ -371,7 +378,7 @@ function BranchPopover(): React.JSX.Element {
   );
 
   return (
-    <div className="popover" style={{ left: (isMac ? 76 : 0) + 300, width: 420 }}>
+    <div className="popover branch-popover" style={{ left: (isMac ? 76 : 0) + 300, width: 420 }}>
       {repo?.github ? (
         <div className="popover-tabs">
           <button type="button" className={`tab ${tab === 'branches' ? 'active' : ''}`} onClick={() => setTab('branches')}>Branches</button>
@@ -544,7 +551,7 @@ function PullRequestList({ prs, loading, error, query, setQuery }: { prs: PullRe
     <>
       <div className="popover-header">
         <FilterInput value={query} onChange={setQuery} placeholder="Filter pull requests" autoFocus />
-        <Button iconOnly icon="sync" variant="ghost" title="Refresh" onClick={() => void actions.loadPullRequests(true)} disabled={loading} />
+        <Button iconOnly icon="sync" variant="ghost" title="Refresh" aria-label="Refresh pull requests" onClick={() => void actions.loadPullRequests(true)} disabled={loading} />
       </div>
       {aiEnabled ? (
         <div className="popover-header triage-bar">
@@ -606,8 +613,8 @@ function PullRequestList({ prs, loading, error, query, setQuery }: { prs: PullRe
               {aiEnabled ? <TriageLine pr={pr} cache={triage.byNumber} login={login} /> : null}
             </span>
             {pr.checks.state !== 'none' ? <span className={`check-dot ${pr.checks.state}`} title={`Checks: ${pr.checks.passed} passed, ${pr.checks.failed} failed, ${pr.checks.pending} pending`} /> : null}
-            {aiEnabled ? <Button size="sm" variant="ghost" iconOnly icon="sparkle" className="sparkle" title="Review with AI" onClick={(e) => { e.stopPropagation(); actions.reviewPullRequest(pr); }} /> : null}
-            <Button size="sm" variant="ghost" iconOnly icon="info" title="Details" onClick={(e) => { e.stopPropagation(); store.set({ popover: null }); openDialog({ kind: 'pr-details', pr }); }} />
+            {aiEnabled ? <Button size="sm" variant="ghost" iconOnly icon="sparkle" className="sparkle" title="Review with AI" aria-label="Review pull request with AI" onClick={(e) => { e.stopPropagation(); actions.reviewPullRequest(pr); }} /> : null}
+            <Button size="sm" variant="ghost" iconOnly icon="info" title="Details" aria-label="View pull request details" onClick={(e) => { e.stopPropagation(); store.set({ popover: null }); openDialog({ kind: 'pr-details', pr }); }} />
           </div>
         ))}
       </div>
@@ -624,11 +631,11 @@ function InboxBell(): React.JSX.Element | null {
   const pausedLabel = inbox.paused === 'rate-limit' ? 'Notifications paused: rate limited' : inbox.paused === 'scope' ? 'Notifications need access to be granted' : inbox.paused === 'offline' ? 'Notifications offline — showing the cached list' : null;
   const title = !account ? 'Sign in to see notifications' : (pausedLabel ?? `Notifications${inbox.unreadCount ? ` — ${inbox.unreadCount} unread` : ''} (Ctrl+Shift+J)`);
   return (
-    <button type="button" className={`btn ghost icon-only inbox-bell ${open ? 'open' : ''}`} onClick={() => actions.toggleInboxPanel()} title={title}>
+    <Button variant="ghost" iconOnly className={`inbox-bell ${open ? 'open' : ''}`} onClick={() => actions.toggleInboxPanel()} title={title} aria-label={title}>
       <Icon name="bell" className="icon" />
       {!account ? <span className="inbox-dot" /> : inbox.unreadCount > 0 ? <span className="inbox-count">{inbox.unreadCount > 99 ? '99+' : inbox.unreadCount}</span> : null}
       {account && pausedLabel ? <span className="inbox-paused-marker" /> : null}
-    </button>
+    </Button>
   );
 }
 

@@ -4,6 +4,7 @@ import { isMac } from '../../api';
 import * as actions from '../../state/actions';
 import { useAppStore, type PrReviewRun } from '../../state/store';
 import { onListKeyDown } from '../../lib/listKeys';
+import { PHONE_QUERY, useMediaQuery } from '../Mobile';
 import { CommitFileRow } from '../ChangesTab';
 import { Badge, Button, Icon, PathLabel, Spinner, openContextMenu, type IconName } from '../ui';
 
@@ -73,7 +74,7 @@ export function ReviewView(): React.JSX.Element {
             const f = entry.file;
             const c = countByPath.get(f.path);
             return (
-              <div key={f.path} className={`review-file-row ${entry.status}`}>
+              <div key={f.path} className={`review-file-row ${entry.status}`} data-phone-next="file" data-phone-row>
                 <CommitFileRow
                   file={f}
                   selected={review.selectedPath === f.path}
@@ -117,6 +118,7 @@ function rank(s: ReviewSeverity): number {
 
 function ReviewPanel({ run, findings }: { run: ReviewRun; findings: ReviewFinding[] }): React.JSX.Element {
   const review = useAppStore((s) => s.review);
+  const isPhone = useMediaQuery(PHONE_QUERY);
   const stale = useAppStore((s) => {
     const r = s.review.run;
     if (!r) return false;
@@ -134,7 +136,7 @@ function ReviewPanel({ run, findings }: { run: ReviewRun; findings: ReviewFindin
   const failed = run.files.filter((f) => f.status === 'failed').length;
   const canPost = run.target.kind === 'pr' && !review.running;
 
-  if (review.panelCollapsed) {
+  if (review.panelCollapsed && !isPhone) {
     return (
       <aside className="review-panel collapsed">
         <Button size="sm" variant="ghost" iconOnly icon="chevron-right" title="Show findings" onClick={() => actions.toggleReviewPanel()} />
@@ -201,7 +203,7 @@ function ReviewPanel({ run, findings }: { run: ReviewRun; findings: ReviewFindin
 
 function FindingRow({ finding, active }: { finding: ReviewFinding; active: boolean }): React.JSX.Element {
   return (
-    <div className={`finding-row ${active ? 'active' : ''} ${finding.confidence === 'low' ? 'low-confidence' : ''}`} onClick={() => actions.focusFinding(finding)} title={finding.detail}>
+    <div className={`finding-row ${active ? 'active' : ''} ${finding.confidence === 'low' ? 'low-confidence' : ''}`} data-phone-next="file" data-phone-row onClick={() => actions.focusFinding(finding)} title={finding.detail}>
       <Icon name={SEVERITY_ICON[finding.severity]} className={`finding-icon ${SEVERITY_TONE[finding.severity]}`} />
       <span className="finding-main">
         <span className="finding-title truncate">{finding.title}</span>

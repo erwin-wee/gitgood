@@ -46,7 +46,6 @@ function makePr(number: number): PullRequest {
     labels: [],
     assignees: [],
     reviewRequests: [],
-    commitsCount: 1,
     filesChanged: [],
     reviewsCount: 0,
     latestReviews: [],

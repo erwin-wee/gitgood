@@ -318,32 +318,35 @@ export function ContextMenuHost(): React.JSX.Element | null {
   });
   if (!menuState) return null;
   return (
-    <div ref={ref} className="context-menu" style={{ left: menuState.x, top: menuState.y }} role="menu">
-      {menuState.items.map((item, i) =>
-        item.type === 'separator' ? (
-          <div key={i} className="separator" />
-        ) : (
-          <button
-            key={i}
-            type="button"
-            role="menuitem"
-            className={`item ${item.danger ? 'danger' : ''}`}
-            disabled={item.disabled}
-            title={item.title}
-            onClick={() => {
-              closeContextMenu();
-              item.onClick?.();
-            }}
-          >
-            <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-              {item.icon ? <Icon name={item.icon} /> : null}
-              {item.label}
-            </span>
-            {item.shortcut ? <span className="shortcut">{item.shortcut}</span> : null}
-          </button>
-        ),
-      )}
-    </div>
+    <>
+      <div className="context-menu-scrim" />
+      <div ref={ref} className="context-menu" style={{ left: menuState.x, top: menuState.y }} role="menu">
+        {menuState.items.map((item, i) =>
+          item.type === 'separator' ? (
+            <div key={i} className="separator" />
+          ) : (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              className={`item ${item.danger ? 'danger' : ''}`}
+              disabled={item.disabled}
+              title={item.title}
+              onClick={() => {
+                closeContextMenu();
+                item.onClick?.();
+              }}
+            >
+              <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                {item.icon ? <Icon name={item.icon} /> : null}
+                {item.label}
+              </span>
+              {item.shortcut ? <span className="shortcut">{item.shortcut}</span> : null}
+            </button>
+          ),
+        )}
+      </div>
+    </>
   );
 }
 

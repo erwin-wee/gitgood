@@ -495,9 +495,13 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     [selected, allKeys, commitSelection],
   );
   const startDrag = useCallback(
-    (key: string, e: React.MouseEvent) => {
-      if (e.button !== 0) return;
+    (key: string, e: React.PointerEvent) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
+      // Touch and pen pointers are implicitly captured by the cell they start on, so no other cell would ever see
+      // pointerenter; releasing the capture lets a finger drag across lines like a mouse does.
+      const target = e.target;
+      if (target instanceof Element && target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
       const value = !selected.has(key);
       dragRef.current = { value, last: key };
       const next = new Set(selected);
@@ -524,8 +528,12 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     const up = () => {
       dragRef.current = null;
     };
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
   }, []);
 
   const toggleHunk = (hunkIndex: number) => {
@@ -548,7 +556,7 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     if (!entry || entry.line.type === 'context') return <td className="sel cell-empty-sel" />;
     const on = selected.has(entry.key);
     return (
-      <td className={`sel ${on ? 'on' : ''} ${entry.line.type === 'add' ? 'add-num' : 'del-num'}`} onMouseDown={(e) => startDrag(entry.key, e)} onMouseEnter={() => dragOver(entry.key)} onClick={(e) => e.shiftKey && toggleKey(entry.key, true)} title={on ? 'Exclude line from commit' : 'Include line in commit'}>
+      <td className={'sel ' + (on ? 'on' : '') + ' ' + (entry.line.type === 'add' ? 'add-num' : 'del-num')} onPointerDown={(e) => startDrag(entry.key, e)} onPointerEnter={() => dragOver(entry.key)} onClick={(e) => e.shiftKey && toggleKey(entry.key, true)} title={on ? 'Exclude line from commit' : 'Include line in commit'}>
         <Icon name="check" size={12} />
       </td>
     );

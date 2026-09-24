@@ -6,10 +6,10 @@ import { historyFilterActive, historyReorderDisabled } from '../state/actions';
 import { openDialog, patchHistory, setPopover, store, useAppStore } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
 import { onListKeyDown } from '../lib/listKeys';
-import { Avatar, Badge, Button, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
+import { Avatar, Badge, Button, Callout, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
 import { useWindowedRows } from '../lib/windowing';
 
-const COMMIT_ROW_ESTIMATES = { row: 52 };
+const COMMIT_ROW_ESTIMATES = { row: 60 };
 
 const SIGNATURE_BADGES: Partial<Record<SignatureStatus, { icon: IconName; className: string; label: (signer: string | null) => string }>> = {
   good: { icon: 'check-circle', className: 'sig-good', label: (signer) => `Good signature${signer ? ` from ${signer}` : ''}` },
@@ -76,6 +76,9 @@ export function HistoryTab(): React.JSX.Element {
   const sentinel = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState<string | 'top' | null>(null);
   const [listEl, setListEl] = useState<HTMLElement | null>(null);
+  const [historySearchFocused, setHistorySearchFocused] = useState(false);
+  const [filterCheatSheetOpen, setFilterCheatSheetOpen] = useState(true);
+  const [filterCheatSheetDismissed, setFilterCheatSheetDismissed] = useState(false);
   const win = useWindowedRows(listEl, { count: history.commits.length, kindOf: () => 'row', estimates: COMMIT_ROW_ESTIMATES, resetKey: history.path ?? '' });
   const filterActive = historyFilterActive(history);
   const reorderDisabled = historyReorderDisabled(history);
@@ -125,16 +128,55 @@ export function HistoryTab(): React.JSX.Element {
         <div className="history-path-chip">
           <Icon name="history" size={12} />
           <span className="mono truncate" title={history.path}>{history.path}</span>
-          <Button size="sm" variant="ghost" iconOnly icon="x" title="Show full branch history" onClick={() => actions.clearFileHistory()} />
+          <Button size="sm" variant="ghost" iconOnly icon="x" title="Show full branch history" aria-label="Show full branch history" onClick={() => actions.clearFileHistory()} />
         </div>
       ) : null}
       <div className="history-header" style={{ position: 'relative' }}>
-        <FilterInput id="history-search" value={history.search} onChange={actions.setHistorySearch} placeholder="Search commits, or content:/regex:/path:/author:/after:/before:/all:" />
+        <div
+          className="history-search-shell"
+          style={{ flex: 1, minWidth: 0 }}
+          onFocus={() => {
+            setHistorySearchFocused(true);
+            if (filterCheatSheetDismissed) {
+              setFilterCheatSheetDismissed(false);
+              setFilterCheatSheetOpen(true);
+            }
+          }}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHistorySearchFocused(false);
+          }}
+        >
+          <FilterInput id="history-search" value={history.search} onChange={actions.setHistorySearch} placeholder="Search commits, or content:/regex:/path:/author:/after:/before:/all:" />
+          {historySearchFocused ? (
+            filterCheatSheetDismissed ? (
+              <Button size="sm" variant="ghost" icon="chevron-down" onClick={() => { setFilterCheatSheetDismissed(false); setFilterCheatSheetOpen(true); }}>Show filter syntax</Button>
+            ) : (
+              <Callout tone="neutral" icon="filter">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <strong style={{ flex: 1 }}>Filter syntax</strong>
+                  <Button size="sm" variant="ghost" iconOnly icon={filterCheatSheetOpen ? 'chevron-down' : 'chevron-right'} title={filterCheatSheetOpen ? 'Collapse filter syntax' : 'Expand filter syntax'} aria-label={filterCheatSheetOpen ? 'Collapse filter syntax' : 'Expand filter syntax'} onClick={() => setFilterCheatSheetOpen((open) => !open)} />
+                  <Button size="sm" variant="ghost" iconOnly icon="x" title="Dismiss filter syntax" aria-label="Dismiss filter syntax" onClick={() => { setFilterCheatSheetDismissed(true); setFilterCheatSheetOpen(false); }} />
+                </div>
+                {filterCheatSheetOpen ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '3px 10px', marginTop: 6, fontSize: 11 }}>
+                    <code>content:</code><span>search added and removed lines</span>
+                    <code>regex:</code><span>match changed lines with a POSIX ERE</span>
+                    <code>path:</code><span>limit matches to a file or glob</span>
+                    <code>author:</code><span>match an author name or email</span>
+                    <code>after:</code><span>commits on or after a date</span>
+                    <code>before:</code><span>commits on or before a date</span>
+                  </div>
+                ) : null}
+              </Callout>
+            )
+          ) : null}
+        </div>
         <Button
           className="history-filter-toggle"
           size="sm"
           variant={popover === 'history-filter' ? 'accent' : 'ghost'}
           iconOnly
+          aria-label="Filter history…"
           icon="filter"
           title="Filter history…"
           onClick={() => setPopover('history-filter')}
@@ -243,18 +285,14 @@ const CommitRow = memo(function CommitRow({ commit: c, selected, inactive, unpus
         if (!e.currentTarget.title) e.currentTarget.title = `${c.shortSha} · ${c.author.name} · ${new Date(c.author.date).toLocaleString()}`;
       }}
     >
-      <Avatar email={c.author.email} name={c.author.name} size={28} />
+      <Avatar email={c.author.email} name={c.author.name} size={24} />
       <span className="row-main">
-        <span className="summary">{c.summary || <span className="muted">(no message)</span>}</span>
-        <span className="meta">
-          <span className="truncate" style={{ flex: '0 1 auto' }}>{c.author.name}</span>
-          <span>·</span>
-          <RelativeTime date={c.committer.date} />
-          {c.isMerge ? <Icon name="merge" size={12} title="Merge commit" /> : null}
+        <span className="commit-primary">
+          <span className="summary">{c.summary || <span className="muted">(no message)</span>}</span>
           {tags.length || branchesRefs.length ? (
             <span className="refs">
               {tags.map((t) => (
-                <Badge key={t} tone="accent" outline title={`Tag ${t}`}>
+                <Badge key={t} tone="accent" outline title={'Tag ' + t}>
                   <Icon name="tag" size={10} /> {t}
                 </Badge>
               ))}
@@ -266,10 +304,25 @@ const CommitRow = memo(function CommitRow({ commit: c, selected, inactive, unpus
             </span>
           ) : null}
         </span>
+        <span className="commit-secondary">
+          <span className="truncate" style={{ flex: '0 1 auto' }}>{c.author.name}</span>
+          <span>·</span>
+          <RelativeTime date={c.committer.date} />
+        </span>
       </span>
-      {unpushed ? <Icon name="arrow-up" className="unpushed" title="Not yet pushed" /> : null}
-      {c.coAuthors.length ? <Icon name="person" className="muted" title={`Co-authored by ${c.coAuthors.map((a) => a.name).join(', ')}`} /> : null}
-      {verifySignatures ? <SignatureBadge signature={c.signature} /> : null}
+      <span className="commit-row-tail">
+        {unpushed ? <Icon name="arrow-up" className="unpushed" title="Not yet pushed" /> : null}
+        <span className="commit-row-deferred" aria-label="Additional commit metadata">
+          {c.isMerge ? <Icon name="merge" size={12} title="Merge commit" /> : null}
+          {c.coAuthors.length ? <Icon name="person" className="muted" title={'Co-authored by ' + c.coAuthors.map((a) => a.name).join(', ')} /> : null}
+          {verifySignatures ? <SignatureBadge signature={c.signature} /> : null}
+        </span>
+        {draggable ? (
+          <span className="commit-drag-handle" role="img" aria-label="Drag to reorder commits" title="Drag to reorder commits">
+            <Icon name="rows" size={14} />
+          </span>
+        ) : null}
+      </span>
     </div>
   );
 });
@@ -381,9 +434,9 @@ export function CommitDetailsPane(): React.JSX.Element {
           <span>·</span>
           <RelativeTime date={c.author.date} prefix="committed " />
           <span>·</span>
-          <button type="button" className="btn link mono" onClick={() => void actions.copyToClipboard(c.sha, 'SHA copied')} title="Copy full SHA">
+          <Button variant="link" className="mono" onClick={() => void actions.copyToClipboard(c.sha, 'SHA copied')} title="Copy full SHA">
             {c.shortSha} <Icon name="copy" size={12} />
-          </button>
+          </Button>
           {tags.map((t) => (
             <Badge key={t} tone="accent" outline>
               <Icon name="tag" size={10} /> {t}
@@ -420,7 +473,7 @@ export function CommitDetailsPane(): React.JSX.Element {
               {visibleFiles.length} {history.matchingFiles ? 'matching' : 'changed'} file{visibleFiles.length === 1 ? '' : 's'}
             </span>
           </div>
-          <div className="file-list" role="listbox" aria-label="Changed files" onKeyDown={onListKeyDown}>
+          <div className="file-list" role="listbox" aria-label="Changed files" data-phone-next="file" onKeyDown={onListKeyDown}>
             {visibleFiles.map((f) => (
               <CommitFileRow
                 key={f.path}

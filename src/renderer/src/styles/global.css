@@ -21,6 +21,7 @@
   --accent-emphasis: #0969da;
   --accent-muted: rgba(84, 174, 255, 0.4);
   --accent-subtle: #ddf4ff;
+  --accent-signature: #b45309;
   --success: #1a7f37;
   --success-emphasis: #1f883d;
   --success-hover: #1a7f37;
@@ -84,6 +85,7 @@
   --accent-emphasis: #1f6feb;
   --accent-muted: rgba(56, 139, 253, 0.4);
   --accent-subtle: rgba(56, 139, 253, 0.15);
+  --accent-signature: #f0a35e;
   --success: #3fb950;
   --success-emphasis: #238636;
   --success-hover: #207b32;
@@ -149,6 +151,10 @@ body {
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 a {
@@ -193,27 +199,32 @@ select {
   cursor: pointer;
 }
 
-::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+/* Touch: a larger base size, and 16px form fields (iOS Safari zooms the page into anything smaller on focus). */
+@media (pointer: coarse) {
+  :root {
+    --font-size: 15px;
+  }
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+  input:not([type='checkbox']):not([type='radio']),
+  textarea,
+  select {
+    padding: 8px 10px;
+  }
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
 }
-::-webkit-scrollbar-thumb {
-  background: rgba(140, 149, 159, 0.4);
-  border-radius: 8px;
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(140, 149, 159, 0.7);
-  background-clip: padding-box;
-  border: 3px solid transparent;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+
 
 .mono {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .muted {
   color: var(--fg-muted);
@@ -319,6 +330,11 @@ kbd {
   .dialog-backdrop,
   .dialog,
   .toast,
+  .popover,
+  .context-menu,
+  .sheet-scrim,
+  .context-menu-scrim,
+  .app .main > *,
   table.diff tr.flash-highlight td {
     animation: none !important;
   }
@@ -330,3 +346,44 @@ kbd {
     animation-duration: 1.6s !important;
   }
 }
+
+:root {
+  --focus-ring: var(--accent);
+}
+:root[data-theme='dark'] {
+  --focus-ring: var(--accent);
+}
+
+::selection {
+  background: var(--accent-subtle);
+  color: var(--fg);
+}
+
+html {
+  caret-color: var(--accent);
+  scrollbar-color: var(--fg-subtle) var(--bg-subtle);
+  scrollbar-width: thin;
+}
+
+/* Styled scrollbars only where a mouse drives them; touch platforms keep their native overlay indicators. */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--fg-subtle);
+    border: 3px solid var(--border);
+    border-radius: 8px;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--fg);
+    border: 3px solid var(--border);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg-subtle);
+  }
+}
+

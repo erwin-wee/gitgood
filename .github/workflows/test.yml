@@ -35,6 +35,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Headless server bundle: fails if server-reachable code imports electron.
+      - name: Build server
+        run: npm run build:server
+
       - name: Unit tests
         run: npm run test:unit
 

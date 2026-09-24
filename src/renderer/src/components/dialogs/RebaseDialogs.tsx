@@ -3,7 +3,7 @@ import type { RebasePlan, RebasePlanAction, RebasePlanRow } from '@shared/types'
 import * as actions from '../../state/actions';
 import { useAppStore } from '../../state/store';
 import { Badge, Button, Callout, Dialog, Icon, Spinner, TextField } from '../ui';
-
+import { HelpPopover } from '../HelpPopover';
 const DND_ROW = 'application/x-gitgood-rebase-row';
 
 const ACTION_LABELS: Record<RebasePlanAction, string> = { pick: 'Pick', squash: 'Squash into', reword: 'Reword', drop: 'Drop' };
@@ -101,6 +101,10 @@ function RowEditor({ row, index, plan }: { row: RebasePlanRow; index: number; pl
         onChange={(e) => actions.setRebaseRowMessage(row.sha, e.target.value)}
         rows={row.message.includes('\n') ? 3 : 1}
       />
+      <span className="rebase-order-controls" aria-label={'Move ' + row.sha.slice(0, 7) + ' in plan'}>
+        <Button size="sm" variant="ghost" icon="arrow-up" iconOnly title="Move up" aria-label="Move up" disabled={index === 0} onClick={() => actions.reorderRebaseRow(index, index - 1)} />
+        <Button size="sm" variant="ghost" icon="arrow-down" iconOnly title="Move down" aria-label="Move down" disabled={index === plan.rows.length - 1} onClick={() => actions.reorderRebaseRow(index, index + 1)} />
+      </span>
       {changed ? <Button size="sm" variant="ghost" icon="undo" title="Reset to original" onClick={() => actions.resetRebaseRow(row.sha)} /> : null}
       {row.rationale ? <span className="muted rebase-rationale" title={row.rationale}>{row.rationale}</span> : null}
     </div>
@@ -177,9 +181,8 @@ export function TidyBranchDialog(): React.JSX.Element {
       ) : null}
     </>
   );
-
   return (
-    <Dialog title="Tidy up branch with AI" icon="sparkle" onClose={() => actions.closeRebaseDialog()} dismissible={!applying} width="xwide" footer={footer}>
+    <Dialog title={<span className="dialog-title-with-help"><span>Tidy up branch with AI</span><HelpPopover title="What tidy changes" explanation="Tidy proposes a cleaner history by squashing fixups, rewording messages, and dropping empty commits." note="Rewriting changes commit IDs and may require a force push for published work. Reset all or close before Apply to recover." /></span>} icon="sparkle" onClose={() => actions.closeRebaseDialog()} dismissible={!applying} width="xwide" footer={footer}>
       {!plan ? <PreflightCard /> : null}
       {planLoading ? <p style={{ marginTop: 10 }}><Spinner /> Proposing a cleanup…</p> : null}
       {plan && alreadyTidy ? <Callout tone="info">This branch already looks tidy: every commit stays as-is, in order.</Callout> : null}

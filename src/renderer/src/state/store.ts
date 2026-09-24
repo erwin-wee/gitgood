@@ -9,6 +9,8 @@ export type PrReviewRun = ReviewRun & { target: Exclude<ReviewRunTarget, Worktre
 export type WorktreeReviewRun = ReviewRun & { target: WorktreeReviewTarget };
 
 export type View = 'changes' | 'history' | 'stashes' | 'health';
+/** Phone drill-down depth: the list, the selected item, and (history/stashes/review) one of its files. Ignored above the phone breakpoint. */
+export type PhonePane = 'list' | 'detail' | 'file';
 export type Popover = 'repos' | 'branches' | 'history-filter' | null;
 export type SettingsTab = 'accounts' | 'integrations' | 'git' | 'appearance' | 'prompts' | 'ai' | 'advanced';
 export type RepoSettingsTab = 'remote' | 'ignored' | 'identity' | 'alias';
@@ -401,6 +403,7 @@ export interface AppState {
   settings: AppSettings | null;
   tools: ToolsState | null;
   dark: boolean;
+  helpOpen: boolean;
   repos: RepositoryInfo[];
   currentRepo: RepositoryInfo | null;
   status: RepositoryStatus | null;
@@ -449,6 +452,7 @@ export interface AppState {
   aiCommitBusy: boolean;
   login: { inProgress: boolean; code: string | null; url: string | null; error: string | null };
   sidebarWidth: number;
+  phonePane: PhonePane;
   focused: boolean;
   lastSuccessfulMerge: { branch: string; at: number } | null;
   avatars: Record<string, string | null>;
@@ -494,6 +498,7 @@ const initialState: AppState = {
   settings: null,
   tools: null,
   dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+  helpOpen: false,
   repos: [],
   currentRepo: null,
   status: null,
@@ -535,6 +540,7 @@ const initialState: AppState = {
   aiCommitBusy: false,
   login: { inProgress: false, code: null, url: null, error: null },
   sidebarWidth: 300,
+  phonePane: 'list',
   focused: true,
   lastSuccessfulMerge: null,
   avatars: {},
