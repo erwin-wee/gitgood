@@ -598,6 +598,8 @@ table.diff tr.flash-highlight td {
 }
 
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .diff-header {
     flex-direction: column;
     align-items: stretch;
@@ -796,5 +798,6 @@ table.diff tr.flash-highlight td {
     width: min(420px, calc(100vw - 24px));
     max-height: 70vh;
     overflow: auto;
+  }
   }
 }

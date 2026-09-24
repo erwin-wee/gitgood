@@ -1255,6 +1255,8 @@
 
 /* Phone: popovers and context menus become bottom sheets over a scrim (rendered by App / ContextMenuHost). */
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .popover {
     position: fixed;
     top: auto !important;
@@ -1318,6 +1320,7 @@
   .context-menu .separator {
     margin: 6px 10px;
   }
+  }
 }
 /* Touch: a tap leaves a sticky :hover on whatever lands under the finger (e.g. the sheet item that opens beneath it); only :active gives feedback. */
 @media (hover: none) {
@@ -1356,6 +1359,8 @@
 }
 /* Mobile list/detail surfaces and touch sheets. Desktop styles above stay unchanged. */
 @media (max-width: 1023px), (pointer: coarse) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .stashes-view {
     display: grid;
     grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
@@ -1386,9 +1391,12 @@
   .stash-actions {
     flex-wrap: wrap;
   }
+  }
 }
 
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   /* Commit/history detail drill-down. */
   .history-header {
     gap: 4px;
@@ -1740,9 +1748,12 @@
   .banner .banner-actions .btn {
     flex: 1 1 auto;
   }
+  }
 }
 /* Inline diff targets are portals; pane visibility must win over their inline display. */
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .app[data-view='stashes'][data-pane='list'] .stashes-files,
   .app[data-view='stashes'][data-pane='list'] #stashes-diff-slot,
   .app[data-view='stashes'][data-pane='detail'] .stashes-list,
@@ -1756,8 +1767,11 @@
   .app[data-view='stashes'][data-pane='file'] #stashes-diff-slot {
     display: flex !important;
   }
+  }
 }
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .branch-popover {
     width: auto !important;
   }
@@ -1765,8 +1779,11 @@
   .branch-popover > .popover-footer > .btn {
     min-height: 44px;
   }
+  }
 }
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .changes-header {
     min-height: 48px;
   }
@@ -1789,15 +1806,21 @@
     width: 44px;
     height: 44px;
   }
+  }
 }
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .health-card {
     max-height: min(56dvh, 520px);
+  }
   }
 }
 
 /* Portrait tablets: beside the commit list there is no room for files | diff side by side, so the file list sits above a full-width diff. */
 @media (min-width: 768px) and (max-width: 1023px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .commit-body {
     flex-direction: column;
   }
@@ -1810,5 +1833,6 @@
   }
   #commit-diff-slot {
     min-height: 0;
+  }
   }
 }

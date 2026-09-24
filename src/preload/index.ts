@@ -13,6 +13,9 @@ const bridge = {
   },
 };
 
+// Both desktop modes keep the desktop layout at any window width or zoom (see the `data-desktop` guards in the stylesheets).
+contextBridge.exposeInMainWorld('gitgoodDesktop', true);
+
 // `--gitgood-client` is passed by `createMainWindow` in desktop client mode (`src/main/client.ts`).
 if (process.argv.includes('--gitgood-client')) {
   // The page is the server's, with its web bridge (`src/server/web-bridge.ts`), which layers these native hooks over HTTP.

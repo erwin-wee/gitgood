@@ -116,6 +116,8 @@
 
 /* Phone: every dialog is a bottom sheet; the widest ones fill the screen. Footer actions become full-width thumb targets. */
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .dialog-backdrop {
     align-items: flex-end;
   }
@@ -161,6 +163,7 @@
   }
   .dialog-tabs {
     padding: 0 10px;
+  }
   }
 }
 
@@ -868,6 +871,8 @@
 }
 
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .dialog-header h2 {
     line-height: 1.25;
     overflow-wrap: anywhere;
@@ -1061,6 +1066,7 @@
   .nl-history-entry > div:last-child {
     width: 100%;
   }
+  }
 }
 
 @media (pointer: coarse) {
@@ -1087,7 +1093,10 @@
   }
 }
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .dialog-body .form-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
   }
 }

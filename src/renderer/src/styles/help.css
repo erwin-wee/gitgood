@@ -175,14 +175,19 @@
 }
 /* Phone help is a full-screen reading surface, with the safe-area kept out of the scrollable copy. */
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .help-panel {
     width: 100%;
     height: 100dvh;
     border-left: 0;
     box-shadow: none;
   }
+  }
 }
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .help-panel-header {
     padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
   }
@@ -215,5 +220,6 @@
     width: auto;
     max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     overflow: auto;
+  }
   }
 }

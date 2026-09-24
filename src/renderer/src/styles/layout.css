@@ -663,6 +663,8 @@
 /* Compact: phones, portrait tablets and touch-first screens. The tab bar takes over view switching
    and the toolbar's help/notifications/options, which move into its More sheet. */
 @media (max-width: 1023px), (pointer: coarse) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .app[data-repo] .tabbar {
     display: flex;
   }
@@ -678,10 +680,13 @@
   .banner .banner-actions {
     flex-wrap: wrap;
   }
+  }
 }
 
 /* Portrait tablets: with help/notifications/options moved to the tab bar, the repository and branch keep their names. */
 @media (min-width: 768px) and (max-width: 899px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .app[data-repo] .toolbar-button.repo,
   .app[data-repo] .toolbar-button.branch {
     flex: 0 1 260px;
@@ -698,9 +703,12 @@
   .app[data-repo] .toolbar-button.branch .chevron {
     display: inline-block;
   }
+  }
 }
 
 @media (max-width: 1023px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .inbox-panel {
     top: 0;
     width: 420px;
@@ -708,10 +716,13 @@
     padding-bottom: env(safe-area-inset-bottom);
     z-index: 250;
   }
+  }
 }
 
 /* Phone: one pane at a time, drilled into by tapping a row (see Mobile.tsx). */
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .toolbar {
     height: auto;
     flex: 0 0 auto;
@@ -895,8 +906,11 @@
   .welcome-action span {
     font-size: 13px;
   }
+  }
 }
 @media (max-width: 1023px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .inbox-panel-header > .btn.icon-only {
     flex: 0 0 44px;
     width: 44px;
@@ -925,9 +939,12 @@
   .inbox-filters .segmented button {
     min-height: 44px;
   }
+  }
 }
 
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .inbox-panel-header strong {
     font-size: 16px;
   }
@@ -950,9 +967,12 @@
   .inbox-item .row-meta {
     padding-top: 2px;
   }
+  }
 }
 /* Touch inbox refinements: restore the header spacer hidden by the compact toolbar and let rows breathe. */
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .inbox-panel-header .toolbar-spacer {
     display: block;
     flex: 1 1 auto;
@@ -960,5 +980,6 @@
   .inbox-panel .inbox-item {
     min-height: 64px;
     padding: 12px 16px;
+  }
   }
 }

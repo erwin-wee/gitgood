@@ -623,6 +623,8 @@ table.diff tr.annotation-row td {
    review/finding flows single-column on phones without changing desktop. */
 
 @media (max-width: 1023px), (pointer: coarse) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .app[data-view='review'] .review-view {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(260px, 36%);
@@ -653,9 +655,12 @@ table.diff tr.annotation-row td {
     width: auto;
     min-width: 0;
   }
+  }
 }
 
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .app[data-view='review'] .review-view {
     display: flex;
     flex-direction: column;
@@ -773,6 +778,7 @@ table.diff tr.annotation-row td {
   .precommit-strip-body {
     max-width: 100%;
   }
+  }
 }
 
 @media (pointer: coarse) {
@@ -786,6 +792,8 @@ table.diff tr.annotation-row td {
 }
 
 @media (max-width: 767px) {
+  /* Web only: the desktop app keeps its layout however narrow or zoomed its window. */
+  html:not([data-desktop]) {
   .explain-resize-handle {
     display: none;
   }
@@ -827,5 +835,6 @@ table.diff tr.annotation-row td {
   }
   .explain-followup-actions {
     justify-content: space-between;
+  }
   }
 }

@@ -3,8 +3,12 @@ import * as actions from '../state/actions';
 import { openDialog, store, useAppStore, type AppState, type PhonePane, type View } from '../state/store';
 import { Icon, openContextMenu, type IconName, type MenuItem } from './ui';
 
+/** Only browsers get the compact layouts; the desktop app (its preload sets `gitgoodDesktop`) keeps its layout however narrow or zoomed. */
+const desktop = 'gitgoodDesktop' in window;
+if (desktop) document.documentElement.dataset.desktop = '';
+
 /** Single-column drill-down layout. Keep in sync with the `max-width: 767px` blocks in the stylesheets. */
-export const PHONE_QUERY = '(max-width: 767px)';
+export const PHONE_QUERY = desktop ? 'not all' : '(max-width: 767px)';
 
 export function useMediaQuery(query: string): boolean {
   const subscribe = useCallback(
