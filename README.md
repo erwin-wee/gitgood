@@ -89,7 +89,7 @@ tailscale serve --bg 4600
 # GitGood is now at https://<your-host>.<tailnet>.ts.net
 ```
 
-To keep it running on Linux, `npm run install:service` installs and starts a systemd user service (`gitgood-server`) for this checkout; set environment variables with `systemctl --user edit gitgood-server`, and re-run it after moving the checkout. To start from your desktop's repositories and settings, copy `settings.json`, `repositories.json` and `state.json` into `~/.config/gitgood-server` once, with the server stopped.
+To let the packaged desktop manage that service, choose **File → Run GitGood server in the background…**. It installs a user service that is auto-updated with the desktop and rewritten on each launch (including after AppImage updates), then uses `http://127.0.0.1:4600` and `tailscale serve`. Stop it with `systemctl --user disable --now gitgood-server`, then delete `~/.config/gitgood/server-url`. Checkout services installed by `npm run install:service` are unmanaged and are never rewritten automatically.
 
 Installed copies of GitGood ship the server too; run it with the app's own runtime, e.g. `ELECTRON_RUN_AS_NODE=1 /path/to/gitgood /path/to/resources/app.asar/out/server/index.mjs` (for the Linux AppImage, `--appimage-extract` it first and use `squashfs-root/`).
 

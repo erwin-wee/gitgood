@@ -3,6 +3,11 @@ import { sendEvent } from './ipc';
 
 const isMac = process.platform === 'darwin';
 
+interface MenuOptions {
+  showManagedServer?: boolean;
+  onManagedServer?: () => void;
+}
+
 function action(label: string, id: string, accelerator?: string, args?: unknown): MenuItemConstructorOptions {
   return {
     label,
@@ -14,7 +19,7 @@ function action(label: string, id: string, accelerator?: string, args?: unknown)
   };
 }
 
-export function buildMenu(getWindow: () => BrowserWindow | null): Menu {
+export function buildMenu(getWindow: () => BrowserWindow | null, options: MenuOptions = {}): Menu {
   const template: MenuItemConstructorOptions[] = [];
 
   if (isMac) {
@@ -47,6 +52,7 @@ export function buildMenu(getWindow: () => BrowserWindow | null): Menu {
       { type: 'separator' },
       action('Export Settings…', 'export-settings'),
       action('Import Settings…', 'import-settings'),
+      ...(options.showManagedServer ? [{ type: 'separator' as const }, { label: 'Run GitGood server in the background…', click: () => options.onManagedServer?.() }] : []),
       { type: 'separator' },
       ...(isMac ? [] : [action('Options…', 'settings', 'CmdOrCtrl+,'), { type: 'separator' } as MenuItemConstructorOptions]),
       isMac ? { role: 'close' } : { role: 'quit', label: 'E&xit' },

@@ -1,13 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dialog, ipcMain, nativeTheme, Notification, type BrowserWindow } from 'electron';
+import { clipboard, dialog, ipcMain, nativeTheme, Notification, shell, type BrowserWindow } from 'electron';
 import { IPC_EVENT_CHANNEL, IPC_INVOKE_CHANNEL, type ApiMethods } from '@shared/ipc';
 import type { InboxItem, InboxState, IpcResult } from '@shared/types';
 import { applyInboxBadge } from './badge';
 import { ElectronHost } from './host/electron-host';
 import { sendEvent } from './ipc';
+import { ensureManagedServer, readUnit } from './local-server';
 import { log } from './logger';
 import type { Store } from './store';
+import { compareVersions } from './update/update-core';
+import type { Updater } from './update/updater';
 
 /**
  * The GitGood server this desktop app is a client of: `GITGOOD_SERVER_URL`,
@@ -27,31 +30,89 @@ export function clientServerUrl(userData: string): string | null {
   return raw.trim() ? new URL(raw.trim()).origin : null;
 }
 
+export function isLocalServerUrl(serverUrl: string): boolean {
+  return ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(serverUrl).hostname);
+}
+
+/** Fetches the server version without making startup wait on an unavailable service. */
+export async function fetchServerVersion(serverUrl: string, timeoutMs = 1500): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${serverUrl}/version`, { signal: controller.signal });
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    return body && typeof body === 'object' && 'version' in body && typeof body.version === 'string' ? body.version : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Waits briefly after restarting the managed server so the first window load sees a live endpoint. */
+export async function waitForServer(serverUrl: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fetchServerVersion(serverUrl)) return;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 250);
+    await promise;
+  }
+}
+
 /**
  * Warns once when this desktop build and the server differ: the window runs the
  * server's renderer against this build's native IPC, so a skew can leave
  * features half-working. Called on every load; loads that can't reach the
  * server (the retry page) are ignored.
  */
-export function watchServerVersion(serverUrl: string, win: BrowserWindow, desktopVersion: string): void {
+export function watchServerVersion(serverUrl: string, win: BrowserWindow, desktopVersion: string, updater?: Updater): void {
   let warned = false;
   win.webContents.on('did-finish-load', async () => {
     if (warned) return;
-    let body: unknown;
-    try {
-      body = await (await fetch(`${serverUrl}/version`)).json();
-    } catch {
-      return;
-    }
-    const server = body && typeof body === 'object' && 'version' in body && typeof body.version === 'string' ? body.version : null;
-    if (!server || server === desktopVersion || warned || win.isDestroyed()) return;
+    const server = await fetchServerVersion(serverUrl);
+    if (!server || compareVersions(server, desktopVersion) === 0 || warned || win.isDestroyed()) return;
     warned = true;
     log.warn(`Desktop ${desktopVersion} is using GitGood server ${server}`);
-    void dialog.showMessageBox(win, {
+    const local = isLocalServerUrl(serverUrl);
+    const serverOlder = compareVersions(server, desktopVersion) < 0;
+    const managed = local && readUnit().managed;
+    const action = managed ? 'Restart server' : serverOlder && local ? 'Copy command' : serverOlder ? 'Reload' : 'Check for updates';
+    const detail = managed
+      ? 'The local managed server does not match this desktop. Restart it to use the bundled server.'
+      : serverOlder && local
+        ? 'Update the server from its checkout, then restart it with:\n\ngit pull && npm run build && systemctl --user restart gitgood-server'
+        : serverOlder
+          ? `Update GitGood on ${new URL(serverUrl).hostname}, then reload.`
+          : 'This desktop is older than the server. Check for a desktop update.';
+    const result = await dialog.showMessageBox(win, {
       type: 'warning',
       message: `GitGood ${desktopVersion} is connected to a GitGood server running ${server}.`,
-      detail: 'Update or rebuild the one that is behind so both run the same version; until then some features may not work.',
+      detail,
+      buttons: [action, 'Later'],
+      defaultId: 0,
+      cancelId: 1,
     });
+    if (result.response !== 0 || win.isDestroyed()) return;
+    try {
+      if (action === 'Restart server') {
+        await ensureManagedServer(server, desktopVersion);
+        if (!win.isDestroyed()) win.reload();
+      } else if (action === 'Check for updates' && updater) {
+        const state = await updater.checkNow(true);
+        if (state.status === 'available') {
+          if (updater.canAutoUpdate) await updater.startDownload();
+          else await shell.openExternal(state.url);
+        }
+      } else if (action === 'Copy command') {
+        clipboard.writeText('git pull && npm run build && systemctl --user restart gitgood-server');
+      } else {
+        win.reload();
+      }
+    } catch (err) {
+      log.warn(`Version mismatch action failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   });
 }
 
@@ -99,10 +160,10 @@ async function serverAllows(serverUrl: string, path: string): Promise<boolean> {
  * native capabilities answered here. The bridge sends every call here first
  * and falls back to its web path when this resolves null.
  */
-export function registerClientIpc(serverUrl: string, store: Store, getWindow: () => BrowserWindow | null): void {
+export function registerClientIpc(serverUrl: string, store: Store, getWindow: () => BrowserWindow | null, updater?: Updater): void {
   const host = new ElectronHost(getWindow);
   // Paths the renderer holds are the server's: native file dialogs and shell actions only make sense when it shares this machine's filesystem.
-  const local = ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(serverUrl).hostname);
+  const local = isLocalServerUrl(serverUrl);
   const always: Partial<ApiMethods> = {
     'app.clipboard.write': (text) => host.clipboardWrite(text),
     'app.openExternal': async (url) => {
@@ -119,6 +180,22 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
   const unsupported = async (): Promise<never> => {
     throw new Error('Only available when the GitGood server runs on this machine.');
   };
+  const updateMethods: Partial<ApiMethods> = updater
+    ? {
+        'app.update.state': async () => updater.getState(),
+        'app.update.check': async () => updater.checkNow(true),
+        'app.update.download': async () => {
+          if (updater.canAutoUpdate) {
+            await updater.startDownload();
+            return;
+          }
+          const state = updater.getState();
+          if (state.status === 'available') await host.openExternal(state.url);
+        },
+        'app.update.install': async () => updater.quitAndInstall(),
+        'app.update.dismiss': async (version) => updater.dismiss(version),
+      }
+    : {};
   // The page is the server's, so its paths get the server's confinement before the desktop acts on them natively.
   const confined =
     (fn: (path: string) => Promise<void>) =>
@@ -129,6 +206,7 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
   const native: Partial<ApiMethods> = local
     ? {
         ...always,
+        ...updateMethods,
         'app.chooseDirectory': (opts) => host.chooseDirectory(opts),
         'app.chooseFile': (opts) => host.chooseFile(opts),
         'app.chooseSavePath': (opts) => host.chooseSavePath(opts),
@@ -136,7 +214,7 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
         'app.showItemInFolder': confined((p) => host.showItemInFolder(p)),
         'app.moveToTrash': confined((p) => host.trashItem(p)),
       }
-    : { ...always, 'app.openInEditor': unsupported, 'app.openInShell': unsupported };
+    : { ...always, ...updateMethods, 'app.openInEditor': unsupported, 'app.openInShell': unsupported };
 
   ipcMain.handle(IPC_INVOKE_CHANNEL, async (_event, method: string, ...args: unknown[]): Promise<IpcResult<unknown> | null> => {
     const fn = native[method as keyof ApiMethods] as ((...a: unknown[]) => Promise<unknown>) | undefined;
