@@ -63,7 +63,12 @@ function differs(before: Map<string, string>, after: Map<string, string>): boole
 }
 
 function schedule(): void {
-  if (stopped || timer) return;
+  if (stopped) return;
+  if (!running && !timer) {
+    void scan();
+    return;
+  }
+  if (timer) return;
   // Bound event bursts without postponing refresh indefinitely during continuous writes.
   timer = setTimeout(() => { timer = undefined; void scan(); }, 120);
 }
