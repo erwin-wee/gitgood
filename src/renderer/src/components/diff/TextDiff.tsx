@@ -498,6 +498,10 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     (key: string, e: React.PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
+      // Touch and pen pointers are implicitly captured by the cell they start on, so no other cell would ever see
+      // pointerenter; releasing the capture lets a finger drag across lines like a mouse does.
+      const target = e.target;
+      if (target instanceof Element && target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
       const value = !selected.has(key);
       dragRef.current = { value, last: key };
       const next = new Set(selected);
