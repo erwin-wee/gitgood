@@ -31,6 +31,7 @@ export default defineConfig({
     build: {
       rollupOptions: { input: { index: resolve('src/renderer/index.html') } },
       sourcemap: true,
+      minify: 'esbuild',
       // The same bundle is served to phone browsers (server mode): flatten CSS nesting for Safari < 17.2.
       cssTarget: ['chrome110', 'safari15'],
     },
