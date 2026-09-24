@@ -112,6 +112,32 @@ export function highlightToLines(code: string, language: string | null): string[
   }
 }
 
+/**
+ * Syntax highlighting runs lazily per block of file lines as rows scroll into
+ * view, so opening a diff never pays for lines that are not on screen.
+ * ponytail: block boundaries can split a multi-line token (a block comment),
+ * mis-colouring a few lines at the seam; highlight whole files in a worker if that matters.
+ */
+const HIGHLIGHT_BLOCK_LINES = 400;
+/** Blocks with a longer line than this (minified code) are shown unhighlighted: hljs is superlinear on them. */
+const HIGHLIGHT_MAX_LINE_CHARS = 5000;
+
+/** HTML for 1-based `lineNo` of `lines`, highlighting (and caching under `cacheKey`) its block on first use. */
+export function highlightBlockLine(cache: Map<string, string[] | null>, cacheKey: string, lines: string[], lineNo: number, language: string | null): string | undefined {
+  if (lineNo < 1 || lineNo > lines.length) return undefined;
+  const block = Math.floor((lineNo - 1) / HIGHLIGHT_BLOCK_LINES);
+  const key = `${cacheKey}:${block}`;
+  let html = cache.get(key);
+  if (html === undefined) {
+    const from = block * HIGHLIGHT_BLOCK_LINES;
+    const chunk = lines.slice(from, from + HIGHLIGHT_BLOCK_LINES);
+    html = chunk.some((l) => l.length > HIGHLIGHT_MAX_LINE_CHARS) ? null : highlightToLines(chunk.join('\n'), language);
+    if (html && html.length !== chunk.length) html = null;
+    cache.set(key, html);
+  }
+  return html ? html[(lineNo - 1) % HIGHLIGHT_BLOCK_LINES] : undefined;
+}
+
 /** Highlight a single line in isolation (fallback when full content is unavailable). */
 export function highlightLine(text: string, language: string | null): string | null {
   if (!isHighlightable(language)) return null;

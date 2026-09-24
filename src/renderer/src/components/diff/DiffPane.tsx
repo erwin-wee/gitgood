@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { BlameHunk, FileDiff } from '@shared/types';
 import { ZERO_SHA } from '@shared/types';
 import { buildDiscardPatch } from '@shared/diff/patch';
@@ -81,6 +81,15 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
   const syntax = settings?.diffSyntaxHighlighting ?? true;
   const intraline = settings?.diffShowIntraline ?? true;
   const diff = diffState.diff;
+  const [showDiffLoading, setShowDiffLoading] = useState(false);
+  useEffect(() => {
+    if (!diffState.loading || diff) {
+      setShowDiffLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowDiffLoading(true), 150);
+    return () => window.clearTimeout(timer);
+  }, [diffState.loading, diff]);
   const selectable = mode === 'working' && !hideWhitespace && !diffState.blameOn && diff?.kind === 'text' && diff.hunks.length > 0;
   // Blame (and file history's "view at commit"/"restore") only apply to text files in the two tabs that show one; not stashes or AI review.
   const blameEligibleMode = mode === 'working' || mode === 'commit';
@@ -265,8 +274,8 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
         </div>
       ) : null}
       <div className="diff-body-row">
-        <div className={`diff-body ${diffState.loading && !diff ? 'loading' : ''}`}>
-          {diffState.loading && !diff ? <Spinner large /> : null}
+        <div className={`diff-body ${showDiffLoading && !diff ? 'loading' : ''}`}>
+          {showDiffLoading && !diff ? <Spinner large /> : null}
           {diffState.error ? (
             <div className="diff-message">
               <Icon name="alert" size={24} />

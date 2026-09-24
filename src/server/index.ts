@@ -1,8 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, normalize, resolve } from 'node:path';
 import type { Duplex } from 'node:stream';
+import { brotliCompress, brotliCompressSync, constants as zlibConstants, gzip, gzipSync } from 'node:zlib';
 import type { ApiMethodName } from '@shared/ipc';
 import type { GitErrorInfo, InboxItem, IpcResult } from '@shared/types';
 import { ConflictResolver } from '../main/ai/resolver';
@@ -40,6 +42,15 @@ import { WsHub } from './ws';
 
 const RELEASES_URL = 'https://github.com/erwin-wee/gitgood/releases';
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
+const MIN_COMPRESS_BYTES = 1024;
+
+type StaticAsset = {
+  body: Buffer;
+  etag: string;
+  mtimeMs: number;
+  brotli?: Buffer;
+  gzip?: Buffer;
+};
 
 const MIME_BY_EXT: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -67,6 +78,86 @@ function fail(res: ServerResponse, status: number, message: string): void {
 
 function errorResult(message: string, code: GitErrorInfo['code']): IpcResult<unknown> {
   return { ok: false, error: { message, command: '', exitCode: null, stderr: '', stdout: '', code } };
+}
+
+function assetEtag(body: Buffer): string {
+  return '"' + createHash('sha1').update(body).digest('base64url') + '"';
+}
+
+function encodingQuality(header: string, encoding: 'br' | 'gzip'): number {
+  let wildcard = 0;
+  let explicit: number | undefined;
+  for (const part of header.toLowerCase().split(',')) {
+    const [name, ...parameters] = part.trim().split(';');
+    if (name !== encoding && name !== '*') continue;
+    const q = parameters.find((parameter) => parameter.trim().startsWith('q='));
+    const quality = q ? Number(q.trim().slice(2)) : 1;
+    if (name === encoding) explicit = quality;
+    else wildcard = quality;
+  }
+  return explicit ?? wildcard;
+}
+
+function acceptedEncoding(req: IncomingMessage): 'br' | 'gzip' | null {
+  const value = req.headers['accept-encoding'];
+  const header = Array.isArray(value) ? value.join(',') : value ?? '';
+  if (encodingQuality(header, 'br') > 0) return 'br';
+  if (encodingQuality(header, 'gzip') > 0) return 'gzip';
+  return null;
+}
+
+function matchesEtag(req: IncomingMessage, etag: string): boolean {
+  const value = req.headers['if-none-match'];
+  return typeof value === 'string' && value.split(',').some((candidate) => candidate.trim() === '*' || candidate.trim() === etag);
+}
+
+function compressible(filePath: string): boolean {
+  return ['.js', '.mjs', '.css', '.html', '.json', '.webmanifest', '.svg', '.map'].includes(extname(filePath).toLowerCase());
+}
+
+function sendStatic(
+  req: IncomingMessage,
+  res: ServerResponse,
+  asset: StaticAsset,
+  filePath: string,
+  contentType: string,
+  cacheControl: string,
+): void {
+  const canCompress = asset.body.byteLength > MIN_COMPRESS_BYTES && compressible(filePath);
+  const encoding = canCompress ? acceptedEncoding(req) : null;
+  let body = asset.body;
+  if (encoding === 'br') {
+    asset.brotli ??= brotliCompressSync(asset.body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11 } });
+    body = asset.brotli;
+  } else if (encoding === 'gzip') {
+    asset.gzip ??= gzipSync(asset.body, { level: 9 });
+    body = asset.gzip;
+  }
+  const headers: Record<string, string> = { 'Content-Type': contentType, 'Cache-Control': cacheControl, ETag: asset.etag };
+  if (canCompress) headers.Vary = 'Accept-Encoding';
+  if (encoding) headers['Content-Encoding'] = encoding;
+  if (matchesEtag(req, asset.etag)) {
+    res.writeHead(304, headers).end();
+    return;
+  }
+  headers['Content-Length'] = String(body.byteLength);
+  res.writeHead(200, headers).end(body);
+}
+
+function compressInvokeBody(body: Buffer, encoding: 'br' | 'gzip'): Promise<Buffer> {
+  return new Promise((resolveCompression, reject) => {
+    if (encoding === 'br') {
+      brotliCompress(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } }, (error, compressed) => {
+        if (error) reject(error);
+        else resolveCompression(compressed);
+      });
+      return;
+    }
+    gzip(body, { level: 6 }, (error, compressed) => {
+      if (error) reject(error);
+      else resolveCompression(compressed);
+    });
+  });
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -138,6 +229,19 @@ async function main(): Promise<void> {
 
   const wsHub = new WsHub();
   const mutex = new KeyedMutex();
+  // Revalidated by mtime so a rebuild under a running server (git-checkout installs) is picked up without a restart.
+  const staticCache = new Map<string, StaticAsset>();
+  const getStaticAsset = (filePath: string, injectBridge = false): StaticAsset => {
+    const key = injectBridge ? filePath + ':injected' : filePath;
+    const cached = staticCache.get(key);
+    const { mtimeMs } = statSync(filePath);
+    if (cached?.mtimeMs === mtimeMs) return cached;
+    let body = readFileSync(filePath);
+    if (injectBridge) body = Buffer.from(body.toString('utf8').replace('</head>', BRIDGE_TAG + '</head>'));
+    const asset = { body, etag: assetEtag(body), mtimeMs };
+    staticCache.set(key, asset);
+    return asset;
+  };
   // Generous per-client budget: a UI burst is fine, a runaway loop is not.
   const limiter = new RateLimiter(120, 20);
   bus.subscribe((event, payload) => wsHub.broadcast(JSON.stringify({ event, payload })));
@@ -211,7 +315,18 @@ async function main(): Promise<void> {
     const args = Array.isArray(parsed.args) ? parsed.args : [];
     const clientId = typeof req.headers['x-gitgood-client'] === 'string' ? req.headers['x-gitgood-client'] : '';
     const result = await runInvoke(parsed.method, args, clientId);
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify(result));
+    const uncompressed = Buffer.from(JSON.stringify(result));
+    const canCompress = uncompressed.byteLength > MIN_COMPRESS_BYTES;
+    const encoding = canCompress ? acceptedEncoding(req) : null;
+    const body = encoding ? await compressInvokeBody(uncompressed, encoding) : uncompressed;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Length': String(body.byteLength),
+    };
+    if (canCompress) headers.Vary = 'Accept-Encoding';
+    if (encoding) headers['Content-Encoding'] = encoding;
+    res.writeHead(200, headers).end(body);
   };
 
   const serveStatic = (req: IncomingMessage, res: ServerResponse): void => {
@@ -230,21 +345,21 @@ async function main(): Promise<void> {
     const filePath = resolve(config.rendererDir, `.${rel.startsWith('/') ? rel : `/${rel}`}`);
     // SPA fallback: any non-asset route (and "/") serves the injected index.html.
     if (!filePath.startsWith(resolve(config.rendererDir)) || !existsSync(filePath) || !extname(filePath)) {
-      serveIndex(res);
+      serveIndex(req, res);
       return;
     }
-    const body = readFileSync(filePath);
-    res.writeHead(200, { 'Content-Type': MIME_BY_EXT[extname(filePath)] ?? 'application/octet-stream' }).end(body);
+    const contentType = MIME_BY_EXT[extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+    const cacheControl = url.pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache';
+    sendStatic(req, res, getStaticAsset(filePath), filePath, contentType, cacheControl);
   };
 
-  const serveIndex = (res: ServerResponse): void => {
+  const serveIndex = (req: IncomingMessage, res: ServerResponse): void => {
     const indexPath = join(config.rendererDir, 'index.html');
     if (!existsSync(indexPath)) {
       fail(res, 500, 'Renderer build not found. Run "npm run build" first.');
       return;
     }
-    const html = readFileSync(indexPath, 'utf8').replace('</head>', `${BRIDGE_TAG}</head>`);
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(html);
+    sendStatic(req, res, getStaticAsset(indexPath, true), indexPath, 'text/html; charset=utf-8', 'no-cache');
   };
 
   const server = createServer((req, res) => {

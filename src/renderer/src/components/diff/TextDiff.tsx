@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import type { BlameHunk, DiffHunk, DiffLine, FileDiff } from '@shared/types';
 import { ZERO_SHA } from '@shared/types';
 import { intralineDiff, type CharRange } from '@shared/diff/intraline';
+import { reconstructOldLines } from '@shared/diff/old-lines';
 import { escapeHtml } from '@shared/util';
-import { highlightToLines } from '../../lib/highlight';
+import { highlightBlockLine } from '../../lib/highlight';
 import { useWindowedRows } from '../../lib/windowing';
 import { Icon, openContextMenu } from '../ui';
 
@@ -51,16 +52,6 @@ export interface TextDiffProps {
 }
 
 const EXPAND_STEP = 20;
-
-/**
- * Syntax highlighting runs lazily per block of file lines as rows scroll into
- * view, so opening a diff never pays for lines that are not on screen.
- * ponytail: block boundaries can split a multi-line token (a block comment),
- * mis-colouring a few lines at the seam; highlight whole files in a worker if that matters.
- */
-const HIGHLIGHT_BLOCK_LINES = 400;
-/** Blocks with a longer line than this (minified code) are shown unhighlighted: hljs is superlinear on them. */
-const HIGHLIGHT_MAX_LINE_CHARS = 5000;
 
 /** Applies character ranges as <span class=cls> marks onto highlighted HTML, keeping tags balanced. */
 export function markHtml(html: string, ranges: CharRange[], cls: string): string {
@@ -374,27 +365,19 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
   };
 
   const newLines = useMemo(() => splitContent(diff.newContent), [diff.newContent]);
-  const oldLines = useMemo(() => splitContent(diff.oldContent), [diff.oldContent]);
+  const oldLines = useMemo(
+    () => (diff.newContent === null ? splitContent(diff.oldContent) : reconstructOldLines(newLines, diff.hunks)),
+    [diff.newContent, diff.oldContent, diff.hunks, newLines],
+  );
   const views = useMemo(() => buildViews(diff.hunks, newLines, expansions), [diff.hunks, newLines, expansions]);
 
   // Lazy highlighting: per-side blocks of file lines, computed the first time a row in the block renders.
   const hlCache = useRef(new Map<string, string[] | null>());
-  useMemo(() => hlCache.current.clear(), [syntax, diff.newContent, diff.oldContent, diff.language]);
+  useMemo(() => hlCache.current.clear(), [syntax, newLines, oldLines, diff.language]);
   const highlighted = useCallback(
     (side: 'old' | 'new', lineNo: number): string | undefined => {
       const lines = side === 'new' ? newLines : oldLines;
-      if (!syntax || !lines || lineNo < 1 || lineNo > lines.length) return undefined;
-      const block = Math.floor((lineNo - 1) / HIGHLIGHT_BLOCK_LINES);
-      const cacheKey = `${side}:${block}`;
-      let html = hlCache.current.get(cacheKey);
-      if (html === undefined) {
-        const from = block * HIGHLIGHT_BLOCK_LINES;
-        const chunk = lines.slice(from, from + HIGHLIGHT_BLOCK_LINES);
-        html = chunk.some((l) => l.length > HIGHLIGHT_MAX_LINE_CHARS) ? null : highlightToLines(chunk.join('\n'), diff.language);
-        if (html && html.length !== chunk.length) html = null;
-        hlCache.current.set(cacheKey, html);
-      }
-      return html ? html[(lineNo - 1) % HIGHLIGHT_BLOCK_LINES] : undefined;
+      return syntax && lines ? highlightBlockLine(hlCache.current, side, lines, lineNo, diff.language) : undefined;
     },
     [syntax, newLines, oldLines, diff.language],
   );

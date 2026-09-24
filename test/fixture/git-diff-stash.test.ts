@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { getStashFileDiff, getStashFiles } from '../../src/main/git/diff';
+import { reconstructOldLines } from '../../src/shared/diff/old-lines';
 import { GitClient } from '../../src/main/git/git';
 import { getStashes, stashPush } from '../../src/main/git/operations';
 import { createRepo, hasGitSync, type TestRepo } from '../helpers/repo';
@@ -41,8 +42,8 @@ describe.skipIf(!hasGitSync())('stash file listings and diffs', () => {
     const diff = await getStashFileDiff(git, repo.path, stash.sha, 'a.txt', opts);
     expect(diff.kind).toBe('text');
     if (diff.kind === 'text') {
-      expect(diff.oldContent).toBe('1\n');
       expect(diff.newContent).toBe('2\n');
+      expect(reconstructOldLines(['2'], diff.hunks)).toEqual(['1']);
     }
   });
 

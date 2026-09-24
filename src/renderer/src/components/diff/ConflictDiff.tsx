@@ -1,8 +1,9 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ConflictBlockResolution, FileDiff } from '@shared/types';
 import { applyResolutions, parseConflicts, resolutionForChoice, type BlockChoice } from '@shared/diff/conflicts';
 import { escapeHtml } from '@shared/util';
-import { highlightToLines } from '../../lib/highlight';
+import { highlightBlockLine } from '../../lib/highlight';
+import { useWindowedRows } from '../../lib/windowing';
 import * as actions from '../../state/actions';
 import { openDialog, useAppStore } from '../../state/store';
 import { Button, Icon, Spinner } from '../ui';
@@ -16,6 +17,8 @@ interface LineTint {
   isStart: boolean;
 }
 
+const CONFLICT_ROW_ESTIMATES = { line: 20, actions: 48 };
+
 export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path: string; syntax: boolean }): React.JSX.Element {
   const settings = useAppStore((s) => s.settings);
   const aiBusy = useAppStore((s) => s.aiBusy);
@@ -23,9 +26,34 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
   const operation = useAppStore((s) => s.status?.operation.kind ?? 'none');
   const resolution = useAppStore((s) => s.conflictResolutions[path]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null);
   const [lowIndex, setLowIndex] = useState(0);
   const parsed = useMemo(() => parseConflicts(diff.content), [diff.content]);
-  const hl = useMemo(() => (syntax ? highlightToLines(diff.content, diff.language) : null), [syntax, diff.content, diff.language]);
+  // The toolbar sits above the lines inside the scroller; its ~40px offset is well within the window's overscan.
+  useLayoutEffect(() => setScrollContainer(containerRef.current?.closest<HTMLElement>('.diff-body') ?? null), []);
+  const hlCache = useRef(new Map<string, string[] | null>());
+  useMemo(() => hlCache.current.clear(), [syntax, parsed.lines, diff.language]);
+  const blocksByMarkerLine = useMemo(() => {
+    const map = new Map<number, (typeof parsed.blocks)[number]>();
+    for (const block of parsed.blocks) map.set(block.end - 1, block);
+    return map;
+  }, [parsed.blocks]);
+  const blocksById = useMemo(() => {
+    const map = new Map<number, (typeof parsed.blocks)[number]>();
+    for (const block of parsed.blocks) map.set(block.id, block);
+    return map;
+  }, [parsed.blocks]);
+  const win = useWindowedRows(scrollContainer, {
+    count: parsed.lines.length,
+    kindOf: (i) => (blocksByMarkerLine.has(i) ? 'actions' : 'line'),
+    estimates: CONFLICT_ROW_ESTIMATES,
+    resetKey: diff.content,
+  });
+
+  const highlighted = useCallback(
+    (lineNo: number): string | undefined => (syntax ? highlightBlockLine(hlCache.current, 'file', parsed.lines, lineNo, diff.language) : undefined),
+    [syntax, parsed.lines, diff.language],
+  );
 
   const lineKinds = useMemo(() => {
     const kinds: ('plain' | 'marker' | 'ours' | 'base' | 'theirs')[] = new Array(parsed.lines.length).fill('plain');
@@ -70,7 +98,7 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
   }, [tintsByLine]);
 
   const jumpToLine = (line: number) => {
-    containerRef.current?.querySelector<HTMLElement>(`[data-conflict-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    win.scrollTo(line, 'center');
   };
 
   const jumpLow = (delta: 1 | -1) => {
@@ -81,7 +109,7 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
   };
 
   const choose = (blockId: number, choice: BlockChoice) => {
-    const block = parsed.blocks.find((b) => b.id === blockId);
+    const block = blocksById.get(blockId);
     if (!block) return;
     const { content } = applyResolutions(parsed, new Map([[blockId, resolutionForChoice(block, choice)]]));
     void actions.writeResolvedContent(path, content, parsed.blocks.length > 1, diff.content);
@@ -143,12 +171,15 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
         ) : null}
       </div>
       <div ref={containerRef}>
-        {parsed.lines.map((line, i) => {
+        {win.top > 0 ? <div aria-hidden style={{ height: win.top }} /> : null}
+        {Array.from({ length: win.end - win.start }, (_, offset) => {
+          const i = win.start + offset;
+          const line = parsed.lines[i];
           const kind = lineKinds[i];
-          const block = kind === 'marker' ? parsed.blocks.find((b) => b.end - 1 === i) : undefined;
+          const block = kind === 'marker' ? blocksByMarkerLine.get(i) : undefined;
           const tint = tintsByLine?.get(i);
           return (
-            <React.Fragment key={i}>
+            <div ref={win.rowRef(i)} key={i}>
               <div className={`conflict-line ${kind}${tint ? ` conf-${tint.confidence}` : ''}`} data-conflict-line={i}>
                 <span className="num">
                   {tint?.isStart ? (
@@ -163,7 +194,7 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
                   ) : null}
                   {i + 1}
                 </span>
-                <span className="code" dangerouslySetInnerHTML={{ __html: kind === 'plain' && hl && hl[i] !== undefined ? hl[i] || ' ' : escapeHtml(line) || ' ' }} />
+                <span className="code" dangerouslySetInnerHTML={{ __html: (kind === 'plain' ? highlighted(i + 1) ?? escapeHtml(line) : escapeHtml(line)) || ' ' }} />
               </div>
               {block ? (
                 <div className="conflict-block-actions">
@@ -175,9 +206,10 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
                   {block.base ? <Button size="sm" onClick={() => choose(block.id, 'base')} title="Restore the common ancestor version">Base</Button> : null}
                 </div>
               ) : null}
-            </React.Fragment>
+            </div>
           );
         })}
+        {win.bottom > 0 ? <div aria-hidden style={{ height: win.bottom }} /> : null}
       </div>
     </div>
   );
