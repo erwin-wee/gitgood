@@ -14,7 +14,8 @@ import { ReviewService } from './ai/review';
 import { SplitterService } from './ai/splitter';
 import { TriageService } from './ai/triage';
 import { applyInboxBadge } from './badge';
-import { clientServerUrl, registerClientIpc, showInboxNotification, watchServerVersion } from './client';
+import { clientServerUrl, fetchServerVersion, isLocalServerUrl, registerClientIpc, showInboxNotification, waitForServer, watchServerVersion } from './client';
+import { ensureManagedServer, setUpManagedServer } from './local-server';
 import { GitClient } from './git/git';
 import { fetch as gitFetch } from './git/operations';
 import { GhClient } from './gh/gh';
@@ -121,13 +122,30 @@ if (!gotLock) {
       return;
     }
     if (serverUrl) {
-      // Client mode: settings, repositories and every service live on the server; this store only keeps window bounds and zoom.
+      // Client mode keeps the repository on the server, but the desktop still owns its installer update channel.
       log.info(`Client mode: using the GitGood server at ${serverUrl}`);
-      registerClientIpc(serverUrl, store, getWindow);
+      const disabledEnv: DisabledEnv = { isPackaged: app.isPackaged, platform: process.platform, portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR, appImagePath: process.env.APPIMAGE, appImageWritable: appImageWritable(process.env.APPIMAGE) };
+      const updateProvider = new ElectronUpdaterProvider(autoUpdater as unknown as ElectronAutoUpdater, () => store.getSettings().updateChannel);
+      const updater = new Updater(store, updateProvider, (state) => {
+        log.info(`Update state: ${state.status}${state.status === 'available' ? ` (${state.version})` : ''}`);
+        sendEvent(getWindow(), 'app.update.changed', state);
+      }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv, isPerMachineInstall: isPerMachineInstall(process.execPath, process.platform) });
+      updater.start();
+      registerClientIpc(serverUrl, store, getWindow, updater);
+      if (isLocalServerUrl(serverUrl)) {
+        const serverVersion = await fetchServerVersion(serverUrl);
+        // A broken service must not stop the window opening: its retry page and the mismatch dialog still apply.
+        try {
+          const status = await ensureManagedServer(serverVersion, app.getVersion());
+          if (status === 'restarted') await waitForServer(serverUrl);
+        } catch (err) {
+          log.warn(`Could not update the managed GitGood server: ${(err as Error).message}`);
+        }
+      }
       Menu.setApplicationMenu(buildMenu(getWindow));
       const openWindow = () => {
         mainWindow = createMainWindow(store, undefined, serverUrl);
-        watchServerVersion(serverUrl, mainWindow, app.getVersion());
+        watchServerVersion(serverUrl, mainWindow, app.getVersion(), updater);
         mainWindow.on('closed', () => {
           mainWindow = null;
         });
@@ -185,7 +203,7 @@ if (!gotLock) {
     }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv, isPerMachineInstall: isPerMachineInstall(process.execPath, process.platform) });
     const deps: HandlerDeps = { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, watchedFolders, host, emit: bus.emit, busy };
     registerIpc(deps);
-    Menu.setApplicationMenu(buildMenu(getWindow));
+    Menu.setApplicationMenu(buildMenu(getWindow, { showManagedServer: process.platform === 'linux' && app.isPackaged, onManagedServer: () => void setUpManagedServer(userData) }));
 
     /** Desktop notification for a freshly-arrived inbox item (only while the window is unfocused; see shouldNotifyInboxItem for the per-category gating). */
     function notifyNewInboxItems(items: InboxItem[]): void {
