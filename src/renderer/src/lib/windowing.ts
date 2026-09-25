@@ -168,9 +168,11 @@ export function useWindowedRows(container: HTMLElement | null, { count, kindOf, 
     (i: number, mode: 'center' | 'nearest') => {
       if (!container || i < 0 || i >= rows.current.count) return;
       pending.current = { i, align: mode, passes: 0 };
-      // Render the target window now: an update from a layout effect or event handler is flushed before paint.
-      if (align(container, i, mode)) rerender();
-      else pending.current = null;
+      // Render the target window now (an update from a layout effect or event handler is flushed before paint), even
+      // when this first align didn't move: the settle pass re-checks against measured heights and the fresh spacers,
+      // which catches a 'nearest' row whose estimate looked in view and a 'center' clamped by a stale scroll height.
+      align(container, i, mode);
+      rerender();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [container],
