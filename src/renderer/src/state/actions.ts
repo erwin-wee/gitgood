@@ -1039,7 +1039,7 @@ export async function loadDiff(force = false): Promise<void> {
   const s = store.get();
   const repo = s.currentRepo;
   if (!repo) {
-    patchDiff({ key: null, diff: null, loading: false, error: null, selectedLines: null, blame: null, blameOn: false, highlightTerm: null });
+    patchDiff({ key: null, diff: null, loading: false, error: null, selectedLines: null, blame: null, blameOn: false, highlightTerm: null, revealLine: null });
     return;
   }
   const opts = { hideWhitespace: s.settings?.diffHideWhitespace ?? false };
@@ -1121,13 +1121,13 @@ export async function loadDiff(force = false): Promise<void> {
   }
 
   if (!key || !fetcher) {
-    patchDiff({ key: null, diff: null, loading: false, error: null, selectedLines: null, blame: null, highlightTerm: null });
+    patchDiff({ key: null, diff: null, loading: false, error: null, selectedLines: null, blame: null, highlightTerm: null, revealLine: null });
     return;
   }
   key += `|ws=${opts.hideWhitespace}`;
   if (!force && s.diff.key === key && (s.diff.diff || s.diff.loading) && s.diff.highlightTerm?.text === highlightTerm?.text) return;
   const samePath = s.diff.key !== null && s.diff.key.split('|')[0] === key.split('|')[0];
-  patchDiff({ key, loading: !samePath || !s.diff.diff, error: null, selectedLines, diff: samePath ? s.diff.diff : null, highlightTerm });
+  patchDiff({ key, loading: !samePath || !s.diff.diff, error: null, selectedLines, diff: samePath ? s.diff.diff : null, highlightTerm, ...(samePath ? {} : { revealLine: null }) });
   try {
     const diff = await fetcher();
     if (store.get().diff.key !== key) return;
@@ -3146,32 +3146,18 @@ export function copyExplanationMarkdown(): void {
   void copyToClipboard(explanationToMarkdown(result, target), 'Explanation copied');
 }
 
-/** Scrolls the currently visible diff (in whichever tab is showing one) to the given new-side line, briefly flashing the row. */
-export function scrollDiffToLine(line: number | null): void {
-  if (line === null) return;
-  const row = document.querySelector<HTMLElement>(`.diff-pane tr[data-new-line="${line}"]`);
-  if (!row) return;
-  row.scrollIntoView({ block: 'center' });
-  row.classList.add('flash-highlight');
-  setTimeout(() => row.classList.remove('flash-highlight'), 1200);
-}
-
-/** Clicking an explanation reference: switches to that file in the active tab's file list when needed, then scrolls the diff to the line. */
+/** Clicking an explanation reference: switches to that file in the active tab's file list when needed, then asks the text diff to scroll to the line once it is showing that file. */
 export function focusExplainReference(path: string, line: number | null): void {
   const s = store.get();
-  let switching = false;
-  if (s.view === 'history' && s.history.selectedFile !== path && (s.history.details?.files.some((f) => f.path === path) ?? false)) {
-    selectCommitFile(path);
-    switching = true;
-  } else if (s.view === 'changes' && s.changes.selectedPaths[0] !== path && (s.status?.files.some((f) => f.path === path) ?? false)) {
-    selectWorkingFile(path);
-    switching = true;
-  } else if (s.view === 'stashes' && s.stashesView.selectedFile !== path && s.stashesView.files.some((f) => f.path === path)) {
-    selectStashViewFile(path);
-    switching = true;
-  }
-  if (switching) setTimeout(() => scrollDiffToLine(line), 250);
-  else scrollDiffToLine(line);
+  if (s.view === 'history' && s.history.selectedFile !== path && (s.history.details?.files.some((f) => f.path === path) ?? false)) selectCommitFile(path);
+  else if (s.view === 'changes' && s.changes.selectedPaths[0] !== path && (s.status?.files.some((f) => f.path === path) ?? false)) selectWorkingFile(path);
+  else if (s.view === 'stashes' && s.stashesView.selectedFile !== path && s.stashesView.files.some((f) => f.path === path)) selectStashViewFile(path);
+  // Set after the switch: loadDiff clears revealLine when the shown file changes.
+  if (line !== null) patchDiff({ revealLine: line });
+}
+
+export function clearDiffReveal(): void {
+  patchDiff({ revealLine: null });
 }
 
 // ---------------------------------------------------------------------------

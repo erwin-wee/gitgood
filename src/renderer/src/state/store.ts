@@ -384,6 +384,8 @@ export interface DiffState {
   activeBlameId: string | null;
   /** Set when a content/regex history search is active, so the diff pane can scroll to and highlight the first matching line. */
   highlightTerm: { text: string; regex: boolean } | null;
+  /** New-side line an Explain reference asked the text diff to scroll to and flash; cleared once the diff handles it or the shown file changes. */
+  revealLine: number | null;
 }
 
 /** Post-resolution check failure banner (add-ai-conflict-resolution-upgrade). One at a time, per repository; replaced on the next resolution's check result. */
@@ -492,7 +494,7 @@ export const initialStashesView: StashesViewState = { loading: false, selectedSh
 
 export const initialHistory: HistoryState = { commits: [], hasMore: false, loading: false, search: '', query: EMPTY_HISTORY_QUERY, freeText: '', queryError: null, slowSearch: false, selectedShas: [], details: null, detailsLoading: false, selectedFile: null, matchingFiles: null, dragging: null, path: null, pathHistory: null, error: null, detailsError: null, stale: false };
 
-export const initialDiff: DiffState = { key: null, diff: null, loading: false, error: null, selectedLines: null, blameOn: false, blame: null, blameLoading: false, activeBlameId: null, highlightTerm: null };
+export const initialDiff: DiffState = { key: null, diff: null, loading: false, error: null, selectedLines: null, blameOn: false, blame: null, blameLoading: false, activeBlameId: null, highlightTerm: null, revealLine: null };
 
 const initialState: AppState = {
   settings: null,

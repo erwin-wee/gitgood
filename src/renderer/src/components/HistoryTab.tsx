@@ -10,6 +10,7 @@ import { Avatar, Badge, Button, Callout, Checkbox, FilterInput, Icon, RelativeTi
 import { useWindowedRows } from '../lib/windowing';
 
 const COMMIT_ROW_ESTIMATES = { row: 60 };
+const commitRowKind = (): string => 'row';
 
 const SIGNATURE_BADGES: Partial<Record<SignatureStatus, { icon: IconName; className: string; label: (signer: string | null) => string }>> = {
   good: { icon: 'check-circle', className: 'sig-good', label: (signer) => `Good signature${signer ? ` from ${signer}` : ''}` },
@@ -79,7 +80,8 @@ export function HistoryTab(): React.JSX.Element {
   const [historySearchFocused, setHistorySearchFocused] = useState(false);
   const [filterCheatSheetOpen, setFilterCheatSheetOpen] = useState(true);
   const [filterCheatSheetDismissed, setFilterCheatSheetDismissed] = useState(false);
-  const win = useWindowedRows(listEl, { count: history.commits.length, kindOf: () => 'row', estimates: COMMIT_ROW_ESTIMATES, resetKey: history.path ?? '' });
+  const commitKey = useCallback((i: number) => history.commits[i].sha, [history.commits]);
+  const win = useWindowedRows(listEl, { count: history.commits.length, kindOf: commitRowKind, keyOf: commitKey, estimates: COMMIT_ROW_ESTIMATES, resetKey: history.path ?? '' });
   const filterActive = historyFilterActive(history);
   const reorderDisabled = historyReorderDisabled(history);
 
