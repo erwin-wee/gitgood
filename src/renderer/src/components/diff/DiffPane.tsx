@@ -305,6 +305,8 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
               renderBlameCard={renderBlameCard}
               highlightTerm={mode === 'commit' ? diffState.highlightTerm : null}
               onExplainRange={explainEligibleMode && aiExplainEnabled ? (hunkIndex, startLine, endLine) => actions.explainSelectedLines(path, hunkIndex, startLine, endLine) : undefined}
+              revealLine={diffState.revealLine}
+              onRevealed={actions.clearDiffReveal}
             />
           ) : null}
         </div>
@@ -314,10 +316,10 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
   );
 });
 
-function DiffBody({ diff, path, viewMode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange, annotations, activeAnnotationId, onAnnotationClick, renderAnnotationCard, blame, activeBlameId, onBlameBlockClick, renderBlameCard, highlightTerm, onExplainRange }: { diff: FileDiff; path: string; mode: string; viewMode: 'unified' | 'split'; wrap: boolean; syntax: boolean; intraline: boolean; selectable: boolean; selectedLines: string[] | null; onSelectionChange: (s: Set<string>, total: number) => void; annotations?: LineAnnotation[]; activeAnnotationId?: string | null; onAnnotationClick?: (id: string) => void; renderAnnotationCard?: (ids: string[]) => React.ReactNode; blame?: BlameHunk[] | null; activeBlameId?: string | null; onBlameBlockClick?: (id: string) => void; renderBlameCard?: (hunk: BlameHunk) => React.ReactNode; highlightTerm?: { text: string; regex: boolean } | null; onExplainRange?: (hunkIndex: number, startLine: number, endLine: number) => void }): React.JSX.Element {
+function DiffBody({ diff, path, viewMode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange, annotations, activeAnnotationId, onAnnotationClick, renderAnnotationCard, blame, activeBlameId, onBlameBlockClick, renderBlameCard, highlightTerm, onExplainRange, revealLine, onRevealed }: { diff: FileDiff; path: string; mode: string; viewMode: 'unified' | 'split'; wrap: boolean; syntax: boolean; intraline: boolean; selectable: boolean; selectedLines: string[] | null; onSelectionChange: (s: Set<string>, total: number) => void; annotations?: LineAnnotation[]; activeAnnotationId?: string | null; onAnnotationClick?: (id: string) => void; renderAnnotationCard?: (ids: string[]) => React.ReactNode; blame?: BlameHunk[] | null; activeBlameId?: string | null; onBlameBlockClick?: (id: string) => void; renderBlameCard?: (hunk: BlameHunk) => React.ReactNode; highlightTerm?: { text: string; regex: boolean } | null; onExplainRange?: (hunkIndex: number, startLine: number, endLine: number) => void; revealLine: number | null; onRevealed: () => void }): React.JSX.Element {
   switch (diff.kind) {
     case 'text':
-      return <TextDiff diff={diff} mode={viewMode} wrap={wrap} syntax={syntax} intraline={intraline} selectable={selectable} selectedLines={selectedLines} onSelectionChange={onSelectionChange} annotations={annotations} activeAnnotationId={activeAnnotationId} onAnnotationClick={onAnnotationClick} renderAnnotationCard={renderAnnotationCard} blame={blame} activeBlameId={activeBlameId} onBlameBlockClick={onBlameBlockClick} renderBlameCard={renderBlameCard} highlightTerm={highlightTerm} onExplainRange={onExplainRange} />;
+      return <TextDiff diff={diff} mode={viewMode} wrap={wrap} syntax={syntax} intraline={intraline} selectable={selectable} selectedLines={selectedLines} onSelectionChange={onSelectionChange} annotations={annotations} activeAnnotationId={activeAnnotationId} onAnnotationClick={onAnnotationClick} renderAnnotationCard={renderAnnotationCard} blame={blame} activeBlameId={activeBlameId} onBlameBlockClick={onBlameBlockClick} renderBlameCard={renderBlameCard} highlightTerm={highlightTerm} onExplainRange={onExplainRange} revealLine={revealLine} onRevealed={onRevealed} />;
     case 'conflict':
       return <ConflictDiff diff={diff} path={path} syntax={syntax} />;
     case 'image':

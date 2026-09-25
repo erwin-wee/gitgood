@@ -49,6 +49,9 @@ export interface TextDiffProps {
   highlightTerm?: { text: string; regex: boolean } | null;
   /** When set, right-clicking a line (or a text selection spanning several lines of one hunk) offers "Explain selected lines"/"Explain this line", reporting the new-side line range. */
   onExplainRange?: (hunkIndex: number, startLine: number, endLine: number) => void;
+  /** New-side line to scroll to and briefly flash (an Explain reference); `onRevealed` is called once it has been handled. */
+  revealLine?: number | null;
+  onRevealed?: () => void;
 }
 
 const EXPAND_STEP = 20;
@@ -238,7 +241,7 @@ function rowNewNo(r: Row): number | null {
 
 const ROW_ESTIMATES = { hunk: 28, extra: 20, line: 20, pair: 20, card: 140, expander: 28 };
 
-export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange, annotations, activeAnnotationId, onAnnotationClick, renderAnnotationCard, blame, activeBlameId, onBlameBlockClick, renderBlameCard, highlightTerm, onExplainRange }: TextDiffProps): React.JSX.Element {
+export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, selectedLines, onSelectionChange, annotations, activeAnnotationId, onAnnotationClick, renderAnnotationCard, blame, activeBlameId, onBlameBlockClick, renderBlameCard, highlightTerm, onExplainRange, revealLine, onRevealed }: TextDiffProps): React.JSX.Element {
   const [expansions, setExpansions] = useState<Record<string, number>>({});
   useEffect(() => setExpansions({}), [diff]);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -648,8 +651,10 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
   }, [views, split, pairsOf, showAnnotationCard, activeLine, annotationsByLine, showBlameCard, blameActiveLine]);
 
   const kindOf = useCallback((i: number) => rows[i].kind, [rows]);
+  const keys = useMemo(() => rows.map(rowKey), [rows]);
+  const keyOf = useCallback((i: number) => keys[i], [keys]);
   const resetKey = useMemo(() => ({}), [diff.hunks, wrap, split, !!blame]);
-  const win = useWindowedRows(container, { count: rows.length, kindOf, estimates: ROW_ESTIMATES, resetKey });
+  const win = useWindowedRows(container, { count: rows.length, kindOf, keyOf, estimates: ROW_ESTIMATES, resetKey });
 
   // Keeps the unified nowrap table from re-sizing as long lines scroll in and out of the window.
   const longestLine = useMemo(() => {
@@ -658,7 +663,9 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     return n;
   }, [diff.hunks]);
 
-  // Reads rows through a ref so the scroll-to effects below fire only when their target changes, not when a hunk expands or a card opens.
+  // Reads rows through a ref so the scroll-to effects below fire only when their target changes (or the scroll
+  // container first becomes available on mount), not when a hunk expands, a card opens or the same file reloads.
+  // Layout effects, so the jump happens before the first paint of the new rows.
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const scrollToRow = useCallback(
@@ -668,18 +675,29 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
     },
     [win.scrollTo],
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeLine !== null) scrollToRow((r) => rowNewNo(r) === activeLine, 'center');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeLine, diff]);
-  useEffect(() => {
+  }, [activeLine, scrollToRow]);
+  useLayoutEffect(() => {
     if (highlightKey) scrollToRow((r) => (r.kind === 'line' && r.key === highlightKey) || (r.kind === 'pair' && (r.p.left?.key === highlightKey || r.p.right?.key === highlightKey)), 'center');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlightKey, diff]);
-  useEffect(() => {
+  }, [highlightKey, scrollToRow]);
+  useLayoutEffect(() => {
     if (blameActiveLine !== null) scrollToRow((r) => rowNewNo(r) === blameActiveLine, 'nearest');
+  }, [blameActiveLine, scrollToRow]);
+  const [flashLine, setFlashLine] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (revealLine == null || !container) return;
+    scrollToRow((r) => rowNewNo(r) === revealLine, 'center');
+    setFlashLine(revealLine);
+    onRevealed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blameActiveLine]);
+  }, [revealLine, container, scrollToRow]);
+  useEffect(() => {
+    if (flashLine === null) return;
+    const t = window.setTimeout(() => setFlashLine(null), 1200);
+    return () => window.clearTimeout(t);
+  }, [flashLine]);
+  const flash = (newNo: number | null) => (newNo !== null && newNo === flashLine ? 'flash-highlight' : '');
 
   const renderRow = (r: Row, i: number): React.ReactNode => {
     const ref = win.rowRef(i);
@@ -690,7 +708,7 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
         const x = r.x;
         const html = (highlighted('new', x.newNo) ?? escapeHtml(x.text)) || ' ';
         return (
-          <tr ref={ref} key={rowKey(r)} className="context extra">
+          <tr ref={ref} key={rowKey(r)} className={`context extra ${flash(x.newNo)}`}>
             {blameCell(x.newNo)}
             {selectable ? <td className="sel" /> : null}
             <td className="num">{x.oldNo}</td>
@@ -715,7 +733,7 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
         const { line, key } = r;
         const isChange = line.type !== 'context';
         return (
-          <tr ref={ref} key={key} className={`${line.type} ${isChange && selected.has(key) ? 'selected-line' : ''} ${line.newLineNumber !== null && annotationsByLine.has(line.newLineNumber) ? 'annotated' : ''} ${key === highlightKey ? 'highlight-match' : ''}`} data-new-line={line.newLineNumber ?? undefined} data-key={key}>
+          <tr ref={ref} key={key} className={`${line.type} ${isChange && selected.has(key) ? 'selected-line' : ''} ${line.newLineNumber !== null && annotationsByLine.has(line.newLineNumber) ? 'annotated' : ''} ${key === highlightKey ? 'highlight-match' : ''} ${flash(line.newLineNumber)}`} data-new-line={line.newLineNumber ?? undefined} data-key={key}>
             {blameCell(line.newLineNumber)}
             {selCell(isChange ? { line, key } : null)}
             <td className="num">{line.oldLineNumber ?? ''}</td>
@@ -739,7 +757,7 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
         const rightNo = p.right?.line.newLineNumber ?? null;
         const pairMatches = (!!p.left && p.left.key === highlightKey) || (!!p.right && p.right.key === highlightKey);
         return (
-          <tr ref={ref} key={rowKey(r)} className={`${rowClass} ${(p.left && selected.has(p.left.key) && p.left.line.type !== 'context') || (p.right && selected.has(p.right.key) && p.right.line.type !== 'context') ? 'selected-line' : ''} ${rightNo !== null && annotationsByLine.has(rightNo) ? 'annotated' : ''} ${pairMatches ? 'highlight-match' : ''}`} data-new-line={rightNo ?? undefined} data-key={p.left?.key ?? p.right?.key ?? undefined}>
+          <tr ref={ref} key={rowKey(r)} className={`${rowClass} ${(p.left && selected.has(p.left.key) && p.left.line.type !== 'context') || (p.right && selected.has(p.right.key) && p.right.line.type !== 'context') ? 'selected-line' : ''} ${rightNo !== null && annotationsByLine.has(rightNo) ? 'annotated' : ''} ${pairMatches ? 'highlight-match' : ''} ${flash(rightNo)}`} data-new-line={rightNo ?? undefined} data-key={p.left?.key ?? p.right?.key ?? undefined}>
             {blameCell(rightNo)}
             {selCell(p.left)}
             {p.left ? (

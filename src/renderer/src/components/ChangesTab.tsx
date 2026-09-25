@@ -12,6 +12,7 @@ import { useWindowedRows } from '../lib/windowing';
 const SUMMARY_LIMIT = 72;
 
 const FILE_ROW_ESTIMATES = { row: 28 };
+const fileRowKind = (): string => 'row';
 
 export function ChangesTab(): React.JSX.Element {
   const status = useAppStore((s) => s.status);
@@ -34,7 +35,9 @@ export function ChangesTab(): React.JSX.Element {
   const allState: boolean | 'indeterminate' = files.length === 0 ? false : includedCount === files.length && partialCount === 0 ? true : includedCount === 0 ? false : 'indeterminate';
 
   const [listEl, setListEl] = useState<HTMLElement | null>(null);
-  const win = useWindowedRows(listEl, { count: visible.length, kindOf: () => 'row', estimates: FILE_ROW_ESTIMATES, resetKey: status });
+  const repoPath = useAppStore((s) => s.currentRepo?.path);
+  const fileKey = useCallback((i: number) => visible[i].path, [visible]);
+  const win = useWindowedRows(listEl, { count: visible.length, kindOf: fileRowKind, keyOf: fileKey, estimates: FILE_ROW_ESTIMATES, resetKey: repoPath });
 
   const contextMenu = useCallback((e: React.MouseEvent, file: WorkingFile) => {
     const s = store.get();
