@@ -2,8 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, "ci/**"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,7 +31,8 @@ jobs:
 
       # Debian/Ubuntu's xvfb package ships xvfb-run; scripts/smoke.mjs picks it
       # up automatically (and only uses it on Linux). Windows runners already
-      # have a desktop session, so nothing extra is needed there.
+      # have a desktop session and macOS renders offscreen, so nothing extra is
+      # needed there.
       - name: Install xvfb
         if: runner.os == 'Linux'
         run: |
@@ -47,18 +49,10 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
-      # Linux only for now. The fixture and smoke suites had never run on Windows
-      # (the unit step failed first and masked them); when they finally did, 16
-      # fixture tests failed for unrelated reasons -- cherry-pick conflicts,
-      # worktrees, signing and the gh-stub. Typecheck and the unit suite still
-      # run on Windows, which is what covers the Windows-specific code paths.
-      # Tracked in #3.
       - name: Fixture tests
-        if: runner.os == 'Linux'
         run: npm run test:fixture
 
       - name: Smoke tests
-        if: runner.os == 'Linux'
         run: npm run test:smoke
 
       - name: Upload smoke artifacts

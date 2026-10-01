@@ -14,7 +14,7 @@
     },
     { "shot": "signing-failed-dialog.png" },
     {
-      "js": "(async () => { const onUnsigned = window.__gitgood.store.get().dialog.onUnsigned; window.__gitgood.store.set({ dialog: null, dialogStack: [] }); onUnsigned(); await new Promise((r) => setTimeout(r, 500)); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); const after = window.__gitgood.store.get(); return JSON.stringify({ dialog: after.dialog ? after.dialog.kind : null, historyTop: after.history.commits[0] && after.history.commits[0].summary }); })()",
+      "js": "(async () => { const onUnsigned = window.__gitgood.store.get().dialog.onUnsigned; window.__gitgood.store.set({ dialog: null, dialogStack: [] }); onUnsigned(); await new Promise((r) => setTimeout(r, 1500)); window.__gitgood.actions.setView('history'); await window.__gitgood.actions.loadHistory(true); const after = window.__gitgood.store.get(); return JSON.stringify({ dialog: after.dialog ? after.dialog.kind : null, historyTop: after.history.commits[0] && after.history.commits[0].summary }); })()",
       "dump": "commit-unsigned.json"
     }
   ],

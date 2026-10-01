@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GitClient } from '../../src/main/git/git';
 import { GhClient } from '../../src/main/gh/gh';
 import { PrDraftService } from '../../src/main/ai/prDraft';
@@ -117,7 +117,7 @@ describe.skipIf(!hasGitSync())('PrDraftService end-to-end against the claude stu
       repo.git(['checkout', '-b', 'feature']);
       repo.commit({ message: 'add x', files: { 'a.txt': '2\n' } });
       const stubResponse = { is_error: false, structured_output: { title: 'x', body: 'y', linkedIssues: [], templateSectionsFilled: [] } };
-      const scenario = await createStubScenario([{ match: '-p', stdout: JSON.stringify(stubResponse), delayMs: 2000 }]);
+      const scenario = await createStubScenario([{ match: '-p', stdout: JSON.stringify(stubResponse), delayMs: 10000 }]);
       try {
         const tools = createFakeTools({ gitPath: repo.gitBin, claudePath: claudeLauncherPath(), env: { ...repo.env, ...scenario.env('CLAUDE') } });
         const git = new GitClient(tools);
@@ -125,7 +125,8 @@ describe.skipIf(!hasGitSync())('PrDraftService end-to-end against the claude stu
         const service = new PrDraftService(fakeStore(), tools, git, gh, fakeRepos());
         const events: string[] = [];
         const promise = service.draft(repo.path, { base: 'main', head: 'feature', existingTitle: '', existingBody: '' }, (phase) => events.push(phase));
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        // Gathering the diff before the model call is slow on Windows; wait for it rather than guessing.
+        await vi.waitFor(() => expect(events).toContain('thinking'), { timeout: 8000 });
         expect(service.isActive()).toBe(true);
         service.cancel();
         await expect(promise).rejects.toThrow();

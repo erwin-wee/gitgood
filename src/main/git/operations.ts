@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import type { OperationOutcome } from '@shared/ipc';
 import type { CloneOptions, RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
 import { assertNewBranchName, assertNotOption } from '@shared/util';
@@ -781,7 +781,7 @@ export async function isAncestor(git: GitClient, repoPath: string, ancestor: str
 
 export async function getTopLevel(git: GitClient, path: string): Promise<string | null> {
   const out = await git.tryRun(path, ['rev-parse', '--show-toplevel'], { readOnly: true });
-  return out?.stdout.trim() || null;
+  return out?.stdout.trim() ? normalize(out.stdout.trim()) : null;
 }
 
 export async function init(git: GitClient, directory: string, defaultBranch: string | null): Promise<void> {
