@@ -1131,6 +1131,24 @@ export function ShortcutsDialog(): React.JSX.Element {
   const [pending, setPending] = useState<{ id: string; accelerator: string; conflict: ShortcutConflict } | null>(null);
   const labelOf = (id: string): string => SHORTCUTS.find((d) => d.id === id)?.label ?? id;
   const save = (next: ShortcutOverrides): void => void actions.updateSettings({ shortcuts: next });
+  const bind = (id: string, accelerator: string): void => {
+    const conflict = findConflict(shortcuts, id, accelerator, isMac);
+    if (conflict?.id === null) {
+      setNote(`${formatAccelerator(accelerator, isMac)} is reserved for "${conflict.label}". Choose another combination.`);
+      return;
+    }
+    setRecording(null);
+    setNote(null);
+    if (conflict) setPending({ id, accelerator, conflict });
+    else {
+      setPending(null);
+      save(setShortcut(overrides, id, accelerator));
+    }
+  };
+
+  useEffect(() => {
+    if (pending) document.getElementById('shortcut-conflict-confirm')?.focus();
+  }, [pending]);
 
   useEffect(() => {
     if (!recording) return;
@@ -1148,15 +1166,7 @@ export function ShortcutsDialog(): React.JSX.Element {
         setNote('That key cannot be bound on its own: combine it with Ctrl/Cmd or Alt, or use a function key.');
         return;
       }
-      const conflict = findConflict(shortcuts, recording, accelerator, isMac);
-      if (conflict?.id === null) {
-        setNote(`${formatAccelerator(accelerator, isMac)} is reserved for "${conflict.label}". Press another combination.`);
-        return;
-      }
-      setRecording(null);
-      setNote(null);
-      if (conflict) setPending({ id: recording, accelerator, conflict });
-      else save(setShortcut(overrides, recording, accelerator));
+      bind(recording, accelerator);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -1187,6 +1197,7 @@ export function ShortcutsDialog(): React.JSX.Element {
             <kbd>{formatAccelerator(pending.accelerator, isMac)}</kbd> is already used by "{pending.conflict.label}". Use it for "{labelOf(pending.id)}" and unbind "{pending.conflict.label}"?
           </p>
           <Button
+            id="shortcut-conflict-confirm"
             size="sm"
             variant="primary"
             onClick={() => {
@@ -1216,7 +1227,7 @@ export function ShortcutsDialog(): React.JSX.Element {
                       {recording === id ? <em>Press the new keys… (Esc cancels)</em> : shortcuts[id] ? <kbd>{formatAccelerator(shortcuts[id], isMac)}</kbd> : <span className="muted">Unassigned</span>}{' '}
                       <Button size="sm" variant="ghost" aria-label={`Change shortcut for ${label}`} onClick={() => { setPending(null); setNote(null); setRecording(recording === id ? null : id); }}>{recording === id ? 'Cancel' : 'Change'}</Button>
                       {shortcuts[id] ? <Button size="sm" variant="ghost" aria-label={`Unbind shortcut for ${label}`} onClick={() => save(setShortcut(overrides, id, null))}>Unbind</Button> : null}
-                      {Object.hasOwn(overrides, id) ? <Button size="sm" variant="ghost" aria-label={`Reset shortcut for ${label}`} onClick={() => save(setShortcut(overrides, id, SHORTCUTS.find((d) => d.id === id)!.accelerator))}>Reset</Button> : null}
+                      {Object.hasOwn(overrides, id) ? <Button size="sm" variant="ghost" aria-label={`Reset shortcut for ${label}`} onClick={() => bind(id, SHORTCUTS.find((d) => d.id === id)!.accelerator)}>Reset</Button> : null}
                     </td>
                   </tr>
                 ))}
