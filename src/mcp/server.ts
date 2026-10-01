@@ -123,7 +123,7 @@ async function requestRereview(args: Record<string, unknown>, deps: McpDeps): Pr
 }
 
 async function openRepository(args: Record<string, unknown>, deps: McpDeps): Promise<unknown> {
-  const root = await git(await directoryArg(args, 'path'), ['rev-parse', '--show-toplevel']);
+  const root = resolve(await git(await directoryArg(args, 'path'), ['rev-parse', '--show-toplevel']));
   try {
     await deps.launchApp(root);
   } catch (err) {
