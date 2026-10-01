@@ -6,48 +6,11 @@
  * src/main/ai/review-core.ts).
  */
 import type { OperationKind, UpdateChannel, UpdateState } from '@shared/types';
+import { compareVersions } from '@shared/util';
 
 // ---------------------------------------------------------------------------
 // Semver comparison
 // ---------------------------------------------------------------------------
-
-interface ParsedVersion {
-  parts: number[];
-  prerelease: string | null;
-}
-
-/** Strips a leading "v"/"V" (as in git tags like "v1.2.3") before parsing. */
-function parseVersion(raw: string): ParsedVersion {
-  const cleaned = raw.trim().replace(/^v/i, '');
-  const [core, ...rest] = cleaned.split('-');
-  const parts = core.split('.').map((p) => {
-    const n = parseInt(p, 10);
-    return Number.isFinite(n) ? n : 0;
-  });
-  return { parts, prerelease: rest.length ? rest.join('-') : null };
-}
-
-/**
- * Compares two version strings (with an optional leading "v" and an
- * optional "-prerelease" suffix), returning -1/0/1 like Array.prototype.sort
- * comparators. Numeric parts compare numerically (so "1.9.0" < "1.10.0");
- * a version with a prerelease suffix sorts before its release (per semver
- * precedence rules), and otherwise prerelease suffixes compare as strings.
- */
-export function compareVersions(a: string, b: string): number {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
-  const len = Math.max(pa.parts.length, pb.parts.length);
-  for (let i = 0; i < len; i++) {
-    const na = pa.parts[i] ?? 0;
-    const nb = pb.parts[i] ?? 0;
-    if (na !== nb) return na < nb ? -1 : 1;
-  }
-  if (pa.prerelease === pb.prerelease) return 0;
-  if (pa.prerelease === null) return 1; // a is a release, b is a prerelease of the same core version: a is newer
-  if (pb.prerelease === null) return -1;
-  return pa.prerelease < pb.prerelease ? -1 : 1;
-}
 
 /** True when `candidate` is strictly newer than `current`. Never offers a downgrade or the same version. */
 export function isNewerVersion(current: string, candidate: string): boolean {

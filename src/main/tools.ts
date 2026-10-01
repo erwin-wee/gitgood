@@ -2,14 +2,13 @@ import { access, constants, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join, normalize } from 'node:path';
 import type { GhAccountEntry, GitHubAccount, ToolInfo, ToolsState } from '@shared/types';
-import { MIN_TOOL_VERSIONS } from '@shared/util';
+import { compareVersions, MIN_TOOL_VERSIONS } from '@shared/util';
 import { repoScope } from './core/client-context';
 import { exec } from './exec';
 import { parseGhAuthStatus, primaryAccount } from './gh/accounts';
 import { GitError } from './git/git';
 import { log } from './logger';
 import type { Store } from './store';
-import { compareVersions } from './update/update-core';
 
 /** Marks `info` outdated (with the minimum) when its version is known and below `min`; never blocks. */
 export function flagOutdated(info: ToolInfo, min: string): ToolInfo {

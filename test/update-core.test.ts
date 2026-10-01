@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canInstall, compareVersions, detectDisabledReason, isEligibleForChannel, isNewerVersion, isPerMachineInstall, reduceUpdateState, type ReleaseInfo } from '../src/main/update/update-core';
+import { compareVersions } from '../src/shared/util';
+import { canInstall, detectDisabledReason, isEligibleForChannel, isNewerVersion, isPerMachineInstall, reduceUpdateState, type ReleaseInfo } from '../src/main/update/update-core';
 import type { UpdateState } from '../src/shared/types';
 
 function release(overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {

@@ -370,6 +370,9 @@ function CommitForm(): React.JSX.Element {
           {aiAvailable ? (
             <Button variant="ghost" iconOnly icon="sparkle" className="sparkle" loading={aiCommitBusy} title="Generate commit message with AI" aria-label="Generate commit message with AI" onClick={() => void actions.generateCommitMessage()} disabled={included.length === 0 || changes.committing} />
           ) : null}
+          {aiCommitBusy ? (
+            <Button variant="ghost" size="sm" title="Stop generating the commit message" onClick={() => void invoke('ai.cancel', 'commitMessage')}>Cancel</Button>
+          ) : null}
           {aiAvailable ? (
             <Button variant="ghost" iconOnly icon="eye" loading={precommitReview.running} title="Review changes with AI before committing" aria-label="Review changes with AI before committing" onClick={() => void actions.reviewChangesBeforeCommit()} disabled={included.length === 0 || changes.committing} />
           ) : null}

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { clipboard, dialog, ipcMain, nativeTheme, Notification, shell, type BrowserWindow } from 'electron';
 import { IPC_EVENT_CHANNEL, IPC_INVOKE_CHANNEL, type ApiMethods } from '@shared/ipc';
 import type { InboxItem, InboxState, IpcResult } from '@shared/types';
+import { compareVersions } from '@shared/util';
 import { appEntryUrl, isTrustedSender } from './app-url';
 import { applyInboxBadge } from './badge';
 import { ElectronHost } from './host/electron-host';
@@ -11,7 +12,6 @@ import { ensureManagedServer, readUnit } from './local-server';
 import { log } from './logger';
 import { refreshMenuShortcuts } from './menu';
 import type { Store } from './store';
-import { compareVersions } from './update/update-core';
 import type { Updater } from './update/updater';
 
 /**

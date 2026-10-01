@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { GitHubRepoSummary, RepositoryInfo } from '@shared/types';
-import { compareStrings } from '@shared/util';
+import { compareStrings, compareVersions } from '@shared/util';
 import { errorMessage, invoke } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type RepoSettingsTab } from '../../state/store';
@@ -30,6 +30,9 @@ export function CloneDialog({ initialUrl }: { initialUrl?: string }): React.JSX.
   const [singleBranch, setSingleBranch] = useState(false);
   const [blobless, setBlobless] = useState(false);
   const [sparse, setSparse] = useState('');
+  const gitVersion = useAppStore((s) => s.tools?.git.version ?? null);
+  // Cone-mode `sparse-checkout set` needs Git 2.35; an unknown version is given the benefit of the doubt.
+  const sparseUnsupported = !!gitVersion && compareVersions(gitVersion, '2.35.0') < 0;
   const [submodules, setSubmodules] = useState(true);
   const progress = useAppStore((s) => Object.values(s.progress).find((p) => p.kind === 'clone') ?? null);
 
@@ -159,7 +162,7 @@ export function CloneDialog({ initialUrl }: { initialUrl?: string }): React.JSX.
           <TextField label="Shallow clone depth" hint="Only fetch this many commits of history. Leave empty for the full history." type="number" min={1} value={depth} onChange={(e) => setDepth(e.target.value)} placeholder="Full history" />
           <Checkbox checked={singleBranch || depth.trim() !== ''} onChange={setSingleBranch} disabled={depth.trim() !== ''} label="Single branch only (a shallow clone fetches one branch)" />
           <Checkbox checked={blobless} onChange={setBlobless} label="Blobless partial clone (--filter=blob:none): download file contents on demand" />
-          <TextField label="Sparse checkout directories" hint="Space or comma separated, relative to the repository root (cone mode, needs Git 2.35+). Leave empty to check out everything." value={sparse} onChange={(e) => setSparse(e.target.value)} placeholder="src docs/guides" spellCheck={false} />
+          <TextField label="Sparse checkout directories" hint={sparseUnsupported ? `Needs Git 2.35 or newer (found ${gitVersion}).` : 'Space or comma separated, relative to the repository root (cone mode, needs Git 2.35+). Leave empty to check out everything.'} value={sparse} onChange={(e) => setSparse(e.target.value)} placeholder="src docs/guides" spellCheck={false} disabled={sparseUnsupported} />
           <Checkbox checked={submodules} onChange={setSubmodules} label="Include submodules" />
         </div>
       </details>
