@@ -22,8 +22,8 @@
 ## 4. Smoke suite and CI
 
 - [x] 4.1 Add `scripts/smoke.mjs` and scenarios for first-launch Welcome, open fixture repo, stage and commit, switch branch, History selection, Conflicts dialog on a conflicted fixture, AI resolve with the stub; verify `npm run test:smoke` passes locally with screenshots and dumps under `test/smoke/out/`
-- [ ] 4.2 Add `.github/workflows/test.yml` with a Linux and Windows matrix running unit, fixture and smoke (`xvfb-run -a` on Linux), uploading screenshots and logs on failure; verify a green run on both
-  - 2026-10-01: `.github/workflows/test.yml` runs the Linux + Windows matrix, but fixture and smoke are still Linux-only (Windows fixture failures tracked in #3); open until a green Windows run of all three suites.
+- [x] 4.2 Add `.github/workflows/test.yml` with a Linux and Windows matrix running unit, fixture and smoke (`xvfb-run -a` on Linux), uploading screenshots and logs on failure; verify a green run on both
+  - 2026-10-01: Linux, Windows and macOS unit, fixture and smoke suites passed on integrated commit e47eb3e: https://github.com/erwin-wee/gitgood/actions/runs/36881867983.
 - [x] 4.3 Add an isolation test that points `HOME` at a temp dir and asserts nothing outside temp directories was written; verify it passes
 
 ## 5. Verification

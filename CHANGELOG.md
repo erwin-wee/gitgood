@@ -49,6 +49,7 @@ A security, privacy and robustness pass over the whole app, plus the features th
 - The web folder picker is a regular dialog (keyboard, ARIA and theme aware).
 - `.deb` installs are treated as unable to self-update, matching how `electron-updater` behaves on Debian.
 - CI runs on Node 24; `engines.node` is `^20.19.0 || >=22.12.0`. Electron 44.5.1 and `@anthropic-ai/sdk` 0.131.
+- Unit, fixture and Electron smoke suites are enabled on Linux, Windows and macOS; the Test workflow also supports manual dispatch and `ci/**` validation branches.
 - Neutral wording in shared AI backend messages (they used to read like conflict-resolution copy for every feature).
 
 ### Fixed
@@ -56,6 +57,8 @@ A security, privacy and robustness pass over the whole app, plus the features th
 - The diff line-number gutter now meets contrast guidelines.
 - Several AI services shared one cancel controller, so cancelling one (or, in server mode, another client's job) could abort an unrelated request; each now cancels only its own.
 - Git commands stayed blocked for several seconds after launch on machines where `claude --version` or `gh --version` is slow.
+- Windows batch-file arguments survive both `cmd.exe` parsing passes; Git worktree and MCP repository paths use native separators.
+- Smoke fixtures use canonical paths (including Windows 8.3 aliases) and wait for asynchronous dialog content rather than fixed loading delays.
 - Settings export no longer carries machine-local custom agent commands; repository pins, groups and AI opt-outs also stay out of it.
 
 ## 0.3.2 — 2026-09-25
