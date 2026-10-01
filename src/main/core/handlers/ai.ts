@@ -6,7 +6,7 @@ import { insertIntoChangelog } from '../../ai/release-notes-core';
 import { toFsPath } from '../../git/diff';
 import { openShellWithCommand } from '../../integrations/shells';
 import { readRepoConfig } from '../../repo/config';
-import { agentTemplate, expandAgentCommand, validateAgentTemplate } from '@shared/agent-presets';
+import { agentTemplate, expandAgentCommand, quotingFor, validateAgentTemplate } from '@shared/agent-presets';
 import type { ApiMethods } from '@shared/ipc';
 import type { HandlerContext } from './context';
 
@@ -101,7 +101,7 @@ export function aiHandlers(ctx: HandlerContext) {
     'ai.review.fixWithAgent': async (repoPath, runId) => {
       const settings = store.getSettings();
       const template = agentTemplate(settings.ai);
-      const invalid = validateAgentTemplate(template);
+      const invalid = validateAgentTemplate(template, quotingFor(settings.shell, process.platform));
       if (invalid) throw new AiError(`${invalid} Set the agent command under Options → AI → Agent for fixes.`, 'not-configured');
       const file = await review.exportPath(repoPath, runId);
       // The path is quoted for whichever shell the chosen terminal parses the command with.

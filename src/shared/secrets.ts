@@ -1,3 +1,5 @@
+import { pathsFromDiffHeader } from './diff/parse';
+
 /** Order matters only in that every pattern is applied; they do not overlap. */
 const SECRET_PATTERNS: readonly [RegExp, string][] = [
   [/\bghp_[A-Za-z0-9]{20,}\b/g, 'ghp_***'],
@@ -51,10 +53,20 @@ export function secretFileReason(path: string, content?: string): string | null 
 export function dropSecretFilePatches(patch: string): { patch: string; skipped: string[] } {
   const skipped: string[] = [];
   const kept = patch.split(/(?=^diff --git )/m).filter((block) => {
-    const m = /^diff --git a\/(.+?) b\/(.+)$/m.exec(block);
-    const reason = m && secretFileReason(m[2], block);
-    if (reason) skipped.push(`${m[2]}: ${reason}`);
-    return !reason;
+    const paths = pathsFromDiffHeader(block.split('\n', 1)[0]);
+    if (!paths) {
+      if (!block.startsWith('diff --git ')) return true;
+      skipped.push('Unknown path: could not safely decode the diff header');
+      return false;
+    }
+    for (const path of new Set([paths.oldPath, paths.newPath])) {
+      const reason = secretFileReason(path, block);
+      if (reason) {
+        skipped.push(`${path}: ${reason}`);
+        return false;
+      }
+    }
+    return true;
   });
   return { patch: kept.join(''), skipped };
 }

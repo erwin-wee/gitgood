@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { watchedFolderLabel, type AiFeature, type AiUsageMonth, type AppSettings, type FoundEditor, type FoundShell, type RepositoryScanProgress, type SigningConfig, type SigningConfigInfo, type SigningKey, type WatchedFolderProblem, type WatchedFolderStatus } from '@shared/types';
-import { errorMessage, invoke, isMac, on } from '../../api';
+import { errorMessage, invoke, isMac, on, platform } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type SettingsTab } from '../../state/store';
 import { modelFor } from '@shared/ai-model';
 import { acceleratorFromEvent, findConflict, formatAccelerator, mergeShortcuts, setShortcut, SHORTCUT_CATEGORIES, SHORTCUTS, type ShortcutConflict, type ShortcutOverrides } from '@shared/shortcuts';
-import { AGENT_PRESETS, agentTemplate, validateAgentTemplate } from '@shared/agent-presets';
+import { AGENT_PRESETS, agentTemplate, quotingFor, validateAgentTemplate } from '@shared/agent-presets';
 import { Avatar, Button, Callout, Checkbox, Dialog, FilterInput, Icon, Spinner, TextField, type IconName } from '../ui';
 import { LinkifiedText } from './IssueDialogs';
 import { SettingsSyncCard } from './SettingsSyncDialogs';
@@ -781,7 +781,8 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
   const [agentDraft, setAgentDraft] = useState(settings.ai.agentCustomCommand);
   const ai = settings.ai;
   const updateAi = (patch: Partial<AppSettings['ai']>) => update({ ai: { ...ai, ...patch } });
-  const agentDraftError = ai.agentCommand === 'custom' ? validateAgentTemplate(agentDraft) : null;
+  const agentQuoting = quotingFor(settings.shell, platform);
+  const agentDraftError = ai.agentCommand === 'custom' ? validateAgentTemplate(agentDraft, agentQuoting) : null;
   const saveKey = async () => {
     setSavingKey(true);
     try {
@@ -946,7 +947,7 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
               onChange={(e) => {
                 const v = e.target.value;
                 setAgentDraft(v);
-                if (!validateAgentTemplate(v)) updateAi({ agentCustomCommand: v });
+                if (!validateAgentTemplate(v, agentQuoting)) updateAi({ agentCustomCommand: v });
               }}
             />
           ) : null}

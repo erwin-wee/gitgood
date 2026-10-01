@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import type { FoundShell } from '@shared/types';
 import { cmdQuote, launchDetached, startOnWindows } from '../exec';
 import { findExecutable } from '../tools';
-import { buildCommandScript, canRunCommandIn, quotingFor, shellCommandInvocation, type Platform } from './shell-command';
+import { buildCommandScript, canRunCommandIn, shellCommandInvocation, type Platform } from './shell-command';
+import { quotingFor } from '@shared/agent-presets';
 
 const pf = process.env.ProgramFiles ?? 'C:\\Program Files';
 const local = process.env.LOCALAPPDATA ?? '';

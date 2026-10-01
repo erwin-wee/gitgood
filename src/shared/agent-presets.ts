@@ -34,8 +34,11 @@ export function agentTemplate(settings: Pick<AiSettings, 'agentCommand' | 'agent
   return AGENT_PRESETS.find((p) => p.id === settings.agentCommand)?.template ?? AGENT_PRESETS[0].template;
 }
 
-/** Whether every `{file}` sits inside a double-quoted string. The path is escaped for double quotes only (see escapePathForTemplate), so bare or single-quoted placeholders would let a path containing spaces, `$` or quotes change what runs. */
-function placeholdersQuoted(template: string): boolean {
+/** Placeholders must be in balanced literal double quotes, not escaped quotes or a command substitution. */
+function placeholdersQuoted(template: string, quoting: CommandQuoting): boolean {
+  // Parsing nested shell programs is deliberately unsupported: their quote scope is different.
+  if (quoting !== 'cmd' && template.includes('$(')) return false;
+  if (quoting === 'posix' && template.includes('`')) return false;
   let quote: string | null = null;
   for (let i = 0; i < template.length; i++) {
     if (template.startsWith(FILE_PLACEHOLDER, i)) {
@@ -44,18 +47,21 @@ function placeholdersQuoted(template: string): boolean {
       continue;
     }
     const c = template[i];
-    if (quote === '"' && c === '\\') i++;
-    else if (c === quote) quote = null;
-    else if (quote === null && (c === '"' || c === "'")) quote = c;
+    const escaped = quoting === 'cmd' ? quote === null && c === '^' : quote !== "'" && c === (quoting === 'posix' ? '\\' : '`');
+    if (escaped) {
+      if (template.startsWith(FILE_PLACEHOLDER, i + 1)) return false;
+      i++;
+    } else if (c === quote) quote = null;
+    else if (quote === null && (c === '"' || (quoting !== 'cmd' && c === "'"))) quote = c;
   }
-  return true;
+  return quote === null;
 }
 
 /** Null when the template is usable, otherwise the message to show inline. */
-export function validateAgentTemplate(template: string): string | null {
+export function validateAgentTemplate(template: string, quoting: CommandQuoting = 'posix'): string | null {
   if (!template.trim()) return 'Enter the command to run.';
   if (!template.includes(FILE_PLACEHOLDER)) return `The command must contain ${FILE_PLACEHOLDER}`;
-  if (!placeholdersQuoted(template)) return `Write every ${FILE_PLACEHOLDER} inside double quotes, e.g. agent "Read ${FILE_PLACEHOLDER}" (unquoted or single-quoted paths are not escaped safely).`;
+  if (!placeholdersQuoted(template, quoting)) return `Write every ${FILE_PLACEHOLDER} inside balanced literal double quotes, e.g. agent "Read ${FILE_PLACEHOLDER}"; escaped quotes and command substitutions are not supported.`;
   return null;
 }
 
@@ -66,6 +72,12 @@ export function validateAgentTemplate(template: string): string | null {
  * PowerShell with its own rules, and Git Bash with POSIX rules.
  */
 export type CommandQuoting = 'posix' | 'powershell' | 'cmd';
+
+/** The parser used by a selected terminal; shared by settings validation and execution. */
+export function quotingFor(id: string | null, platform: string): CommandQuoting {
+  if (platform !== 'win32' || id === 'gitbash') return 'posix';
+  return id === 'powershell' ? 'powershell' : 'cmd';
+}
 
 /**
  * Escapes a path for insertion inside the double-quoted argument the presets
@@ -83,5 +95,7 @@ export function escapePathForTemplate(file: string, quoting: CommandQuoting): st
 }
 
 export function expandAgentCommand(template: string, file: string, quoting: CommandQuoting): string {
+  const invalid = validateAgentTemplate(template, quoting);
+  if (invalid) throw new Error(invalid);
   return template.split(FILE_PLACEHOLDER).join(escapePathForTemplate(file, quoting));
 }
