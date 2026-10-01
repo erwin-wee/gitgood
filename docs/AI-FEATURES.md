@@ -1,6 +1,6 @@
 # AI features
 
-Configuration for all of these lives under **Options → AI**. Every feature below is hidden when the AI provider is set to *Disabled*.
+Configuration for all of these lives under **Options → AI**. Every feature below is hidden when the AI provider is set to *Disabled*. They are also hidden, and refused in the main process, for any repository where AI has been switched off (see [Privacy](#privacy-what-is-sent-and-what-never-is)).
 
 ## AI conflict resolution
 
@@ -114,6 +114,12 @@ The error dialog gains a collapsed **Explain with AI** row (hidden for errors wi
 - **Previews before you run anything**: a reset shows the commits that would be uncommitted, a discard shows the affected files, a branch delete shows whether it's merged, a rebase shows what would be replayed, and a force-with-lease push shows the ahead/behind count — each recomputed against the live repository, with references re-verified immediately before showing.
 - **Nothing runs before you click Run plan**, and destructive steps still open GitGood's normal confirmation dialogs; cancelling stops the plan and keeps whatever already completed. Every executed step is written to the application log with its arguments and exit code.
 - One clarifying question is allowed when a request is ambiguous; the session keeps the last 20 plans (with a **Copy commands** action) in memory only.
+
+## Usage, caching and cancelling
+
+- **Usage** (Options → AI → *Usage*): this month's and last month's requests, input and output tokens, cache-read tokens and — only where the provider reports one (the Claude Code CLI does; the Anthropic API and OpenAI-compatible servers do not) — the cost, per feature. GitGood keeps no price table. The totals are counts only, never prompts or responses, and live in `ai-usage.json` in the app's data folder on this machine (not exported or synced).
+- **Prompt caching** (Anthropic API): the system prompt is sent as a cacheable block, and the per-file calls of a pull request or pre-commit review put the context that is identical for every file (title, description, linked issues, commit subjects, failing checks, guidelines) in a cacheable leading block, so a many-file review reads it from cache after the first request; the usage table shows the cache reads. The Claude Code CLI and OpenAI-compatible servers get the same text without cache markers (the server may still cache it and report cached tokens).
+- **Cancelling** a feature's spinner stops only that feature. In server mode it stops only the job started by your own client, never another browser tab's or window's.
 
 ## Privacy: what is sent, and what never is
 

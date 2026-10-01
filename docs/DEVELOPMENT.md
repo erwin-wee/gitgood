@@ -11,6 +11,9 @@ npm test             # vitest: pure unit tests plus fixture tests against real t
 npm run test:unit    # just the pure unit tests (diff parser, patch builder, git output parsers, ...)
 npm run test:fixture # git/gh wrapper tests against real temporary repos and a stub gh/claude on PATH
 npm run test:smoke   # builds the app and drives it offscreen (no visible window) through real user flows; GITGOOD_SMOKE_SHOW=1 to watch
+npm run build        # app (out/main, out/renderer) + headless server (out/server) + MCP server (out/mcp)
+npm run start:server # run the headless server from out/server (see the README's Server mode)
+npm run start:mcp    # run the stdio MCP server from out/mcp (normally started by an agent via plugin/.mcp.json)
 npm run typecheck    # main + renderer TypeScript
 npm run lint         # React hooks rules (eslint, renderer only) + typecheck
 ```

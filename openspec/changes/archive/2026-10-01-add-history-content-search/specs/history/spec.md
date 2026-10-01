@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Commit list is paged and searchable
-The History tab SHALL show the commits reachable from the current branch, newest first, loading further pages on demand. A search box SHALL filter the list by commit message, author name or email, or a full or abbreviated SHA of at least 7 hexadecimal characters, matching case-insensitively. The search box SHALL also accept prefixed filters that MAY be combined with free text: `content:<text>` (commits whose diff added or removed the text), `regex:<expr>` (commits whose diff matches the regular expression), `path:<pathspec>`, `author:<text>`, `after:<date>`, `before:<date>` and `all:` (search every branch, tag and remote). Values containing spaces SHALL be quoted, with escaped quotes supported. A filter popover SHALL offer the same filters as form controls and SHALL stay in sync with the text in both directions. While any filter is active the header SHALL show the number of matching commits and a Clear control, and when `all:` is on each row SHALL show the refs that contain it. Changing the query SHALL cancel the search in progress. An invalid regular expression SHALL be reported inline without running the search or leaving the list loading.
+The History tab SHALL show the commits reachable from the current branch, newest first, loading further pages on demand. A search box SHALL filter the list by commit message, author name or email, or a full or abbreviated SHA of at least 7 hexadecimal characters, matching case-insensitively. The search box SHALL also accept prefixed filters that MAY be combined with free text: `content:<text>` (commits whose diff added or removed the text), `regex:<expr>` (commits whose diff matches the regular expression), `path:<pathspec>`, `author:<text>`, `after:<date>`, `before:<date>` and `all:` (search every branch, tag and remote). Values containing spaces SHALL be quoted, with escaped quotes supported. A filter popover SHALL offer the same filters as form controls and SHALL stay in sync with the text in both directions. While any filter is active the header SHALL show the number of matching commits and a Clear control, and when `all:` is on each row SHALL show the refs that contain it. Changing the query SHALL cancel the search in progress. An invalid regular expression SHALL be reported inline without running the search or leaving the list loading. When a file history is active, the header SHALL show the file path with a control to clear it, the commit list SHALL contain only commits that touched that file, following renames, and the search box SHALL combine with the path filter.
 
 #### Scenario: Paging
 - **WHEN** the user scrolls to the end of the loaded commits and more commits exist
@@ -20,6 +20,14 @@ The History tab SHALL show the commits reachable from the current branch, newest
 #### Scenario: Path filter
 - **WHEN** a `path:` filter is active
 - **THEN** only commits touching that pathspec are listed
+
+#### Scenario: File history filter
+- **WHEN** a file history is active for a path
+- **THEN** only commits touching that path, including under its earlier names, are listed and the header shows the path with a clear control
+
+#### Scenario: Clear file history
+- **WHEN** the user clears the path chip
+- **THEN** the full branch history returns and the search text is preserved
 
 #### Scenario: Content search
 - **WHEN** the user types `content:needle` in a repository where one commit added `needle`, one changed a line containing it and one removed it
@@ -54,7 +62,7 @@ The History tab SHALL show the commits reachable from the current branch, newest
 - **THEN** a hint suggests narrowing with a `path:` filter and the search remains cancellable
 
 ### Requirement: Commit details with per-file stats
-Selecting a commit SHALL show its metadata (summary, description, author, date, SHA) and the list of changed files with additions and deletions, and selecting a file SHALL show that file's diff for the commit. When a content or regex search is active, the file list SHALL contain only files whose diff matches the search, and the diff pane SHALL scroll to and highlight the first matching line.
+Selecting a commit SHALL show its metadata (summary, description, author, date, SHA) and the list of changed files with additions and deletions, and selecting a file SHALL show that file's diff for the commit. When a content or regex search is active, the file list SHALL contain only files whose diff matches the search, and the diff pane SHALL scroll to and highlight the first matching line. When a file history is active, the tracked file's diff SHALL be shown first for the selected commit.
 
 #### Scenario: Select a commit
 - **WHEN** the user selects one commit
@@ -63,6 +71,10 @@ Selecting a commit SHALL show its metadata (summary, description, author, date, 
 #### Scenario: Binary file in commit
 - **WHEN** a changed file is binary
 - **THEN** its change counts are omitted and the diff pane shows the binary summary
+
+#### Scenario: Select a commit in file history
+- **WHEN** a file history is active and the user selects a commit
+- **THEN** the diff shown first is that file's diff in the commit, under the name it had at that commit
 
 #### Scenario: Select a result of a content search
 - **WHEN** a `content:` search is active and the user selects a matching commit
