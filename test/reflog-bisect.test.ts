@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bisectHistoryRef, bisectMark, bisectReset, bisectStart, getBisectState } from '../src/main/git/bisect';
 import { GitClient } from '../src/main/git/git';
+import { pull } from '../src/main/git/operations';
 import { getReflog, getUndoPlan, planUndo, resetKeep } from '../src/main/git/reflog';
 import { createRepo, hasGitSync } from './helpers/repo';
 
@@ -88,6 +89,78 @@ describe.skipIf(!hasGitSync())('reflog', () => {
       if (plan?.kind !== 'reset') throw new Error('unreachable');
       await resetKeep(git, repo.path, plan.target.sha, false);
       expect(repo.git(['rev-parse', 'HEAD']).trim()).toBe(before);
+    } finally {
+      await repo.dispose();
+    }
+  });
+
+  it('undoes only the latest GitGood pull --rebase run (keeping local commits), not the previous consecutive one', async () => {
+    const repo = await createRepo({ commits: [{ message: 'base', files: { a: '1' } }], remote: true });
+    try {
+      const git = new GitClient(repo.tools());
+      const other = join(repo.root, 'other');
+      repo.git(['clone', '-q', repo.remotePath!, other], repo.root);
+      repo.git(['config', 'user.name', 'Other'], other);
+      repo.git(['config', 'user.email', 'other@example.com'], other);
+      const upstream = (name: string) => {
+        repo.git(['commit', '-q', '--allow-empty', '-m', name], other);
+        repo.git(['push', '-q', 'origin', 'main'], other);
+      };
+      repo.commit({ message: 'l1', files: { l1: '1' } });
+      repo.commit({ message: 'l2', files: { l2: '1' } });
+      upstream('u1');
+      await pull(git, repo.path, true, () => undefined);
+      const beforeSecond = repo.git(['rev-parse', 'HEAD']).trim();
+      upstream('u2');
+      await pull(git, repo.path, true, () => undefined);
+      expect(repo.git(['rev-parse', 'HEAD']).trim()).not.toBe(beforeSecond);
+
+      const second = await getUndoPlan(git, repo.path);
+      expect(second).toMatchObject({ kind: 'reset', description: 'Pull (rebase)' });
+      if (second?.kind !== 'reset') throw new Error('unreachable');
+      expect(second.target.sha).toBe(beforeSecond);
+      await resetKeep(git, repo.path, second.target.sha, false);
+      expect(repo.git(['log', '--format=%s', '-n', '3']).trim().split('\n')).toEqual(['l2', 'l1', 'u1']);
+    } finally {
+      await repo.dispose();
+    }
+  });
+
+  it('undoes only the latest of two consecutive plain rebases', async () => {
+    const repo = await createRepo({ commits: [{ message: 'base', files: { a: '1' } }] });
+    try {
+      const git = new GitClient(repo.tools());
+      repo.git(['checkout', '-q', '-b', 'feat']);
+      repo.commit({ message: 'f1', files: { f1: '1' } });
+      repo.git(['checkout', '-q', 'main']);
+      repo.commit({ message: 'm1', files: { m1: '1' } });
+      repo.git(['checkout', '-q', 'feat']);
+      repo.git(['rebase', '-q', 'main']);
+      const afterFirst = repo.git(['rev-parse', 'HEAD']).trim();
+      // Moves main without touching HEAD, so the two rebases are back to back in the HEAD reflog.
+      repo.git(['update-ref', 'refs/heads/main', repo.git(['commit-tree', 'main^{tree}', '-p', 'main', '-m', 'm2']).trim()]);
+      repo.git(['rebase', '-q', 'main']);
+
+      const second = await getUndoPlan(git, repo.path);
+      if (second?.kind !== 'reset') throw new Error('expected reset');
+      expect(second.target.sha).toBe(afterFirst);
+    } finally {
+      await repo.dispose();
+    }
+  });
+
+  it('skips an aborted rebase and plans from the operation before it', async () => {
+    const repo = await createRepo({ commits: [{ message: 'base', files: { a: '1' } }] });
+    try {
+      const git = new GitClient(repo.tools());
+      repo.git(['checkout', '-q', '-b', 'feat']);
+      repo.commit({ message: 'f1', files: { a: 'feat' } });
+      repo.git(['checkout', '-q', 'main']);
+      repo.commit({ message: 'm1', files: { a: 'main' } });
+      repo.git(['checkout', '-q', 'feat']);
+      expect(() => repo.git(['rebase', '-q', 'main'])).toThrow();
+      repo.git(['rebase', '--abort']);
+      expect(await getUndoPlan(git, repo.path)).toMatchObject({ kind: 'checkout', ref: 'main', isBranch: true });
     } finally {
       await repo.dispose();
     }

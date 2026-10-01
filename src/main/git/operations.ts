@@ -105,21 +105,40 @@ export async function push(
   });
 }
 
-/** argv for pushing a whole stack of branches in one go, every one with a lease. `--set-upstream` also points branches that already track something at `remote/<same name>`, which is where this push sends them anyway. */
-export function pushStackArgs(remote: string, branches: string[], setUpstream: boolean): string[] {
+/** argv for pushing a whole stack of branches in one go, every one with a lease. */
+export function pushStackArgs(remote: string, branches: string[]): string[] {
   assertNotOption(remote, ...branches);
-  return ['push', '--progress', '--force-with-lease', ...(setUpstream ? ['--set-upstream'] : []), remote, ...branches];
+  return ['push', '--progress', '--force-with-lease', remote, ...branches];
 }
 
-/** Force-pushes (with lease) the current branch and the stack branches below it, to the current branch's remote (default origin). Returns the pushed branch names, oldest first. */
+/**
+ * Where a branch's stack is published, in git's own push order: `branch.<n>.pushRemote`, `remote.pushDefault`, the branch's
+ * upstream remote, then `origin`. An upstream remote of `.` means "tracks a local branch" (a stacked child), never a place to push,
+ * so it is skipped; with nothing configured a lone remote is used, and several unconfigured ones are refused as ambiguous.
+ */
+export async function resolvePushRemote(git: GitClient, repoPath: string, branch: string): Promise<string> {
+  const config = async (key: string) => (await git.tryRun(repoPath, ['config', '--get', key], { readOnly: true }))?.stdout.trim() || null;
+  const configured = [await config(`branch.${branch}.pushRemote`), await config('remote.pushDefault'), await getUpstreamRemote(git, repoPath, branch)].find((r) => r && r !== '.');
+  if (configured) return configured;
+  const names = (await getRemotes(git, repoPath)).map((r) => r.name);
+  const remote = names.includes('origin') ? 'origin' : names.length === 1 ? names[0] : null;
+  if (!remote) throw new Error(names.length ? `Several remotes and none is chosen for "${branch}": set branch.${branch}.pushRemote or remote.pushDefault.` : 'This repository has no remote to push the stack to.');
+  return remote;
+}
+
+/**
+ * Force-pushes (with lease) the current branch and the stack branches below it to its publishing remote (see resolvePushRemote).
+ * Only branches without any upstream get one afterwards, pointing at `remote/<same name>`; a child already tracking its parent locally keeps that.
+ * Returns the pushed branch names, oldest first.
+ */
 export async function pushStack(git: GitClient, repoPath: string, onProgress: ProgressSink, signal?: AbortSignal): Promise<string[]> {
   const current = await getCurrentBranchName(git, repoPath);
   if (!current) throw new Error('Check out a branch to push its stack.');
   const branches = [...(await getStackParents(git, repoPath)), current];
   const local = new Map((await getBranches(git, repoPath)).filter((b) => b.kind === 'local').map((b) => [b.name, b]));
-  const remote = (await getUpstreamRemote(git, repoPath, current)) ?? 'origin';
+  const remote = await resolvePushRemote(git, repoPath, current);
   const parser = new TransferProgressParser('push');
-  await git.run(repoPath, pushStackArgs(remote, branches, branches.some((b) => !local.get(b)?.upstream)), {
+  await git.run(repoPath, pushStackArgs(remote, branches), {
     signal,
     onStderr: (chunk) => {
       const p = parser.feed(chunk);
@@ -127,6 +146,10 @@ export async function pushStack(git: GitClient, repoPath: string, onProgress: Pr
     },
     timeoutMs: 30 * 60 * 1000,
   });
+  for (const b of branches.filter((n) => !local.get(n)?.upstream)) {
+    await git.run(repoPath, ['config', `branch.${b}.remote`, remote]);
+    await git.run(repoPath, ['config', `branch.${b}.merge`, `refs/heads/${b}`]);
+  }
   return branches;
 }
 

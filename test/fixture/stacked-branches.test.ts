@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { getStackParents } from '../../src/main/git/branches';
 import { GitClient } from '../../src/main/git/git';
@@ -76,10 +77,9 @@ describe.skipIf(!hasGitSync())('stacked branches', () => {
     expect(isAncestor('main', 'a')).toBe(false);
   });
 
-  it('builds a lease push for the whole stack, adding --set-upstream only when asked', () => {
-    expect(pushStackArgs('origin', ['a', 'b', 'c'], false)).toEqual(['push', '--progress', '--force-with-lease', 'origin', 'a', 'b', 'c']);
-    expect(pushStackArgs('origin', ['a', 'c'], true)).toEqual(['push', '--progress', '--force-with-lease', '--set-upstream', 'origin', 'a', 'c']);
-    expect(() => pushStackArgs('origin', ['-f'], false)).toThrow();
+  it('builds a lease push for the whole stack and refuses option-like names', () => {
+    expect(pushStackArgs('origin', ['a', 'b', 'c'])).toEqual(['push', '--progress', '--force-with-lease', 'origin', 'a', 'b', 'c']);
+    expect(() => pushStackArgs('origin', ['-f'])).toThrow();
   });
 
   it('pushes every stack branch to the remote, including unpublished ones', async () => {
@@ -92,5 +92,54 @@ describe.skipIf(!hasGitSync())('stacked branches', () => {
       expect(repo.git(['--git-dir', repo.remotePath!, 'rev-parse', `refs/heads/${name}`])).toBe(repo.git(['rev-parse', name]));
     }
     expect(repo.git(['rev-parse', '--abbrev-ref', 'c@{upstream}']).trim()).toBe('origin/c');
+  });
+
+  const remoteHeads = (r: TestRepo) => r.git(['--git-dir', r.remotePath!, 'for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/heads']).trim().split('\n').sort();
+  const upstream = (r: TestRepo, b: string) => r.git(['config', '--get-regexp', `^branch\\.${b}\\.(remote|merge)$`]).trim().split('\n').sort();
+
+  it('publishes to origin, not to ".", when the child was created with --track <parent>, and keeps local tracking', async () => {
+    repo = await createRepo({ commits: [{ message: 'init', files: { 'base.txt': '1\n' } }], remote: true });
+    repo.git(['checkout', '-q', '-b', 'parent']);
+    repo.commit({ message: 'parent work', files: { 'p.txt': 'p\n' } });
+    repo.git(['push', '-q', '-u', 'origin', 'parent']);
+    repo.git(['checkout', '-q', '-b', 'child', '--track', 'parent']);
+    repo.commit({ message: 'child work', files: { 'c.txt': 'c\n' } });
+    repo.git(['checkout', '-q', '-b', 'grandchild']);
+    repo.commit({ message: 'grandchild work', files: { 'g.txt': 'g\n' } });
+    expect(repo.git(['config', '--get', 'branch.child.remote']).trim()).toBe('.');
+    const git = new GitClient(repo.tools());
+
+    expect(await pushStack(git, repo.path, () => undefined)).toEqual(['parent', 'child', 'grandchild']);
+    const heads = remoteHeads(repo);
+    for (const name of ['parent', 'child', 'grandchild']) expect(heads).toContain(`${name} ${repo.git(['rev-parse', name]).trim()}`);
+    expect(upstream(repo, 'child')).toEqual(['branch.child.merge refs/heads/parent', 'branch.child.remote .']);
+    expect(upstream(repo, 'parent')).toEqual(['branch.parent.merge refs/heads/parent', 'branch.parent.remote origin']);
+    expect(upstream(repo, 'grandchild')).toEqual(['branch.grandchild.merge refs/heads/grandchild', 'branch.grandchild.remote origin']);
+  });
+
+  it('honours remote.pushDefault over the upstream remote', async () => {
+    repo = await stackedRepo(true);
+    const fork = join(repo.root, 'fork.git');
+    repo.git(['init', '-q', '--bare', fork], repo.root);
+    repo.git(['remote', 'add', 'fork', fork]);
+    repo.git(['config', 'remote.pushDefault', 'fork']);
+    const git = new GitClient(repo.tools());
+    await pushStack(git, repo.path, () => undefined);
+    expect(repo.git(['--git-dir', fork, 'for-each-ref', '--format=%(refname:short)', 'refs/heads']).trim().split('\n').sort()).toEqual(['a', 'b', 'c']);
+    expect(remoteHeads(repo).map((l) => l.split(' ')[0])).toEqual(['main']);
+    expect(repo.git(['config', '--get', 'branch.c.remote']).trim()).toBe('fork');
+  });
+
+  it('refuses instead of pushing when there is no real remote or several unconfigured ones', async () => {
+    repo = await stackedRepo();
+    repo.git(['config', 'branch.b.remote', '.']);
+    repo.git(['config', 'branch.b.merge', 'refs/heads/a']);
+    const git = new GitClient(repo.tools());
+    await expect(pushStack(git, repo.path, () => undefined)).rejects.toThrow(/no remote/);
+
+    repo.git(['remote', 'add', 'one', repo.path]);
+    repo.git(['remote', 'add', 'two', repo.path]);
+    await expect(pushStack(git, repo.path, () => undefined)).rejects.toThrow(/Several remotes/);
+    expect(repo.git(['config', '--get', 'branch.b.remote']).trim()).toBe('.');
   });
 });

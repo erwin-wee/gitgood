@@ -29,14 +29,15 @@ export async function getReflog(git: GitClient, repoPath: string, limit = 300): 
   return out ? parseReflog(out.stdout) : [];
 }
 
-/** `rebase` and `pull --rebase` log one entry per replayed commit; undoing one means undoing the whole run. */
-const REBASE_RE = /^(rebase|pull --rebase)\b/;
+/** `rebase` and `pull --rebase` (whatever flags GitGood passes, or a `pull.rebase` config pull) log one entry per replayed commit; undoing one means undoing the whole run. */
+const REBASE_RE = /^(rebase\b|pull\b.*(\s--rebase\b|\([a-z-]+\)$))/;
+const REBASE_START_RE = /\(start\)$/;
 const LABELS: [RegExp, string][] = [
   [/^commit \(amend\)/, 'Amend'],
   [/^commit \(merge\)/, 'Merge commit'],
   [/^commit/, 'Commit'],
   [/^merge\b/, 'Merge'],
-  [/^pull --rebase/, 'Pull (rebase)'],
+  [/^pull\b.*\s--rebase\b/, 'Pull (rebase)'],
   [/^pull\b/, 'Pull'],
   [/^rebase\b/, 'Rebase'],
   [/^cherry-pick/, 'Cherry-pick'],
@@ -70,7 +71,11 @@ export function planUndo(entries: ReflogEntry[], localBranches: ReadonlySet<stri
       return { kind: 'checkout', description: `Checkout of ${m[2]}`, ref: m[1], isBranch };
     }
     let next = i + 1;
-    if (REBASE_RE.test(e.action)) while (next < entries.length && REBASE_RE.test(entries[next].action)) next += 1;
+    // A rebase run ends at its `(start)` entry; the run before it is a separate undo step.
+    if (REBASE_RE.test(e.action)) {
+      next = i;
+      while (next < entries.length && REBASE_RE.test(entries[next].action)) if (REBASE_START_RE.test(entries[next++].action)) break;
+    }
     const target = entries[next];
     if (!target) return null;
     if (target.sha === e.sha) {

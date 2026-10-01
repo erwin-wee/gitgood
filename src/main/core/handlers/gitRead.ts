@@ -10,7 +10,7 @@ import { readCommitTemplate } from '../../git/commit';
 import { getCommitFileDiff, getRangeFileDiff, getRangeFiles, getStashFileDiff, getStashFiles, getWorkingDiff, toFsPath } from '../../git/diff';
 import { findLargestBlobs, getHousekeeping, getStaleBranches } from '../../git/health';
 import { getLfsFiles, getLfsStatus } from '../../git/lfs';
-import { compareRefs, getHistory, getMatchingFiles, getPathHistory, isCommitPushed, parseNameStatusZ } from '../../git/log';
+import { compareRefs, getHistory, getMatchingFiles, getPathHistory, isCommitPushed } from '../../git/log';
 import * as ops from '../../git/operations';
 import { getReflog, getUndoPlan } from '../../git/reflog';
 import { gpgKeyExists, listGpgSecretKeys, listSshPublicKeys, normalizeSshSigningKey, sshKeyFileExists, testGpgSigning, testSshSigning } from '../../git/signing';
@@ -65,8 +65,8 @@ export function gitReadHandlers(ctx: HandlerContext) {
     'repo.diff.working': async (repoPath, path, opts) => getWorkingDiff(git, repoPath, await findWorkingFile(repoPath, path), opts),
     'repo.diff.stash': async (repoPath, stashRef, path, opts) => getStashFileDiff(git, repoPath, stashRef, path, opts),
     'repo.diff.range': async (repoPath, base, head, path, opts) => {
-      const nameStatus = await git.stdout(repoPath, ['diff', '--name-status', '-z', '-M', `${base}...${head}`, '--', path], { readOnly: true, okExitCodes: [1] });
-      const file = parseNameStatusZ(nameStatus).find((f) => f.path === path) ?? { path, oldPath: null, status: 'modified' as const, additions: null, deletions: null, binary: false, lfs: false };
+      // The whole range, not just `path`: rename detection needs the old path in the diff to pair it with the new one.
+      const file = (await getRangeFiles(git, repoPath, base, head)).find((f) => f.path === path) ?? { path, oldPath: null, status: 'modified' as const, additions: null, deletions: null, binary: false, lfs: false };
       return getRangeFileDiff(git, repoPath, base, head, file, opts);
     },
     'repo.diff.rangeFiles': async (repoPath, base, head) => getRangeFiles(git, repoPath, base, head),
