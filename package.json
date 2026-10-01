@@ -12,9 +12,11 @@
   "homepage": "https://github.com/erwin-wee/gitgood",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && npm run build:server",
+    "build": "electron-vite build && npm run build:server && npm run build:mcp",
     "build:server": "vite build --config vite.server.config.ts",
+    "build:mcp": "vite build --config vite.mcp.config.ts",
     "start:server": "node out/server/index.mjs",
+    "start:mcp": "node out/mcp/index.mjs",
     "install:service": "node scripts/install-service.mjs",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",

@@ -109,7 +109,7 @@ export async function getHistory(git: GitClient, repoPath: string, opts: History
   const follow = !!opts.follow && !!opts.path;
   const withSignature = !!opts.verifySignatures;
   const format = withSignature ? FORMAT_WITH_SIGNATURE : FORMAT;
-  const base = ['log', `--format=${format}`, `--max-count=${limit + 1}`, `--skip=${opts.skip}`, ...(follow ? ['--follow', '-M'] : [])];
+  const base = ['log', `--format=${format}`, `--max-count=${limit + 1}`, `--skip=${opts.skip}`, ...(follow ? ['--follow', '-M'] : []), ...(opts.graph ? ['--date-order'] : [])];
   const query = opts.query ?? null;
   const hasQuery = !!query && !isEmptyHistoryQuery(query);
   const refArgs = query?.allRefs ? ['--all'] : [opts.ref ?? 'HEAD'];

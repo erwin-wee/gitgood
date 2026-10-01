@@ -190,6 +190,7 @@ async function main(): Promise<void> {
   const git = new GitClient(tools);
   const gh = new GhClient(tools);
   const bus = new EventBus();
+  tools.onChange((state) => bus.emit('tools.changed', state));
   const host = new WebHost(config.version, config.userData);
   const busy = new Set<string>();
 
@@ -414,7 +415,6 @@ async function main(): Promise<void> {
   watchedFolders.watchSettings();
   void tools.refresh().then((state) => {
     log.info(`git: ${state.git.version ?? 'missing'}; gh: ${state.gh.version ?? 'missing'}; account: ${state.ghAccount?.login ?? 'none'}`);
-    bus.emit('tools.changed', state);
     if (store.getSettings().watchedFolders.length) void watchedFolders.scan().catch((err) => log.error('Watched-folder scan failed', err));
   });
 

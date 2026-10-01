@@ -222,6 +222,8 @@ function RepositoryPopover(): React.JSX.Element {
 
   const contextMenu = (e: React.MouseEvent, repo: RepositoryInfo) => {
     const items: MenuItem[] = [
+      // Only the local desktop app can open more windows (its preload is the one that exposes `getPathForFile`).
+      ...(window.gitgoodBridge.getPathForFile ? [{ label: 'Open in New Window', onClick: () => { store.set({ popover: null }); void actions.openRepositoryInNewWindow(repo); }, disabled: repo.missing }, { type: 'separator' as const }] : []),
       { label: 'Open in external editor', onClick: () => void actions.openRepository(repo).then(() => actions.openInEditor()), disabled: repo.missing },
       { label: 'Open in terminal', onClick: () => void actions.openRepository(repo).then(() => actions.openInShell()), disabled: repo.missing },
       { label: 'Show in folder', onClick: () => void actions.openRepository(repo).then(() => actions.showInFolder()), disabled: repo.missing },
@@ -232,6 +234,7 @@ function RepositoryPopover(): React.JSX.Element {
       { label: 'Move to group…', disabled: !!repo.worktreeOf || !!repo.parentRepoId, onClick: () => { store.set({ popover: null }); void actions.openRepository(repo).then(() => openDialog({ kind: 'repo-settings', tab: 'alias' })); } },
       ...(repo.group ? [{ label: `Remove from “${repo.group}”`, onClick: () => void actions.setRepoPrefs(repo, { group: null }) }] : []),
       { label: repo.aiDisabled ? 'Enable AI for this repository' : 'Disable AI for this repository', disabled: !!repo.worktreeOf, onClick: () => void actions.setRepoAiDisabled(repo, !repo.aiDisabled) },
+      { label: repo.githubAccount ? `GitHub account: @${repo.githubAccount.login}…` : 'GitHub account…', disabled: !repo.github || !!repo.worktreeOf || repo.missing, onClick: () => { store.set({ popover: null }); void actions.openRepository(repo).then(() => openDialog({ kind: 'repo-settings', tab: 'account' })); } },
       { type: 'separator' },
       repo.worktreeOf
         ? { label: 'Manage worktrees…', onClick: () => { store.set({ popover: null }); void actions.openRepository(repos.find((r) => r.id === repo.worktreeOf) ?? repo).then(() => openDialog({ kind: 'worktrees' })); } }
@@ -329,12 +332,17 @@ function RepositoryPopover(): React.JSX.Element {
 
 const branchKeys = (b: Branch) => [b.name, b.lastCommitSubject, b.lastCommitAuthor];
 
+/** Branch-list marker for the current branch's stack: the current branch says what it is stacked on, the branches below it say they belong to the stack. */
+const stackNote = (b: Branch, parents: string[]): string | null =>
+  b.kind !== 'local' ? null : b.isCurrent && parents.length ? `stacked on ${parents[parents.length - 1]}` : parents.includes(b.name) ? 'in current stack' : null;
+
 function BranchPopover(): React.JSX.Element {
   usePopoverClose();
   const repo = useAppStore((s) => s.currentRepo);
   const branches = useAppStore((s) => s.branches);
   const defaultBranch = useAppStore((s) => s.defaultBranch);
   const prs = useAppStore((s) => s.prs);
+  const stack = useAppStore((s) => s.stack);
   const [tab, setTab] = useState<'branches' | 'prs'>('branches');
   const [query, setQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -371,6 +379,7 @@ function BranchPopover(): React.JSX.Element {
         { label: 'Squash and merge into current branch…', onClick: () => openDialog({ kind: 'merge', squash: true, preselect: b.name }), disabled: b.isCurrent },
         { label: 'Rebase current branch onto…', onClick: () => openDialog({ kind: 'rebase', preselect: b.name }), disabled: b.isCurrent },
         { label: 'Compare…', onClick: () => openDialog({ kind: 'compare' }) },
+        ...(b.isCurrent && stack.parents.length ? [{ label: `Push stack (${stack.parents.length + 1} branches)…`, onClick: () => actions.pushStack() }] : []),
         { type: 'separator' },
         { label: 'Create worktree for this branch…', icon: 'worktree', onClick: () => { store.set({ popover: null }); openDialog({ kind: 'add-worktree', startBranch: b.name }); } },
         { type: 'separator' },
@@ -382,7 +391,7 @@ function BranchPopover(): React.JSX.Element {
       ];
       openContextMenu(e, items);
     },
-    [repo],
+    [repo, stack.parents],
   );
 
   const row = (b: Branch) => (
@@ -390,7 +399,7 @@ function BranchPopover(): React.JSX.Element {
       <Icon name={b.kind === 'remote' ? 'globe' : 'branch'} />
       <span className="row-main">
         <span className="truncate">{b.name}</span>
-        <span className="row-sub truncate">{b.lastCommitSubject}</span>
+        <span className="row-sub truncate">{[stackNote(b, stack.parents), b.lastCommitSubject].filter(Boolean).join(' · ')}</span>
       </span>
       {b.isCurrent ? <Icon name="check" /> : null}
       <span className="row-meta">

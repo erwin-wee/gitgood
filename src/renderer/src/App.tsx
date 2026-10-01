@@ -17,6 +17,8 @@ import { TabBar, installLongPress, installPhoneNavigation, onPhoneTap } from './
 import { Welcome } from './components/Welcome';
 import { ReviewView } from './components/review/ReviewView';
 import { lazyExport } from './lib/lazy';
+import { shortcutMatches } from './lib/shortcuts';
+import { invoke } from './api';
 
 const HealthView = lazyExport(() => import('./components/HealthView'), 'HealthView');
 const InboxPanel = lazyExport(() => import('./components/Inbox'), 'InboxPanel');
@@ -91,12 +93,18 @@ export function App(): React.JSX.Element {
     void bootstrap();
   }, []);
 
+  // The native menu carries the accelerators; tell it whenever the overrides load or change (it ignores unchanged ones).
+  const shortcuts = useAppStore((s) => s.settings?.shortcuts);
+  useEffect(() => {
+    if (shortcuts) void invoke('app.setShortcuts', shortcuts).catch(() => undefined);
+  }, [shortcuts]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && !e.shiftKey && (e.key === '1' || e.key === '2')) {
+      const target = shortcutMatches('show-changes', e) ? 'changes' : shortcutMatches('show-history', e) ? 'history' : null;
+      if (target) {
         e.preventDefault();
-        setView(e.key === '1' ? 'changes' : 'history');
+        setView(target);
       }
     };
     window.addEventListener('keydown', onKey);

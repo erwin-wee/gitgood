@@ -2,6 +2,7 @@ import type { CheckRun, CreateIssueOptions, CreatePullRequestOptions, CreateRele
 import { ExecError, exec, type ExecResult } from '../exec';
 import { GitError, toGitErrorInfo } from '../git/git';
 import { log } from '../logger';
+import { ghAccountEnv } from './accounts';
 import type { ToolLocator } from '../tools';
 
 interface GhRunOptions {
@@ -300,9 +301,12 @@ export class GhClient {
   constructor(private readonly tools: ToolLocator) {}
 
   async run(args: string[], opts: GhRunOptions = {}): Promise<ExecResult> {
-    await this.tools.ensureLocated();
+    await this.tools.ensure('gh');
     const gh = this.tools.ghPath();
     const env = await this.tools.ghEnv();
+    // A repository with a chosen GitHub account (cwd, or the handler's repoScope) runs gh as that account.
+    const account = await this.tools.repoAccount(opts.cwd);
+    if (account) Object.assign(env, ghAccountEnv(account.host, account.token));
     try {
       return await exec(gh, args, { cwd: opts.cwd, env, stdin: opts.stdin, signal: opts.signal, onStderr: opts.onStderr, onStdout: opts.onStdout, timeoutMs: opts.timeoutMs ?? 120000, okExitCodes: opts.okExitCodes });
     } catch (err) {
@@ -397,8 +401,14 @@ export class GhClient {
     this.loginProcess = null;
   }
 
-  async logout(host: string): Promise<void> {
-    await this.run(['auth', 'logout', '--hostname', host], { okExitCodes: [1] });
+  /** Signs out one account (`login`), or the host's active account when omitted. */
+  async logout(host: string, login?: string): Promise<void> {
+    await this.run(['auth', 'logout', '--hostname', host, ...(login ? ['--user', login] : [])], { okExitCodes: [1] });
+  }
+
+  /** Makes `login` the account gh uses by default on `host` (repositories with a chosen account are unaffected). */
+  async switchAccount(host: string, login: string): Promise<void> {
+    await this.run(['auth', 'switch', '--hostname', host, '--user', login], { timeoutMs: 30000 });
   }
 
   async setupGit(): Promise<void> {
@@ -406,7 +416,7 @@ export class GhClient {
   }
 
   async account(): Promise<GitHubAccount | null> {
-    return (await this.tools.refresh()).ghAccount;
+    return (await this.tools.refreshAuth()).ghAccount;
   }
 
   // ---------- repositories ----------

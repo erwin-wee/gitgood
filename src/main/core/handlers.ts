@@ -23,18 +23,20 @@ import { discoverIssueTemplates } from '../gh/issue-templates';
 import type { SettingsSyncService } from '../gh/settings-sync';
 import { GitError, toGitErrorInfo, type GitClient } from '../git/git';
 import { difftoolArgs, launchGitTool } from '../git/external-tools';
+import { bisectHistoryRef, bisectMark, bisectReset, bisectStart, getBisectState } from '../git/bisect';
 import { getBlameResult, readFileAtCommit } from '../git/blame';
-import { checkoutBranch, checkoutRemoteBranch, createBranch, deleteLocalBranch, deleteRemoteBranch, getBranches, getCurrentBranchName, getDefaultBranch, renameBranch } from '../git/branches';
+import { checkoutBranch, checkoutRemoteBranch, createBranch, deleteLocalBranch, deleteRemoteBranch, getBranches, getCurrentBranchName, getDefaultBranch, getStackParents, renameBranch } from '../git/branches';
 import { applyPatchToWorktree, createCommit, getLastCommitMessage, isUnborn, readCommitTemplate, stageFiles, undoLastCommit, unstageFiles } from '../git/commit';
 import { getCommitFileDiff, getRangeFileDiff, getRangeFiles, getStashFileDiff, getStashFiles, getWorkingDiff, toFsPath } from '../git/diff';
 import { deleteManyBranches, expireReflog, findLargestBlobs, getHousekeeping, getStaleBranches, pruneRemote, runGc } from '../git/health';
 import { getLfsFiles, getLfsStatus, lfsFetch, lfsInstallLocal, lfsPrune, setLfsTracking } from '../git/lfs';
 import { compareRefs, getCommit, getCommitFiles, getHistory, getMatchingFiles, getPathHistory, isCommitPushed, parseNameStatusZ } from '../git/log';
 import * as ops from '../git/operations';
+import { getReflog, getUndoPlan, resetKeep } from '../git/reflog';
 import { gpgKeyExists, listGpgSecretKeys, listSshPublicKeys, normalizeSshSigningKey, sshKeyFileExists, testGpgSigning, testSshSigning } from '../git/signing';
 import { getStatus } from '../git/status';
 import { getSubmodules, syncSubmodules, updateSubmodules } from '../git/submodules';
-import { currentClient } from './client-context';
+import { currentClient, scopeRepoHandlers } from './client-context';
 import { addWorktree, listWorktrees, lockWorktree, pruneWorktrees, removeWorktree } from '../git/worktree';
 import { repoSelector, type GhClient } from '../gh/gh';
 import { findPullRequestTemplate } from '../gh/pr-template';
@@ -48,7 +50,7 @@ import { addWatchedFolder, folderProblem, sanitizeWatchedFolders, type WatchedFo
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { agentTemplate, expandAgentCommand, validateAgentTemplate } from '@shared/agent-presets';
-import { canInstall } from '../update/update-core';
+import { canInstall, compareVersions } from '../update/update-core';
 import type { Updater } from '../update/updater';
 import { UnsupportedCapabilityError, type HostCapabilities } from './host';
 
@@ -204,6 +206,12 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     return ops.getPullRebaseConfig(git, repoPath);
   };
 
+  /** `git rebase --update-refs` arrived in git 2.38. */
+  const gitCanUpdateRefs = (): boolean => {
+    const version = tools.current().git.version;
+    return !!version && compareVersions(version, '2.38.0') >= 0;
+  };
+
   const stashBeforeCheckout = async (repoPath: string, strategy: AppSettings['uncommittedChangesStrategy']) => {
     if (strategy !== 'stash') return;
     const status = await freshStatus(repoPath);
@@ -251,12 +259,12 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
   const handlers: ApiMethods = {
     // ---------------- app ----------------
     'app.info': async () => ({ version: host.appVersion(), electron: process.versions.electron ?? '', platform: process.platform, userDataPath: host.userDataPath(), logPath: getLogPath() }),
-    // Without awaiting the local scan, the first call would answer with the
-    // pre-scan state (every tool "not installed") and the renderer would flash
-    // the "GitGood needs Git to run" setup screen before startup finished.
+    // Without awaiting the git probe, the first call would answer with the pre-scan state and the renderer
+    // would flash the "GitGood needs Git to run" setup screen. The other probes (gh, claude, gpg, …) are
+    // not awaited: they flag `pending` and arrive later as `tools.changed`.
     'app.tools': async (refresh) => {
       if (refresh) return tools.refresh();
-      await tools.ensureLocated();
+      await tools.ensure('git');
       return tools.current();
     },
     'app.settings.get': async () => store.getSettings(),
@@ -279,7 +287,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       }
       const next = store.updateSettings(patch);
       if (patch.gitPath !== undefined || patch.ghPath !== undefined || patch.ai?.claudeCliPath !== undefined) {
-        void tools.refresh().then((s) => send('tools.changed', s));
+        void tools.refresh();
       }
       if (patch.theme && patch.theme !== before.theme) {
         host.setTheme(patch.theme);
@@ -330,6 +338,8 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'app.isRepository': async (p) => (await ops.getTopLevel(git, p)) !== null,
     'app.joinPath': async (...parts) => join(...parts),
     'app.log': async (level, message) => log[level](`[renderer] ${message}`),
+    'app.newWindow': async (repoId) => host.openWindow(repoId),
+    'app.setShortcuts': async (overrides) => host.setMenuShortcuts(overrides),
     'app.zoom': async (direction) => {
       const next = host.zoom(direction);
       store.updateState({ zoomLevel: next });
@@ -348,25 +358,31 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'gh.auth.status': async () => gh.account(),
     'gh.auth.login': async (host) => {
       const result = await gh.login(host, (code, url) => send('gh.auth.code', { code, url }));
-      const state = await tools.refresh();
-      send('tools.changed', state);
+      await tools.refreshAuth();
       send('gh.auth.finished', result);
       return result;
     },
     'gh.auth.cancelLogin': async () => gh.cancelLogin(),
-    'gh.auth.logout': async (host) => {
-      await gh.logout(host);
-      send('tools.changed', await tools.refresh());
+    'gh.auth.logout': async (host, login) => {
+      await gh.logout(host, login);
+      await tools.refreshAuth();
+      store.clearInboxCache(); // the inbox belongs to whichever account is active now
+      inbox.resetCache();
+    },
+    'gh.auth.switch': async (host, login) => {
+      await gh.switchAccount(host, login);
+      await tools.refreshAuth();
+      store.clearInboxCache();
+      inbox.resetCache();
     },
     'gh.auth.setupGit': async () => {
       await gh.setupGit();
-      send('tools.changed', await tools.refresh());
+      await tools.refreshAuth();
     },
     'gh.auth.refreshScopes': async (scopes) => {
       const host = tools.current().ghAccount?.host ?? 'github.com';
       const result = await gh.refreshScopes(host, scopes, (code, url) => send('gh.auth.code', { code, url }));
-      const state = await tools.refresh();
-      send('tools.changed', state);
+      await tools.refreshAuth();
       send('gh.auth.finished', result);
       return result;
     },
@@ -541,6 +557,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'repo.status': async (repoPath) => freshStatus(repoPath),
     'repo.branches': async (repoPath) => getBranches(git, repoPath),
     'repo.defaultBranch': async (repoPath) => getDefaultBranch(git, repoPath),
+    'repo.stack': async (repoPath) => ({ parents: await getStackParents(git, repoPath), canUpdateRefs: gitCanUpdateRefs() }),
     'repo.tags': async (repoPath) => ops.getTags(git, repoPath),
     'repo.remotes': async (repoPath) => ops.getRemotes(git, repoPath),
     'repo.stashes': async (repoPath) => ops.getStashes(git, repoPath),
@@ -550,7 +567,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       const controller = new AbortController();
       historyControllers.set(key, controller);
       try {
-        return await getHistory(git, repoPath, opts, controller.signal);
+        return await getHistory(git, repoPath, opts.ref ? opts : { ...opts, ref: await bisectHistoryRef(git, repoPath) }, controller.signal);
       } finally {
         if (historyControllers.get(key) === controller) historyControllers.delete(key);
       }
@@ -576,6 +593,9 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'repo.commitTemplate': async (repoPath) => readCommitTemplate(git, repoPath),
     'repo.stash.files': async (repoPath, stashRef) => getStashFiles(git, repoPath, stashRef),
     'repo.stash.resolveRef': async (repoPath, sha) => ops.resolveStashRef(git, repoPath, sha),
+    'repo.reflog': async (repoPath) => getReflog(git, repoPath),
+    'repo.undoPlan': async (repoPath) => getUndoPlan(git, repoPath),
+    'repo.bisect': async (repoPath) => getBisectState(git, repoPath),
     'repo.compare': async (repoPath, base, head) => compareRefs(git, repoPath, base, head),
     'repo.readFile': async (repoPath, path) => {
       toFsPath(repoPath, path);
@@ -601,7 +621,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       if (nextPatch.key !== undefined && nextPatch.key) {
         const format = nextPatch.format ?? (await ops.getSigningConfig(git, repoPath)).effective.format;
         if (format === 'openpgp') {
-          const gpgPath = tools.current().gpg.path;
+          const gpgPath = (await tools.ensure('gpg')).path;
           if (!gpgPath) throw new GitError({ message: 'GPG was not found, so the key could not be verified. Install GnuPG or set its location.', command: '', exitCode: null, stderr: '', stdout: '', code: 'tool-missing' });
           const ok = await gpgKeyExists(gpgPath, await tools.env(), nextPatch.key);
           if (!ok) throw new GitError({ message: `No secret key "${nextPatch.key}" was found in the GPG keyring.`, command: '', exitCode: null, stderr: '', stdout: '', code: 'signing-key-missing' });
@@ -618,7 +638,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       const list =
         format === 'openpgp'
           ? await (async () => {
-              const gpgPath = tools.current().gpg.path;
+              const gpgPath = (await tools.ensure('gpg')).path;
               if (!gpgPath) throw new Error('GPG was not found. Install GnuPG or set its location in Options → Advanced.');
               return listGpgSecretKeys(gpgPath, await tools.env());
             })()
@@ -631,12 +651,12 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       const config = (await ops.getSigningConfig(git, repoPath)).effective;
       if (!config.format || !config.key) return { ok: false, message: 'Configure a signing format and key first.', needsPassphrase: false };
       if (config.format === 'openpgp') {
-        const gpgPath = tools.current().gpg.path;
+        const gpgPath = (await tools.ensure('gpg')).path;
         if (!gpgPath) return { ok: false, message: 'GPG was not found. Install GnuPG or set its location in Options → Advanced.', needsPassphrase: false };
         return testGpgSigning(gpgPath, config.key, await tools.env());
       }
       if (config.format === 'ssh') {
-        const sshKeygenPath = tools.current().sshKeygen.path;
+        const sshKeygenPath = (await tools.ensure('sshKeygen')).path;
         if (!sshKeygenPath) return { ok: false, message: 'ssh-keygen was not found. Install OpenSSH 8.8+ to use SSH commit signing.', needsPassphrase: false };
         if (config.key.startsWith('key::')) return { ok: false, message: 'Test signing needs a key file path; a pasted key can only be tested by making a real commit.', needsPassphrase: false };
         return testSshSigning(sshKeygenPath, config.key, await tools.env());
@@ -664,7 +684,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       return getSubmodules(git, repoPath, origin?.fetchUrl || origin?.pushUrl || null);
     },
     'repo.submodule.open': async (repoPath, submodulePath) => repos.openSubmodule(repos.getByPath(repoPath)?.id ?? (await repos.add(repoPath)).id, toFsPath(repoPath, submodulePath)),
-    'repo.lfs.status': async (repoPath) => getLfsStatus(git, repoPath, tools.current().gitLfs),
+    'repo.lfs.status': async (repoPath) => getLfsStatus(git, repoPath, await tools.ensure('gitLfs')),
     'repo.lfs.files': async (repoPath) => getLfsFiles(git, repoPath),
     'repo.health.largeFiles': async (repoPath, limit) => withCancellableProgress('generic', 'Scanning for large files', repoPath, (_onProgress, signal) => findLargestBlobs(git, tools, repoPath, limit, signal)),
     'repo.health.staleBranches': async (repoPath, inactiveDays) => getStaleBranches(git, repoPath, inactiveDays),
@@ -710,6 +730,14 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
         p.done();
       }
     },
+    'git.pushStack': async (repoPath) => {
+      const p = progress('push', 'Pushing stack', repoPath);
+      try {
+        return await withBusy(repoPath, () => ops.pushStack(git, repoPath, (pct, d) => p.update(pct, d)));
+      } finally {
+        p.done();
+      }
+    },
     'git.checkout': async (repoPath, ref, strategy) => {
       await stashBeforeCheckout(repoPath, strategy);
       await checkoutBranch(git, repoPath, ref);
@@ -739,7 +767,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'git.merge': async (repoPath, branch, squash) => withBusy(repoPath, () => ops.merge(git, repoPath, branch, squash)),
     'git.merge.abort': async (repoPath) => ops.mergeAbort(git, repoPath),
     'git.merge.continue': async (repoPath) => ops.mergeContinue(git, repoPath),
-    'git.rebase': async (repoPath, onto) => withBusy(repoPath, () => ops.rebase(git, repoPath, onto)),
+    'git.rebase': async (repoPath, onto, updateRefs) => withBusy(repoPath, () => ops.rebase(git, repoPath, onto, !!updateRefs && gitCanUpdateRefs())),
     // An AI rebase-plan apply that paused on a conflict leaves a resumable session on `rebasePlan`
     // (see RebaseApplyService); when one is pending for this repository, Continue/Abort resume or
     // fully unwind the *whole* plan instead of just the single paused `git rebase -i` step.
@@ -836,6 +864,10 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'git.remote.prune': async (repoPath, remote) => pruneRemote(git, repoPath, remote),
     'git.gc': async (repoPath, aggressive) => withBusy(repoPath, () => runGc(git, repoPath, aggressive)),
     'git.reflog.expire': async (repoPath) => expireReflog(git, repoPath),
+    'git.resetKeep': async (repoPath, sha, stashFirst) => resetKeep(git, repoPath, sha, stashFirst),
+    'git.bisect.start': async (repoPath, bad, good) => bisectStart(git, repoPath, bad, good),
+    'git.bisect.mark': async (repoPath, verb, sha) => bisectMark(git, repoPath, verb, sha),
+    'git.bisect.reset': async (repoPath) => bisectReset(git, repoPath),
 
     // ---------------- ai ----------------
     'ai.resolve': async (repoPath, path, checkOutput) => {
@@ -1067,6 +1099,9 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     if (!(await readRepoConfig(repoPath)).ai) return 'AI is turned off for this repository by "ai": false in .gitgood/config.json.';
     return null;
   });
+
+  // A repository's chosen GitHub account applies to every gh/git call its handlers make (see ToolLocator.repoAccount).
+  scopeRepoHandlers(handlers as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>);
 
   // The palette's execution step calls back into these same handlers (never a shell, never a
   // bespoke code path) so it gets identical behaviour to a manual action for the same ApiMethods key.

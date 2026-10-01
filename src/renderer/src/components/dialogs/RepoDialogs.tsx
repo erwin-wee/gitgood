@@ -453,6 +453,12 @@ export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab 
   const [identity, setIdentity] = useState<{ useLocal: boolean; name: string; email: string; globalName: string; globalEmail: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const ghAccounts = useAppStore((s) => s.tools?.ghAccounts ?? []);
+  const accountKey = (a: { host: string; login: string } | undefined | null) => (a ? `${a.host}/${a.login}` : '');
+  const [accountChoice, setAccountChoice] = useState(accountKey(repo?.githubAccount));
+  const accountHost = repo?.github?.host ?? null;
+  const accountOptions = ghAccounts.filter((a) => !accountHost || a.host === accountHost);
+  const activeForHost = ghAccounts.find((a) => a.active && (!accountHost || a.host === accountHost));
 
   useEffect(() => {
     if (!repo) return;
@@ -476,6 +482,10 @@ export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab 
       }
       await invoke('repos.setAlias', repo.id, alias.trim() || null);
       if (group.trim() !== (repo.group ?? '')) await invoke('repos.setPrefs', repo.id, { group: group.trim() || null });
+      if (accountChoice !== accountKey(repo.githubAccount)) {
+        const picked = accountOptions.find((a) => accountKey(a) === accountChoice) ?? repo.githubAccount;
+        await invoke('repos.setPrefs', repo.id, { githubAccount: accountChoice && picked ? { host: picked.host, login: picked.login } : null });
+      }
       closeDialog();
       await actions.refreshAll();
     } catch (err) {
@@ -499,9 +509,9 @@ export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab 
       }
     >
       <div className="dialog-tabs" style={{ margin: '-16px -16px 16px', padding: '0 16px' }}>
-        {(['remote', 'ignored', 'identity', 'alias'] as RepoSettingsTab[]).map((t) => (
+        {(['remote', 'ignored', 'identity', 'account', 'alias'] as RepoSettingsTab[]).map((t) => (
           <button key={t} type="button" className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t === 'remote' ? 'Remote' : t === 'ignored' ? 'Ignored files' : t === 'identity' ? 'Git config' : 'Name & group'}
+            {t === 'remote' ? 'Remote' : t === 'ignored' ? 'Ignored files' : t === 'identity' ? 'Git config' : t === 'account' ? 'GitHub account' : 'Name & group'}
           </button>
         ))}
       </div>
@@ -550,6 +560,28 @@ export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab 
               <TextField label="Name" value={identity.name} onChange={(e) => setIdentity({ ...identity, name: e.target.value })} />
               <TextField label="Email" value={identity.email} onChange={(e) => setIdentity({ ...identity, email: e.target.value })} />
             </div>
+          ) : null}
+        </>
+      ) : null}
+      {tab === 'account' ? (
+        <>
+          <div className="field">
+            <label>GitHub account for this repository</label>
+            <select value={accountChoice} onChange={(e) => setAccountChoice(e.target.value)}>
+              <option value="">Active account{activeForHost ? ` (@${activeForHost.login})` : ''}</option>
+              {accountOptions.map((a) => (
+                <option key={accountKey(a)} value={accountKey(a)}>@{a.login} · {a.host}</option>
+              ))}
+              {accountChoice && !accountOptions.some((a) => accountKey(a) === accountChoice) ? <option value={accountChoice}>{accountChoice} (not signed in)</option> : null}
+            </select>
+            <span className="hint">Pull requests, issues and every fetch, pull and push in this repository use this account instead of the active one. Remembered on this computer only; the token is never stored or exported.</span>
+          </div>
+          {ghAccounts.length < 2 ? <p className="muted" style={{ fontSize: 12 }}>Add another account in Options → Accounts to choose between them.</p> : null}
+          {identity ? (
+            <p style={{ fontSize: 12 }}>
+              Commits here are authored as <strong>{identity.useLocal ? identity.name : identity.globalName || '(no name)'} &lt;{identity.useLocal ? identity.email : identity.globalEmail || 'no email'}&gt;</strong> ({identity.useLocal ? 'local Git config' : 'global Git config'}).{' '}
+              <Button variant="link" onClick={() => setTab('identity')}>Change</Button>
+            </p>
           ) : null}
         </>
       ) : null}

@@ -203,12 +203,14 @@ export function MergeDialog({ squash, preselect, rebase }: { squash: boolean; pr
   const [selected, setSelected] = useState<Branch | null>(() => branches.find((b) => b.name === preselect) ?? null);
   const compare = useCompare(current, selected?.name ?? null);
   const [busy, setBusy] = useState(false);
+  const stack = useAppStore((s) => s.stack);
+  const [updateRefs, setUpdateRefs] = useState(true);
   const title = rebase ? `Rebase ${current}` : squash ? `Squash and merge into ${current}` : `Merge into ${current}`;
   const verb = rebase ? 'Rebase' : squash ? 'Squash and merge' : 'Merge';
   const run = async () => {
     if (!selected) return;
     setBusy(true);
-    if (rebase) await actions.rebaseOnto(selected.name);
+    if (rebase) await actions.rebaseOnto(selected.name, stack.parents.length > 0 && stack.canUpdateRefs && updateRefs);
     else await actions.mergeBranch(selected.name, squash);
     setBusy(false);
   };
@@ -241,6 +243,19 @@ export function MergeDialog({ squash, preselect, rebase }: { squash: boolean; pr
     >
       <BranchPicker branches={branches} selected={selected} onSelect={setSelected} exclude={(b) => b.isCurrent} />
       {rebase && status && status.files.length ? <Callout tone="warning">You have uncommitted changes. Commit or stash them before rebasing.</Callout> : null}
+      {rebase && stack.parents.length ? (
+        <>
+          <Callout tone="info">Stack: {[...stack.parents, current].join(' → ')}</Callout>
+          <Checkbox
+            checked={updateRefs && stack.canUpdateRefs}
+            disabled={!stack.canUpdateRefs}
+            onChange={setUpdateRefs}
+            label="Update dependent branches (--update-refs)"
+            title="Moves the branches below this one in the stack along with the rebase"
+          />
+          {!stack.canUpdateRefs ? <p className="muted" style={{ fontSize: 12 }}>Updating dependent branches needs Git 2.38 or newer.</p> : null}
+        </>
+      ) : null}
     </Dialog>
   );
 }

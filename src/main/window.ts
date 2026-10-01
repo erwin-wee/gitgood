@@ -15,11 +15,18 @@ export function smokeHeadless(): boolean {
   return !!process.env.GITGOOD_SMOKE_SCRIPT && process.env.GITGOOD_SMOKE_SHOW !== '1';
 }
 
-/** `remoteUrl` (client mode) loads the GitGood server's renderer with the client preload instead of the bundled app. */
-export function createMainWindow(store: Store, onFocusChange?: (focused: boolean) => void, remoteUrl?: string): BrowserWindow {
+/**
+ * `remoteUrl` (client mode) loads the GitGood server's renderer with the client preload instead of the bundled app.
+ * `hash` is handed to the renderer as its URL fragment (`repo=<id>`: open that repository at startup, see `bootstrap`).
+ * The first window restores and persists the saved bounds; later ones cascade from the window that was active and never save.
+ */
+export function createMainWindow(store: Store, onFocusChange?: (focused: boolean) => void, remoteUrl?: string, hash?: string): BrowserWindow {
   const state = store.getState();
   const headless = smokeHeadless();
-  const bounds = state.window;
+  const anchor = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const primary = !anchor;
+  const anchorBounds = anchor?.getNormalBounds();
+  const bounds = anchorBounds ? { ...anchorBounds, x: anchorBounds.x + 30, y: anchorBounds.y + 30, maximized: false } : state.window;
   const display = screen.getDisplayMatching({ x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width, height: bounds.height });
   const fitsOnScreen = bounds.x !== undefined && bounds.y !== undefined && bounds.x >= display.bounds.x - 50 && bounds.y >= display.bounds.y - 50 && bounds.x < display.bounds.x + display.bounds.width && bounds.y < display.bounds.y + display.bounds.height;
   const dark = nativeTheme.shouldUseDarkColors;
@@ -59,10 +66,12 @@ export function createMainWindow(store: Store, onFocusChange?: (focused: boolean
     const b = maximized ? win.getNormalBounds() : win.getBounds();
     store.updateState({ window: { ...store.getState().window, x: b.x, y: b.y, width: b.width, height: b.height, maximized } });
   }, 400);
-  win.on('resize', saveBounds);
-  win.on('move', saveBounds);
-  win.on('maximize', saveBounds);
-  win.on('unmaximize', saveBounds);
+  if (primary) {
+    win.on('resize', saveBounds);
+    win.on('move', saveBounds);
+    win.on('maximize', saveBounds);
+    win.on('unmaximize', saveBounds);
+  }
   win.on('focus', () => {
     sendEvent(win, 'window.focus', { focused: true });
     onFocusChange?.(true);
@@ -101,9 +110,9 @@ export function createMainWindow(store: Store, onFocusChange?: (focused: boolean
     });
     void win.loadURL(remoteUrl);
   } else if (process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
+    void win.loadURL(hash ? `${process.env.ELECTRON_RENDERER_URL}#${hash}` : process.env.ELECTRON_RENDERER_URL);
   } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'));
+    void win.loadFile(join(__dirname, '../renderer/index.html'), { hash });
   }
   return win;
 }

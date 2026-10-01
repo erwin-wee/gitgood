@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { OperationOutcome } from '@shared/ipc';
 import type { CloneOptions, RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
 import { assertNewBranchName, assertNotOption } from '@shared/util';
+import { getBranches, getCurrentBranchName, getStackParents, getUpstreamRemote } from './branches';
 import { getStashFiles, toFsPath } from './diff';
 import { GitError, TransferProgressParser, type GitClient } from './git';
 import { getGitDir } from './status';
@@ -104,6 +105,31 @@ export async function push(
   });
 }
 
+/** argv for pushing a whole stack of branches in one go, every one with a lease. `--set-upstream` also points branches that already track something at `remote/<same name>`, which is where this push sends them anyway. */
+export function pushStackArgs(remote: string, branches: string[], setUpstream: boolean): string[] {
+  assertNotOption(remote, ...branches);
+  return ['push', '--progress', '--force-with-lease', ...(setUpstream ? ['--set-upstream'] : []), remote, ...branches];
+}
+
+/** Force-pushes (with lease) the current branch and the stack branches below it, to the current branch's remote (default origin). Returns the pushed branch names, oldest first. */
+export async function pushStack(git: GitClient, repoPath: string, onProgress: ProgressSink, signal?: AbortSignal): Promise<string[]> {
+  const current = await getCurrentBranchName(git, repoPath);
+  if (!current) throw new Error('Check out a branch to push its stack.');
+  const branches = [...(await getStackParents(git, repoPath)), current];
+  const local = new Map((await getBranches(git, repoPath)).filter((b) => b.kind === 'local').map((b) => [b.name, b]));
+  const remote = (await getUpstreamRemote(git, repoPath, current)) ?? 'origin';
+  const parser = new TransferProgressParser('push');
+  await git.run(repoPath, pushStackArgs(remote, branches, branches.some((b) => !local.get(b)?.upstream)), {
+    signal,
+    onStderr: (chunk) => {
+      const p = parser.feed(chunk);
+      if (p) onProgress(p.percent, p.description);
+    },
+    timeoutMs: 30 * 60 * 1000,
+  });
+  return branches;
+}
+
 /** Cone-mode sparse-checkout directories: repository-relative, forward slashes, no `..`, nothing option-like. */
 export function normalizeSparseDirs(dirs: string[]): string[] {
   const out = dirs.map((d) => d.trim().replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '').replace(/\/+$/, '')).filter(Boolean);
@@ -172,10 +198,11 @@ export async function mergeContinue(git: GitClient, repoPath: string): Promise<O
   }
 }
 
-export async function rebase(git: GitClient, repoPath: string, onto: string): Promise<OperationOutcome> {
+/** `--update-refs` (git 2.38+) also moves every local branch that points into the rebased range, which keeps a stack of branches intact. */
+export async function rebase(git: GitClient, repoPath: string, onto: string, updateRefs = false): Promise<OperationOutcome> {
   assertNotOption(onto);
   try {
-    await git.run(repoPath, ['rebase', onto], { env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' } });
+    await git.run(repoPath, ['rebase', ...(updateRefs ? ['--update-refs'] : []), onto], { env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' } });
     return { status: 'complete' };
   } catch (err) {
     return outcomeFromError(err);

@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import type { UpdateState } from '@shared/types';
+import type { BisectState, UpdateState } from '@shared/types';
 import { formatRelativeTime } from '@shared/util';
 import * as actions from '../state/actions';
 import { openDialog, store, useAppStore } from '../state/store';
-import { on } from '../api';
+import { invoke, on } from '../api';
+import { markBisect, openBisectResult, resetBisect } from '../state/reflog';
 import { Button, Icon, Spinner } from './ui';
 
 function lfsInstallHint(platform: string): string {
@@ -56,6 +57,65 @@ function updateBanner(updateState: UpdateState): React.JSX.Element | null {
     );
   }
   return null;
+}
+
+const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/** Progress of a running `git bisect`: mark the checked-out commit good/bad/skip, or reset; shows the first bad commit once git has found it. */
+function BisectBanner(): React.JSX.Element {
+  const repo = useAppStore((s) => s.currentRepo);
+  const status = useAppStore((s) => s.status);
+  const busy = useAppStore((s) => s.operation !== null);
+  const [state, setState] = useState<BisectState | null>(null);
+  useEffect(() => {
+    if (!repo) return;
+    let current = true;
+    invoke('repo.bisect', repo.path).then((s) => current && setState(s), () => undefined);
+    return () => {
+      current = false;
+    };
+  }, [repo, status]);
+
+  const reset = <Button size="sm" disabled={busy} onClick={() => void resetBisect()}>Reset</Button>;
+  if (state?.firstBad) {
+    return (
+      <div className="banner success">
+        <Icon name="check-circle" />
+        <span className="banner-text">
+          <strong>First bad commit found</strong>
+          <span className="mono">{state.firstBad.sha.slice(0, 7)}</span> {state.firstBad.summary}
+        </span>
+        <span className="banner-actions">
+          <Button size="sm" variant="primary" onClick={() => openBisectResult(state.firstBad!.sha)}>Open commit</Button>
+          {reset}
+        </span>
+      </div>
+    );
+  }
+  const ready = !!state && state.bad !== null && state.good.length > 0;
+  return (
+    <div className="banner info">
+      <Icon name="history" />
+      <span className="banner-text">
+        <strong>Bisecting</strong>
+        {ready && state.remaining !== null && state.steps !== null
+          ? `${plural(state.remaining, 'revision')} left (about ${plural(state.steps, 'step')}). Test ${state.head?.sha.slice(0, 7) ?? 'the checked-out commit'}${state.head ? ` “${state.head.summary}”` : ''}, then mark it.`
+          : state
+            ? `Mark a ${state.bad === null ? 'bad' : 'good'} commit (right-click it in History) to continue.`
+            : 'Loading…'}
+      </span>
+      <span className="banner-actions">
+        {ready ? (
+          <>
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => void markBisect('good', null)}>Good</Button>
+            <Button size="sm" variant="danger" disabled={busy} onClick={() => void markBisect('bad', null)}>Bad</Button>
+            <Button size="sm" disabled={busy} onClick={() => void markBisect('skip', null)}>Skip</Button>
+          </>
+        ) : null}
+        {reset}
+      </span>
+    </div>
+  );
 }
 
 /** Post-resolution check failure banner: shows the command and a "Show output" toggle, plus a single "Ask AI to fix" retry (hidden after it has already been used once for this file). */
@@ -203,6 +263,7 @@ export function Banners(): React.JSX.Element | null {
     );
   }
 
+  if (op.kind === 'bisect') banners.push(<BisectBanner key="bisect" />);
   if (checkBanner) banners.push(<CheckFailedBanner key="check-failed" />);
 
   if (merge && dismissedMerge !== merge.at) {

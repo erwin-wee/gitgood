@@ -26,6 +26,8 @@ const NewIssueDialog = lazyExport(() => import('./IssueDialogs'), 'NewIssueDialo
 const ReleaseNotesDialog = lazyExport(() => import('./ReleaseNotesDialog'), 'ReleaseNotesDialog');
 const SplitPlanDialog = lazyExport(() => import('./SplitDialogs'), 'SplitPlanDialog');
 const TidyBranchDialog = lazyExport(() => import('./RebaseDialogs'), 'TidyBranchDialog');
+const ReflogDialog = lazyExport(() => import('./ReflogDialogs'), 'ReflogDialog');
+const BisectStartDialog = lazyExport(() => import('./ReflogDialogs'), 'BisectStartDialog');
 const BulkDeleteBranchesDialog = lazyExport(() => import('./HealthDialogs'), 'BulkDeleteBranchesDialog');
 const WorktreesDialog = lazyExport(() => import('./WorktreeDialogs'), 'WorktreesDialog');
 const AddWorktreeDialog = lazyExport(() => import('./WorktreeDialogs'), 'AddWorktreeDialog');
@@ -156,6 +158,10 @@ function CurrentDialog(): React.JSX.Element | null {
       return <SplitPlanDialog />;
     case 'tidy-branch':
       return <TidyBranchDialog />;
+    case 'reflog':
+      return <ReflogDialog />;
+    case 'bisect-start':
+      return <BisectStartDialog bad={dialog.bad} badLabel={dialog.badLabel} />;
     case 'trust-repo-check':
       return <TrustRepoCheckDialog repoPath={dialog.repoPath} command={dialog.command} onDecision={dialog.onDecision} />;
     case 'resolution-popover':

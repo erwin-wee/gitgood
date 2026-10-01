@@ -2,6 +2,7 @@
  * Shared data types that cross the IPC boundary between the Electron main
  * process and the renderer. Keep this file free of Node or DOM specifics.
  */
+import type { ShortcutOverrides } from './shortcuts';
 
 export type Theme = 'system' | 'light' | 'dark';
 export type DiffViewMode = 'unified' | 'split';
@@ -126,6 +127,8 @@ export interface AppSettings {
   showUnpushedWorkIndicator: boolean;
   /** Verify commit signatures while loading History (adds %G?/%GS/%GK to the log format, which is slower on large histories). Default off. */
   historyVerifySignatures: boolean;
+  /** Draw the commit graph (branch lanes) beside the History list. Only shown while no search/filter/file path narrows the list; hidden on phone layouts. */
+  historyGraph: boolean;
   /** Poll GitHub notifications for the Inbox. Defaults to on once signed in; has no effect while signed out. */
   notificationsEnabled: boolean;
   /** Minimum minutes between notification polls; the server's own X-Poll-Interval is honoured when it asks for longer. */
@@ -146,6 +149,8 @@ export interface AppSettings {
    * never leave the machine through a settings export or gist sync.
    */
   watchedFolders: WatchedFolder[];
+  /** Keyboard shortcut overrides by action id (an accelerator, or null = unbound); see `shared/shortcuts.ts`. Part of the portable preferences. */
+  shortcuts: ShortcutOverrides;
   ai: AiSettings;
 }
 
@@ -298,7 +303,12 @@ export interface RepositoryInfo {
   group?: string | null;
   /** Machine-local: add a `Signed-off-by` trailer (`git commit --signoff`) to commits in this repository. */
   signoff?: boolean;
+  /** Machine-local: gh account used for this repository's gh calls and git network operations (token from `gh auth token --user`); absent = the host's active account. Never exported. */
+  githubAccount?: { host: string; login: string };
 }
+
+/** Machine-local per-repository prefs `repos.setPrefs` accepts; only the keys present change (`githubAccount: null` returns to the host's active account). */
+export type RepoPrefs = Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'> & { githubAccount?: RepositoryInfo['githubAccount'] | null };
 
 /** `RepositoryInfo.origin` with the default applied: entries written before watched folders existed are manual. */
 export function repositoryOrigin(repo: Pick<RepositoryInfo, 'origin'>): 'manual' | 'watched' {
@@ -434,6 +444,31 @@ export interface InProgressOperation {
   message: string | null;
 }
 
+/** One `git reflog` entry for HEAD, newest first; `index` is N in `HEAD@{N}`. `action` is the text before the first ": " (e.g. "commit (amend)", "checkout"), `message` the rest. */
+export interface ReflogEntry {
+  index: number;
+  sha: string;
+  action: string;
+  message: string;
+  /** Epoch ms. */
+  timestamp: number;
+}
+
+/** What "Undo last Git operation" would do: move HEAD back to `target` (reset --keep) or switch back to the previous branch/commit. */
+export type UndoPlan = { kind: 'reset'; description: string; target: ReflogEntry } | { kind: 'checkout'; description: string; ref: string; isBranch: boolean };
+
+/** An in-progress `git bisect`. `remaining`/`steps` are null until both a good and a bad commit are known. */
+export interface BisectState {
+  bad: string | null;
+  good: string[];
+  /** The commit currently checked out for testing. */
+  head: { sha: string; summary: string } | null;
+  remaining: number | null;
+  steps: number | null;
+  /** Set once git has narrowed the range to a single commit. */
+  firstBad: { sha: string; summary: string } | null;
+}
+
 export interface BranchState {
   name: string | null;
   sha: string | null;
@@ -473,6 +508,13 @@ export interface Branch {
   unpublished: boolean;
   /** True when the branch has an upstream configured but it was deleted (git's `[gone]` marker). */
   upstreamGone: boolean;
+}
+
+/** The current branch's stack of branches below it (oldest first); see getStackParents in src/main/git/branches.ts. */
+export interface BranchStack {
+  parents: string[];
+  /** False when the installed git predates `rebase --update-refs` (2.38). */
+  canUpdateRefs: boolean;
 }
 
 export interface Tag {
@@ -756,6 +798,15 @@ export interface GitHubAccount {
   protocol: string | null;
 }
 
+/** One signed-in `gh` account (every host/login `gh auth status` lists); `active` is the account gh uses by default on that host. */
+export interface GhAccountEntry {
+  host: string;
+  login: string;
+  active: boolean;
+  scopes: string[];
+  protocol: string | null;
+}
+
 export interface ToolInfo {
   installed: boolean;
   version: string | null;
@@ -764,6 +815,8 @@ export interface ToolInfo {
   /** Set when the installed version is below the supported minimum (still usable; the UI only warns). */
   outdated?: boolean;
   minVersion?: string;
+  /** True until this tool's startup probe finishes (git is always settled before the first state is served); the UI shows "checking…" instead of "not found". */
+  pending?: boolean;
 }
 
 export interface ToolsState {
@@ -774,6 +827,8 @@ export interface ToolsState {
   gpg: ToolInfo;
   sshKeygen: ToolInfo;
   ghAccount: GitHubAccount | null;
+  /** Every signed-in gh account across hosts, active ones flagged; `ghAccount` is the primary active one with its profile. */
+  ghAccounts: GhAccountEntry[];
   ghAuthError: string | null;
   credentialHelperConfigured: boolean;
 }
@@ -1837,10 +1892,12 @@ export interface PortablePreferences {
   healthLargeFileThresholdBytes: number;
   showUnpushedWorkIndicator: boolean;
   historyVerifySignatures: boolean;
+  historyGraph: boolean;
   notificationsEnabled: boolean;
   notificationsPollIntervalMinutes: number;
   notifyMentions: boolean;
   notifyReviewRequests: boolean;
+  shortcuts: ShortcutOverrides;
   ai: PortableAiSettings;
 }
 
@@ -1936,6 +1993,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   healthLargeFileThresholdBytes: 5 * 1024 * 1024,
   showUnpushedWorkIndicator: false,
   historyVerifySignatures: false,
+  historyGraph: true,
   notificationsEnabled: true,
   notificationsPollIntervalMinutes: 2,
   notifyMentions: true,
@@ -1944,6 +2002,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoDownloadUpdates: true,
   updateChannel: 'stable',
   watchedFolders: [],
+  shortcuts: {},
   ai: {
     provider: 'anthropic',
     model: 'claude-opus-5',

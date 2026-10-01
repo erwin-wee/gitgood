@@ -9,6 +9,7 @@ import { liveFindings, SEVERITY_ICON, SEVERITY_TONE } from './review/ReviewView'
 import { onListKeyDown } from '../lib/listKeys';
 import { Avatar, Button, Checkbox, Icon, PathLabel, Spinner, openContextMenu, statusIcon, statusLabel, type MenuItem } from './ui';
 import { useWindowedRows } from '../lib/windowing';
+import { shortcutMatches } from '../lib/shortcuts';
 
 const SUMMARY_LIMIT = 72;
 
@@ -283,7 +284,7 @@ function CommitForm(): React.JSX.Element {
   const label = changes.committing ? 'Committing…' : changes.amend ? 'Amend last commit' : inMerge ? `Commit ${status?.operation.kind === 'merge' ? 'merge' : status?.operation.kind}` : status?.branch.detached ? 'Commit to detached HEAD' : `Commit to ${branchName}`;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && canCommit) {
+    if (canCommit && shortcutMatches('commit', e)) {
       e.preventDefault();
       void actions.commit();
     }

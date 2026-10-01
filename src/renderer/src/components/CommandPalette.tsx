@@ -37,6 +37,8 @@ const BUILTIN_ACTIONS: { id: string; label: string }[] = [
   { id: 'show-submodules', label: 'Submodules…' },
   { id: 'show-lfs', label: 'Git LFS…' },
   { id: 'show-health', label: 'Repository Health…' },
+  { id: 'show-reflog', label: 'Undo History…' },
+  { id: 'undo-last-operation', label: 'Undo Last Git Operation' },
   { id: 'show-issues', label: 'Issues…' },
   { id: 'create-issue', label: 'Create Issue on GitHub' },
   { id: 'view-on-github', label: 'View on GitHub' },

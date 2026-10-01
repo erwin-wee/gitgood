@@ -1,4 +1,4 @@
-import type { AddWorktreeOptions, BlameHunk, BlameResult, Branch, BranchDeleteResult, Commit, CommitOptions, ErrorFix, ExplainSource, ExplainTarget, FileDiff, GitErrorInfo, HistoryQuery, PrTriage, PullRequest, RepoWork, RepositoryInfo, RepositoryScanResult, RepositoryStatus, Stash, StaleBranch, TriageState, UncommittedChangesStrategy, WorkingFile, ConflictResolutionResult, AppSettings, UpdateState, Worktree } from '@shared/types';
+import type { AddWorktreeOptions, BlameHunk, BlameResult, Branch, BranchDeleteResult, Commit, CommitOptions, ErrorFix, ExplainSource, ExplainTarget, FileDiff, GitErrorInfo, HistoryQuery, PrTriage, PullRequest, RepoPrefs, RepoWork, RepositoryInfo, RepositoryScanResult, RepositoryStatus, Stash, StaleBranch, TriageState, UncommittedChangesStrategy, WorkingFile, ConflictResolutionResult, AppSettings, UpdateState, Worktree } from '@shared/types';
 import { aiEnabled } from '@shared/ai-model';
 import { EMPTY_HISTORY_QUERY, EXPLAIN_FOLLOWUP_LIMIT, ZERO_SHA } from '@shared/types';
 import type { OperationOutcome } from '@shared/ipc';
@@ -13,6 +13,7 @@ import { handleRebaseProgress, tidyBranch } from './rebase';
 import { handleSplitProgress, openSplitDialog } from './split';
 import { initInbox, loadInboxState, openInboxItemById, toggleInboxPanel } from './inbox';
 import { openCommandPalette } from './nlPalette';
+import { undoLastOperation } from './reflog';
 import { handleProtocolReviewRerun } from './agentHandoff';
 
 export * from './review';
@@ -137,7 +138,9 @@ export async function bootstrap(): Promise<void> {
 
   setInterval(() => void pollPullRequestNotifications(), 3 * 60_000);
 
-  const candidates = repos.filter((r) => !r.missing).sort((a, b) => b.lastOpened - a.lastOpened);
+  // A window opened from the repository list starts on that repository (`#repo=<id>`), a blank one (`#repo=`) on none; the first window reopens the last used one.
+  const wanted = new URLSearchParams(location.hash.slice(1)).get('repo');
+  const candidates = repos.filter((r) => !r.missing && (wanted === null || r.id === wanted)).sort((a, b) => b.lastOpened - a.lastOpened);
   if (candidates.length) await openRepository(candidates[0]);
   const [tools] = await Promise.all([toolsWithStore, updateStateWithStore]);
 
@@ -349,6 +352,15 @@ export async function addLocalRepository(path: string): Promise<void> {
 export async function openFolderAsRepository({ path }: { path: string }): Promise<void> {
   if (await invoke('app.isRepository', path).catch(() => false)) await addLocalRepository(path);
   else openDialog({ kind: 'add-repo', path });
+}
+
+/** Desktop app only: shows `repo` in another window, which has its own open repository, selection and dialogs. */
+export async function openRepositoryInNewWindow(repo: RepositoryInfo): Promise<void> {
+  try {
+    await invoke('app.newWindow', repo.id);
+  } catch (err) {
+    showToast({ kind: 'error', title: 'Could not open a new window', message: errorMessage(err) });
+  }
 }
 
 /** One sentence for a finished watched-folder scan, for the toast and the Options summary. */
@@ -729,9 +741,9 @@ export async function refreshBranches(): Promise<void> {
   const repo = store.get().currentRepo;
   if (!repo) return;
   try {
-    const [branches, defaultBranch] = await Promise.all([invoke('repo.branches', repo.path), invoke('repo.defaultBranch', repo.path)]);
+    const [branches, defaultBranch, stack] = await Promise.all([invoke('repo.branches', repo.path), invoke('repo.defaultBranch', repo.path), invoke('repo.stack', repo.path)]);
     if (store.get().currentRepo?.path !== repo.path) return;
-    store.set({ branches, defaultBranch });
+    store.set({ branches, defaultBranch, stack });
   } catch {
     /* status refresh reports errors */
   }
@@ -949,11 +961,13 @@ export async function loadHistory(reset: boolean): Promise<void> {
   slowSearchTimer = setTimeout(() => patchHistory({ slowSearch: true }), 5000);
   try {
     const skip = reset ? 0 : h.commits.length;
-    const page = await invoke('repo.history', repo.path, { ref: null, skip, limit: HISTORY_PAGE, path: h.path, search: h.freeText.trim() || null, follow: !!h.path, query: isEmptyHistoryQuery(h.query) ? null : h.query, verifySignatures: store.get().settings?.historyVerifySignatures ?? false });
+    // Later pages keep the order the list was started with; only a reset re-reads the setting and the filter state.
+    const graph = reset ? (store.get().settings?.historyGraph ?? false) && !historyFilterActive(h) && !h.path : h.graph;
+    const page = await invoke('repo.history', repo.path, { ref: null, skip, limit: HISTORY_PAGE, path: h.path, search: h.freeText.trim() || null, follow: !!h.path, query: isEmptyHistoryQuery(h.query) ? null : h.query, verifySignatures: store.get().settings?.historyVerifySignatures ?? false, graph });
     if (store.get().currentRepo?.path !== repo.path) return;
     const commits = reset ? page.commits : [...h.commits, ...page.commits];
     const stillSelected = store.get().history.selectedShas.filter((sha) => commits.some((c) => c.sha === sha));
-    patchHistory({ commits, hasMore: page.hasMore, loading: false, slowSearch: false, error: null, selectedShas: stillSelected, details: stillSelected.length === 1 ? store.get().history.details : null, stale: store.get().history.stale && !(reset && h.stale) });
+    patchHistory({ commits, graph, hasMore: page.hasMore, loading: false, slowSearch: false, error: null, selectedShas: stillSelected, details: stillSelected.length === 1 ? store.get().history.details : null, stale: store.get().history.stale && !(reset && h.stale) });
     if (store.get().view === 'history' && stillSelected.length === 0 && commits.length) selectCommit(commits[0].sha);
     else if (stillSelected.length === 1 && reset) void loadCommitDetails(stillSelected[0]);
   } catch (err) {
@@ -1339,8 +1353,8 @@ export async function prefillCommitTemplate(): Promise<void> {
   if (template && store.get().currentRepo?.path === repo.path && idle()) patchChanges({ summary: template.summary, description: template.description });
 }
 
-/** Machine-local per-repository prefs: pin, custom group, commit sign-off. */
-export async function setRepoPrefs(repo: RepositoryInfo, prefs: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'>): Promise<void> {
+/** Machine-local per-repository prefs: pin, custom group, commit sign-off, GitHub account. */
+export async function setRepoPrefs(repo: RepositoryInfo, prefs: RepoPrefs): Promise<void> {
   try {
     await invoke('repos.setPrefs', repo.id, prefs);
   } catch (err) {
@@ -1643,15 +1657,36 @@ export async function mergeBranch(branch: string, squash: boolean): Promise<void
   } else reportOutcome(outcome, 'Merge');
 }
 
-export async function rebaseOnto(branch: string): Promise<void> {
+export async function rebaseOnto(branch: string, updateRefs = false): Promise<void> {
   const repo = store.get().currentRepo;
   if (!repo) return;
   closeAllDialogs();
-  const outcome = await runOperation('Rebase', () => invoke('git.rebase', repo.path, branch));
+  const outcome = await runOperation('Rebase', () => invoke('git.rebase', repo.path, branch, updateRefs));
   if (outcome?.status === 'complete') {
     showToast({ kind: 'success', title: `Rebased onto ${branch}` });
     await loadHistory(true);
   } else reportOutcome(outcome, 'Rebase');
+}
+
+/** Force-pushes (with lease) the current branch and the branches stacked below it, after confirming the list. */
+export function pushStack(): void {
+  const s = store.get();
+  const repo = s.currentRepo;
+  const current = s.status?.branch.name;
+  if (!repo || !current || !s.stack.parents.length) return;
+  const branches = [...s.stack.parents, current];
+  openDialog({
+    kind: 'confirm',
+    title: 'Push stack?',
+    message: `Force-push (with lease) ${branches.length} branches, overwriting their remote versions:\n\n${branches.join('\n')}`,
+    confirmLabel: 'Push stack',
+    danger: true,
+    onConfirm: async () => {
+      const pushed = await runOperation('Push stack', () => invoke('git.pushStack', repo.path));
+      if (pushed) showToast({ kind: 'success', title: `Pushed ${pushed.length} stacked branches` });
+      void loadCurrentPullRequest(true);
+    },
+  });
 }
 
 export async function updateFromDefaultBranch(): Promise<void> {
@@ -2587,12 +2622,22 @@ export async function cancelSignIn(): Promise<void> {
   store.set({ login: { inProgress: false, code: null, url: null, error: null } });
 }
 
-export async function signOut(host: string): Promise<void> {
+export async function signOut(host: string, login?: string): Promise<void> {
   try {
-    await invoke('gh.auth.logout', host);
+    await invoke('gh.auth.logout', host, login);
     await refreshTools();
   } catch (err) {
     showError('Sign out failed', err);
+  }
+}
+
+/** Makes `login` the account GitHub calls use by default on `host`; repositories with their own account are unaffected. */
+export async function switchAccount(host: string, login: string): Promise<void> {
+  try {
+    await invoke('gh.auth.switch', host, login);
+    await refreshTools();
+  } catch (err) {
+    showError('Could not switch account', err);
   }
 }
 
@@ -2606,6 +2651,7 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<void>
     store.set({ settings });
     applyTheme(settings, store.get().dark);
     if (patch.diffHideWhitespace !== undefined) void loadDiff(true);
+    if (patch.historyGraph !== undefined) void loadHistory(true);
     if (patch.blameIgnoreWhitespace !== undefined && store.get().diff.blameOn) void loadDiff(true);
   } catch (err) {
     showError('Could not save settings', err);
@@ -2949,6 +2995,12 @@ export async function handleMenuAction(action: string, args?: unknown): Promise<
     case 'show-health':
       if (needsRepo()) return openHealth();
       return;
+    case 'show-reflog':
+      if (needsRepo()) openDialog({ kind: 'reflog' });
+      return;
+    case 'undo-last-operation':
+      if (needsRepo()) return undoLastOperation();
+      return;
     case 'show-repository-list':
       return store.set((st) => ({ popover: st.popover === 'repos' ? null : 'repos' }));
     case 'show-branches-list':
@@ -2964,6 +3016,8 @@ export async function handleMenuAction(action: string, args?: unknown): Promise<
       return updateSettings({ diffHideWhitespace: !s.settings?.diffHideWhitespace });
     case 'toggle-blame':
       return toggleBlame();
+    case 'toggle-history-graph':
+      return updateSettings({ historyGraph: !s.settings?.historyGraph });
     case 'zoom-in':
     case 'zoom-out':
     case 'zoom-reset':

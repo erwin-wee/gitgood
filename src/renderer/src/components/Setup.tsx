@@ -32,8 +32,8 @@ export function SetupScreen({ tools }: { tools: ToolsState }): React.JSX.Element
         <div className="setup-item">
           <Icon name={tools.gh.installed ? 'check-circle' : 'x-circle'} />
           <div>
-            <strong>GitHub CLI {tools.gh.installed ? `${tools.gh.version} found` : `not found (${MIN_TOOL_VERSIONS.gh} or newer; needed for GitHub features)`}</strong>
-            {!tools.gh.installed ? (
+            <strong>GitHub CLI {tools.gh.installed ? `${tools.gh.version} found` : tools.gh.pending ? 'checking…' : `not found (${MIN_TOOL_VERSIONS.gh} or newer; needed for GitHub features)`}</strong>
+            {!tools.gh.installed && tools.gh.pending ? null : !tools.gh.installed ? (
               <span>
                 Install with <span className="mono">{ghInstall}</span> or download from <Button variant="link" onClick={() => void actions.openExternal('https://cli.github.com')}>cli.github.com</Button>.
               </span>

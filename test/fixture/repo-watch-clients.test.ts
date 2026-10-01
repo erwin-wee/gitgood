@@ -67,4 +67,18 @@ describe.skipIf(!hasGitSync())('repository watching per client', () => {
     await as('desktop', () => manager!.releaseClient('desktop'));
     await expectNoChange(one, '4\n');
   });
+
+  it('reports which clients have a repository open, following switches and releases', async () => {
+    const [one, two] = await setup();
+    await as('window-1', () => manager!.open(one.path));
+    await as('window-2', () => manager!.open(one.path));
+    expect(manager!.clientsWatching(one.path).sort()).toEqual(['window-1', 'window-2']);
+
+    await as('window-2', () => manager!.open(two.path));
+    expect(manager!.clientsWatching(one.path)).toEqual(['window-1']);
+    expect(manager!.clientsWatching(two.path)).toEqual(['window-2']);
+
+    manager!.releaseClient('window-1');
+    expect(manager!.clientsWatching(one.path)).toEqual([]);
+  });
 });

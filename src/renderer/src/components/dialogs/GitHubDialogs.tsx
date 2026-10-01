@@ -21,11 +21,11 @@ export function SignInDialog(): React.JSX.Element {
   const login = useAppStore((s) => s.login);
   const tools = useAppStore((s) => s.tools);
   const account = tools?.ghAccount ?? null;
-  const ghMissing = tools ? !tools.gh.installed : false;
+  const ghMissing = tools ? !tools.gh.installed && !tools.gh.pending : false;
+  // Opened while already signed in = "Add another account" (or a scope refresh): never auto-close then.
+  const openedSignedIn = useRef(!!account);
   useEffect(() => {
-    // Auto-close once signed in — but not while a scope refresh (grantNotificationsScope) is
-    // deliberately reusing this dialog for an already-signed-in account.
-    if (account && !login.inProgress) closeDialog();
+    if (account && !login.inProgress && !openedSignedIn.current) closeDialog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
   return (
@@ -122,7 +122,9 @@ export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }):
   const commits = useAppStore((s) => s.history.commits);
   const draftProgress = useAppStore((s) => s.ai['<pull request>']);
   const head = status?.branch.name ?? '';
-  const [base, setBase] = useState(defaultBranch ?? 'main');
+  const stackParent = useAppStore((s) => s.stack.parents.at(-1));
+  // A stacked branch's PR targets its parent branch, but only once that branch exists on the remote.
+  const [base, setBase] = useState(() => (stackParent && branches.some((b) => b.kind === 'remote' && b.name === `origin/${stackParent}`) ? stackParent : (defaultBranch ?? 'main')));
   const [title, setTitle] = useState(() => commits[0]?.summary ?? head.replace(/[-_/]+/g, ' '));
   const [body, setBody] = useState('');
   const [draft, setDraft] = useState(false);

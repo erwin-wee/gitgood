@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gitgood": {
+      "command": "gitgood",
+      "args": ["-e", "import(require('node:url').pathToFileURL(require('node:path').join(process.resourcesPath,'app.asar','out','mcp','index.mjs')).href)", "--", "--no-sandbox"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  }
+}

@@ -125,3 +125,29 @@ export async function getUpstreamRemote(git: GitClient, repoPath: string, branch
   const out = await git.tryRun(repoPath, ['config', '--get', `branch.${branch}.remote`], { readOnly: true });
   return out?.stdout.trim() || null;
 }
+
+/**
+ * The current branch's stack: the other local branches whose tips lie on its first-parent history
+ * between the merge-base with the default branch and HEAD, oldest (closest to the default branch)
+ * first. Empty on the default branch, a detached HEAD, or when there is no default branch or common
+ * ancestor. A branch sitting on HEAD itself is a sibling, not part of the stack.
+ */
+export async function getStackParents(git: GitClient, repoPath: string): Promise<string[]> {
+  const [current, defaultBranch] = await Promise.all([getCurrentBranchName(git, repoPath), getDefaultBranch(git, repoPath)]);
+  if (!current || !defaultBranch || current === defaultBranch) return [];
+  const defaultRef = (await branchExists(git, repoPath, defaultBranch)) ? defaultBranch : `origin/${defaultBranch}`;
+  const base = await git.tryRun(repoPath, ['merge-base', defaultRef, 'HEAD'], { readOnly: true, quiet: true });
+  if (!base?.stdout.trim()) return [];
+  const chain = (await git.stdout(repoPath, ['rev-list', '--first-parent', '--reverse', `${base.stdout.trim()}..HEAD`], { readOnly: true })).split('\n').filter(Boolean);
+  if (chain.length < 2) return [];
+  const position = new Map(chain.slice(0, -1).map((sha, i) => [sha, i]));
+  const refs = await git.stdout(repoPath, ['for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads'], { readOnly: true });
+  const found: { name: string; at: number }[] = [];
+  for (const line of refs.split('\n')) {
+    const space = line.indexOf(' ');
+    const at = position.get(line.slice(0, space));
+    const name = line.slice(space + 1).replace(/^refs\/heads\//, '');
+    if (at !== undefined && name !== current) found.push({ name, at });
+  }
+  return found.sort((a, b) => a.at - b.at || (a.name < b.name ? -1 : 1)).map((f) => f.name);
+}

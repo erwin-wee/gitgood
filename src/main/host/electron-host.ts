@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, nativeTheme, Notification, shell
 import type { AppSettings } from '@shared/types';
 import type { ApiMethods } from '@shared/ipc';
 import type { HostCapabilities } from '../core/host';
+import { refreshMenuShortcuts } from '../menu';
 
 type ChooseDirectoryOptions = Parameters<ApiMethods['app.chooseDirectory']>[0];
 type ChooseFileOptions = Parameters<ApiMethods['app.chooseFile']>[0];
@@ -9,7 +10,12 @@ type ChooseSavePathOptions = Parameters<ApiMethods['app.chooseSavePath']>[0];
 
 /** The desktop implementation of `HostCapabilities`: the native dialogs, shell, clipboard, notifications, theme and window zoom. */
 export class ElectronHost implements HostCapabilities {
-  constructor(private readonly getWindow: () => BrowserWindow | null) {}
+  constructor(
+    private readonly getWindow: () => BrowserWindow | null,
+    private readonly openAppWindow: (repoId: string | null) => void = () => {
+      throw new Error('Opening another window is not available here.');
+    },
+  ) {}
 
   appVersion(): string {
     return app.getVersion();
@@ -70,5 +76,13 @@ export class ElectronHost implements HostCapabilities {
     const next = direction === 'reset' ? 0 : Math.max(-3, Math.min(4, current + (direction === 'in' ? 0.5 : -0.5)));
     win.webContents.setZoomLevel(next);
     return next;
+  }
+
+  async openWindow(repoId: string | null): Promise<void> {
+    this.openAppWindow(repoId);
+  }
+
+  setMenuShortcuts(overrides: AppSettings['shortcuts']): void {
+    refreshMenuShortcuts(overrides);
   }
 }

@@ -4,7 +4,7 @@
   "steps": [
     { "wait": 1500 },
     {
-      "js": "(async () => { window.__gitgood.actions.openDialog({ kind: 'export-settings' }); await new Promise((r) => setTimeout(r, 300)); const text = document.body.textContent || ''; const d = window.__gitgood.store.get().dialog; return JSON.stringify({ dialogKind: d && d.kind, hasChecklist: text.includes('Repository list') && text.includes('Integrations'), hasExclusionNote: text.includes('never includes your API key') }); })()",
+      "js": "(async () => { window.__gitgood.actions.openDialog({ kind: 'export-settings' }); for (let i = 0; i < 40 && !(document.body.textContent || '').includes('never includes your API key'); i++) await new Promise((r) => setTimeout(r, 50)); const text = document.body.textContent || ''; const d = window.__gitgood.store.get().dialog; return JSON.stringify({ dialogKind: d && d.kind, hasChecklist: text.includes('Repository list') && text.includes('Integrations'), hasExclusionNote: text.includes('never includes your API key') }); })()",
       "dump": "export-dialog.json"
     },
     { "shot": "export-dialog.png" },

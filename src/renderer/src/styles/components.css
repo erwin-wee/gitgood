@@ -796,6 +796,27 @@
 .commit-row:active .commit-drag-handle {
   cursor: grabbing;
 }
+/* Commit graph gutter (HistoryTab GraphGutter): one fixed-height svg per row, bled over the row's vertical padding so lines join between rows. Hidden on phone layouts, where rows grow. */
+.commit-row .commit-graph {
+  flex: none;
+  margin: -6px 0 -6px -4px;
+  overflow: visible;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.commit-graph .graph-c0 { stroke: #2f81f7; color: #2f81f7; }
+.commit-graph .graph-c1 { stroke: #d1672e; color: #d1672e; }
+.commit-graph .graph-c2 { stroke: #2da44e; color: #2da44e; }
+.commit-graph .graph-c3 { stroke: #a371f7; color: #a371f7; }
+.commit-graph .graph-c4 { stroke: #d4a72c; color: #d4a72c; }
+.commit-graph .graph-c5 { stroke: #e5534b; color: #e5534b; }
+.commit-graph .graph-c6 { stroke: #1b9aaa; color: #1b9aaa; }
+.commit-graph .graph-c7 { stroke: #bf4b8a; color: #bf4b8a; }
+.commit-graph circle[class] {
+  fill: currentColor;
+  stroke: none;
+}
 .commit-row .unpushed {
   color: var(--fg-muted);
 }
@@ -1459,6 +1480,9 @@
   }
   /* HTML drag-and-drop doesn't reach touch reliably, and long-press opens the commit menu; reorder via the rebase dialog instead. */
   .commit-row .commit-drag-handle {
+    display: none;
+  }
+  .commit-row .commit-graph {
     display: none;
   }
 

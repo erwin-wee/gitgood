@@ -24,6 +24,7 @@ export async function createBackend(store: Store, tools: ToolLocator, feature: A
   const settings = store.getSettings().ai;
   if (settings.provider === 'disabled') throw new AiError('AI features are turned off. Enable them in Options → AI.', 'not-configured');
   if (settings.provider === 'claude-cli') {
+    await tools.ensure('claudeCli');
     const path = tools.claudePath();
     if (!path) throw new AiError('Claude Code CLI was not found. Install it or switch to an Anthropic API key in Options → AI.', 'not-configured');
     return { backend: withUsage(new ClaudeCliBackend(path, await tools.env()), feature), settings };

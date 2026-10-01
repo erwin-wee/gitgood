@@ -28,6 +28,10 @@ export interface HostCapabilities {
   setTheme(theme: AppSettings['theme']): void;
   /** Applies a zoom step and returns the resulting zoom level. */
   zoom(direction: 'in' | 'out' | 'reset'): number;
+  /** Opens another application window, showing repository `repoId` (none when null). Desktop only. */
+  openWindow(repoId: string | null): Promise<void>;
+  /** Rebuilds the native application menu with these shortcut overrides. Desktop only; a no-op elsewhere. */
+  setMenuShortcuts(overrides: AppSettings['shortcuts']): void;
 }
 
 /** Thrown by `WebHost` for capabilities with no safe web equivalent; surfaces as a typed `unsupported` IPC error. */

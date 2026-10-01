@@ -9,6 +9,7 @@ import { ElectronHost } from './host/electron-host';
 import { sendEvent } from './ipc';
 import { ensureManagedServer, readUnit } from './local-server';
 import { log } from './logger';
+import { refreshMenuShortcuts } from './menu';
 import type { Store } from './store';
 import { compareVersions } from './update/update-core';
 import type { Updater } from './update/updater';
@@ -172,6 +173,7 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
       await host.openExternal(url);
     },
     'app.notify': (title, body) => host.notify(title, body),
+    'app.setShortcuts': async (overrides) => refreshMenuShortcuts(overrides),
     'app.zoom': async (direction) => {
       const next = host.zoom(direction);
       store.updateState({ zoomLevel: next });

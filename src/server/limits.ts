@@ -13,7 +13,7 @@ export function isMutating(method: string): boolean {
  * minutes (network, AI reviews/triage): holding the repository lock through
  * them would stall every commit or stage on that repository meanwhile.
  */
-const LONG_READ_ONLY = /^(git\.(fetch|push)|ai\.review\.(start|startWorktree|post)|ai\.triage\.run)$/;
+const LONG_READ_ONLY = /^(git\.(fetch|push|pushStack)|ai\.review\.(start|startWorktree|post)|ai\.triage\.run)$/;
 
 /** Whether a mutation must hold its repository's lock (`KeyedMutex`). */
 export function locksRepo(method: string): boolean {

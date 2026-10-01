@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, join, normalize, resolve } from 'node:path';
 import type { EventPayloads } from '@shared/ipc';
-import { repositoryOrigin, type GitHubRepoRef, type RepositoryInfo, type RepoWork } from '@shared/types';
+import { repositoryOrigin, type GitHubRepoRef, type RepositoryInfo, type RepoPrefs, type RepoWork } from '@shared/types';
 import { mapWithConcurrency, parseRemoteUrl } from '@shared/util';
 import { getBranches } from '../git/branches';
 import { currentClient } from '../core/client-context';
@@ -447,12 +447,17 @@ export class RepositoryManager {
     this.send('repos.changed', await this.list(false));
   }
 
-  /** Machine-local list/commit prefs; only the keys present in `prefs` change (a blank group clears it). */
-  async setPrefs(id: string, prefs: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'>): Promise<void> {
-    const patch: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'> = {};
+  /** Machine-local list/commit/account prefs; only the keys present in `prefs` change (a blank group, or a null/malformed githubAccount, clears it). */
+  async setPrefs(id: string, prefs: RepoPrefs): Promise<void> {
+    const patch: Partial<RepositoryInfo> = {};
     if (prefs.pinned !== undefined) patch.pinned = prefs.pinned === true || undefined;
     if (prefs.group !== undefined) patch.group = typeof prefs.group === 'string' ? prefs.group.trim().slice(0, 60) || undefined : undefined;
     if (prefs.signoff !== undefined) patch.signoff = prefs.signoff === true || undefined;
+    if (prefs.githubAccount !== undefined) {
+      // host and login end up in gh/git argv and a git config key: plain hostname / login characters only.
+      const a = prefs.githubAccount;
+      patch.githubAccount = a && /^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(a.host) && /^\w[\w.-]*$/.test(a.login) ? { host: a.host, login: a.login } : undefined;
+    }
     this.store.saveRepositories(this.store.getRepositories().map((r) => (r.id === id ? { ...r, ...patch } : r)));
     this.send('repos.changed', await this.list(false));
   }
@@ -548,6 +553,11 @@ export class RepositoryManager {
     if (!repoPath) return;
     this.watching.delete(owner);
     this.stopIfUnwanted(repoPath);
+  }
+
+  /** The clients (see core/client-context) currently showing `repoPath`. */
+  clientsWatching(repoPath: string): string[] {
+    return [...this.watching].filter(([, path]) => path === repoPath).map(([owner]) => owner);
   }
 
   /** Stops watching `repoPath` for every client (the repository was removed). */

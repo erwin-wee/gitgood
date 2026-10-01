@@ -23,6 +23,7 @@ import type {
   SettingsSyncStateName,
 } from '@shared/types';
 import { DEFAULT_SETTINGS } from '@shared/types';
+import { sanitizeShortcutOverrides } from '@shared/shortcuts';
 
 export const SETTINGS_EXPORT_SCHEMA = 1;
 export const GIST_DESCRIPTION = 'GitGood settings';
@@ -64,10 +65,12 @@ const PREFERENCE_KEYS = {
   healthLargeFileThresholdBytes: true,
   showUnpushedWorkIndicator: true,
   historyVerifySignatures: true,
+  historyGraph: true,
   notificationsEnabled: true,
   notificationsPollIntervalMinutes: true,
   notifyMentions: true,
   notifyReviewRequests: true,
+  shortcuts: true,
   ai: true,
 } satisfies Record<keyof PortablePreferences, true>;
 
@@ -117,6 +120,7 @@ const BOOLEAN_PREFERENCE_KEYS = new Set<keyof PortablePreferences>([
   'blameIgnoreWhitespace',
   'showUnpushedWorkIndicator',
   'historyVerifySignatures',
+  'historyGraph',
   'notificationsEnabled',
   'notifyMentions',
   'notifyReviewRequests',
@@ -252,6 +256,14 @@ function validatePreferences(raw: unknown): { value: Partial<PortablePreferences
       warnings.push(...aiWarnings);
       continue;
     }
+    if (k === 'shortcuts') {
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const shortcuts = sanitizeShortcutOverrides(v);
+        if (Object.keys(shortcuts).length < Object.keys(v).length) warnings.push('preferences.shortcuts: unknown actions or invalid shortcuts, ignored');
+        value.shortcuts = shortcuts;
+      } else warnings.push(`preferences.${key}: expected an object, ignored`);
+      continue;
+    }
     if (BOOLEAN_PREFERENCE_KEYS.has(k)) {
       if (typeof v === 'boolean') (value as Record<string, unknown>)[k] = v;
       else warnings.push(`preferences.${key}: expected a boolean, ignored`);
@@ -384,6 +396,8 @@ export function buildPreferencesPatch(current: AppSettings, incoming: Partial<Po
   const { ai: incomingAi, ...incomingRest } = incoming;
   const patch: Partial<AppSettings> = { ...baseRest, ...incomingRest };
   patch.ai = { ...current.ai, ...baseAi, ...(incomingAi ?? {}) } as AiSettings;
+  // Merge overlays per action so shortcuts the file does not mention keep their local binding.
+  if (mode === 'merge' && incomingRest.shortcuts) patch.shortcuts = { ...current.shortcuts, ...incomingRest.shortcuts };
   return patch;
 }
 
@@ -515,7 +529,7 @@ function countPatchChanges(current: AppSettings, patch: Partial<AppSettings>): n
       if (patchAi) for (const ak of Object.keys(patchAi) as (keyof AiSettings)[]) if (JSON.stringify(current.ai[ak]) !== JSON.stringify(patchAi[ak])) changes++;
       continue;
     }
-    if ((current as unknown as Record<string, unknown>)[key] !== (patch as Record<string, unknown>)[key]) changes++;
+    if (JSON.stringify((current as unknown as Record<string, unknown>)[key]) !== JSON.stringify((patch as Record<string, unknown>)[key])) changes++;
   }
   return changes;
 }

@@ -6,6 +6,8 @@ import type {
   AppInfo,
   AppSettings,
   Branch,
+  BisectState,
+  BranchStack,
   BlameHunk,
   BlameResult,
   CheckRun,
@@ -84,8 +86,10 @@ import type {
   ReleaseRangeQuery,
   ReleaseRangeResult,
   Remote,
+  ReflogEntry,
   RepositoryChangedEvent,
   RepositoryInfo,
+  RepoPrefs,
   RepositoryScanProgress,
   RepositoryScanResult,
   PortableIntegrations,
@@ -108,6 +112,7 @@ import type {
   Submodule,
   SubmoduleState,
   Tag,
+  UndoPlan,
   ToolsState,
   UncommittedChangesStrategy,
   AiResolveProgressEvent,
@@ -154,6 +159,8 @@ export interface HistoryOptions {
   query?: HistoryQuery | null;
   /** Adds signature placeholders to the log format and populates Commit.signature. Slower on large histories; default false. */
   verifySignatures?: boolean;
+  /** Lists commits in `--date-order` (never a parent before all its children) so the History graph's lanes can be computed incrementally. Only the unfiltered listing needs it; ignored for searches. */
+  graph?: boolean;
 }
 
 export type OperationOutcome = { status: 'complete' | 'conflicts' | 'up-to-date' | 'nothing' };
@@ -191,13 +198,20 @@ export interface ApiMethods {
   'app.joinPath': (...parts: string[]) => Promise<string>;
   'app.log': (level: 'info' | 'warn' | 'error', message: string) => Promise<void>;
   'app.zoom': (direction: 'in' | 'out' | 'reset') => Promise<number>;
+  /** Desktop only: rebuilds the application menu with these shortcut overrides (a no-op in the browser, which has no menu). */
+  'app.setShortcuts': (overrides: AppSettings['shortcuts']) => Promise<void>;
+  /** Desktop only: opens another window showing repository `repoId` (a blank window when null). */
+  'app.newWindow': (repoId: string | null) => Promise<void>;
   'app.notify': (title: string, body: string) => Promise<void>;
   'app.moveToTrash': (path: string) => Promise<void>;
 
   'gh.auth.status': () => Promise<GitHubAccount | null>;
   'gh.auth.login': (host: string) => Promise<{ ok: boolean; error: string | null }>;
   'gh.auth.cancelLogin': () => Promise<void>;
-  'gh.auth.logout': (host: string) => Promise<void>;
+  /** Signs out one account (`login`), or the host's active account when omitted. */
+  'gh.auth.logout': (host: string, login?: string) => Promise<void>;
+  /** Makes `login` the account gh uses by default on `host`. */
+  'gh.auth.switch': (host: string, login: string) => Promise<void>;
   'gh.auth.setupGit': () => Promise<void>;
   /** Requests additional OAuth scopes through the device-flow sign-in (reuses the Sign-in dialog's code UI); used to grant the `notifications` scope from the Inbox panel. */
   'gh.auth.refreshScopes': (scopes: string[]) => Promise<{ ok: boolean; error: string | null }>;
@@ -254,8 +268,8 @@ export interface ApiMethods {
   'repos.setAlias': (id: string, alias: string | null) => Promise<void>;
   /** Machine-local "Disable AI for this repository" toggle; every `ai.*` call for the repository is then refused in main. */
   'repos.setAiDisabled': (id: string, disabled: boolean) => Promise<void>;
-  /** Machine-local per-repository prefs (pin, custom group, commit sign-off); only the fields given are changed. */
-  'repos.setPrefs': (id: string, prefs: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'>) => Promise<void>;
+  /** Machine-local per-repository prefs (pin, custom group, commit sign-off, GitHub account); only the fields given are changed. */
+  'repos.setPrefs': (id: string, prefs: RepoPrefs) => Promise<void>;
   'repos.refreshIndicators': () => Promise<RepositoryInfo[]>;
 
   /** Scans every watched folder; resolves with `alreadyRunning` when one is in flight. */
@@ -276,6 +290,7 @@ export interface ApiMethods {
   'repo.status': (repoPath: string) => Promise<RepositoryStatus>;
   'repo.branches': (repoPath: string) => Promise<Branch[]>;
   'repo.defaultBranch': (repoPath: string) => Promise<string | null>;
+  'repo.stack': (repoPath: string) => Promise<BranchStack>;
   'repo.tags': (repoPath: string) => Promise<Tag[]>;
   'repo.remotes': (repoPath: string) => Promise<Remote[]>;
   'repo.stashes': (repoPath: string) => Promise<Stash[]>;
@@ -292,6 +307,12 @@ export interface ApiMethods {
   'repo.commitTemplate': (repoPath: string) => Promise<{ summary: string; description: string } | null>;
   'repo.stash.files': (repoPath: string, stashRef: string) => Promise<CommitFile[]>;
   'repo.stash.resolveRef': (repoPath: string, sha: string) => Promise<string | null>;
+  /** HEAD's reflog, newest first (the "Undo history" dialog). */
+  'repo.reflog': (repoPath: string) => Promise<ReflogEntry[]>;
+  /** What "Undo last Git operation" would do, or null when there is nothing to undo. */
+  'repo.undoPlan': (repoPath: string) => Promise<UndoPlan | null>;
+  /** The running bisect, or null. */
+  'repo.bisect': (repoPath: string) => Promise<BisectState | null>;
   'repo.compare': (repoPath: string, base: string, head: string) => Promise<{ ahead: Commit[]; behind: Commit[] }>;
   'repo.readFile': (repoPath: string, path: string) => Promise<string>;
   'repo.writeFile': (repoPath: string, path: string, content: string) => Promise<void>;
@@ -343,7 +364,10 @@ export interface ApiMethods {
   'git.merge': (repoPath: string, branch: string, squash: boolean) => Promise<OperationOutcome>;
   'git.merge.abort': (repoPath: string) => Promise<void>;
   'git.merge.continue': (repoPath: string) => Promise<OperationOutcome>;
-  'git.rebase': (repoPath: string, onto: string) => Promise<OperationOutcome>;
+  /** `updateRefs` adds `--update-refs`: branches stacked on the current one move along with it. */
+  'git.rebase': (repoPath: string, onto: string, updateRefs?: boolean) => Promise<OperationOutcome>;
+  /** Force-pushes (with lease) the current branch and the stack below it; resolves with the pushed branch names. */
+  'git.pushStack': (repoPath: string) => Promise<string[]>;
   /** `unsigned` retries the paused step with `-c commit.gpgsign=false`, for the "Commit unsigned this time" recovery from a signing-failed dialog. Never persists a config change. */
   'git.rebase.continue': (repoPath: string, unsigned?: boolean) => Promise<OperationOutcome>;
   'git.rebase.skip': (repoPath: string) => Promise<OperationOutcome>;
@@ -388,6 +412,12 @@ export interface ApiMethods {
   'git.remote.prune': (repoPath: string, remote: string) => Promise<void>;
   'git.gc': (repoPath: string, aggressive: boolean) => Promise<void>;
   'git.reflog.expire': (repoPath: string) => Promise<void>;
+  /** `git reset --keep <sha>`; `stashFirst` stashes local changes (untracked included) beforehand. Throws `local-changes-overwritten` when git refuses to keep them. */
+  'git.resetKeep': (repoPath: string, sha: string, stashFirst: boolean) => Promise<void>;
+  'git.bisect.start': (repoPath: string, bad: string, good: string) => Promise<void>;
+  /** `sha` null marks the commit currently checked out for testing. */
+  'git.bisect.mark': (repoPath: string, verb: 'good' | 'bad' | 'skip', sha: string | null) => Promise<void>;
+  'git.bisect.reset': (repoPath: string) => Promise<void>;
   'app.operations.cancel': (id: string) => Promise<void>;
 
   /** `checkOutput`, when given, is the single allowed "Ask AI to fix" retry after a failed post-resolution check; `original` is the failed run's true pre-resolution conflicted content, since the file on disk no longer has markers at retry time. */
