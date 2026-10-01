@@ -1,7 +1,7 @@
 import { access, constants, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join, normalize } from 'node:path';
-import type { GhAccountEntry, GitHubAccount, ToolInfo, ToolsState } from '@shared/types';
+import type { GhAccountEntry, GitHubAccount, RepositoryInfo, ToolInfo, ToolsState } from '@shared/types';
 import { compareVersions, MIN_TOOL_VERSIONS } from '@shared/util';
 import { repoScope } from './core/client-context';
 import { exec } from './exec';
@@ -123,6 +123,9 @@ export class ToolLocator {
   private readonly accountTokens = new Map<string, Promise<string>>();
 
   constructor(private readonly store: Store) {}
+
+  /** The repository whose machine-local policy governs a path; the entry points swap in `RepositoryManager.policyRepo` so linked worktrees follow their main repository. */
+  policyRepo: (repoPath: string) => Promise<RepositoryInfo | null> = async (repoPath) => this.store.getRepositories().find((r) => samePath(r.path, repoPath)) ?? null;
 
   /** Called with the new state whenever a probe or the auth read settles (renderers get it as `tools.changed`). */
   onChange(listener: (state: ToolsState) => void): void {
@@ -325,7 +328,7 @@ export class ToolLocator {
    */
   async repoAccount(repoPath: string | null | undefined): Promise<{ host: string; token: string } | null> {
     const path = repoPath ?? repoScope.getStore();
-    const chosen = path ? this.store.getRepositories().find((r) => samePath(r.path, path))?.githubAccount : undefined;
+    const chosen = path ? (await this.policyRepo(path))?.githubAccount : undefined;
     if (!chosen) return null;
     const key = `${chosen.host}\0${chosen.login}`;
     let token = this.accountTokens.get(key);

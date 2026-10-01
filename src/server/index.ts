@@ -195,6 +195,7 @@ async function main(): Promise<void> {
   const busy = new Set<string>();
 
   const repos = new RepositoryManager(store, git, bus.emit);
+  tools.policyRepo = (repoPath) => repos.policyRepo(repoPath);
   configureUsage(config.userData);
   const resolver = new ConflictResolver(store, tools, git);
   const review = new ReviewService(store, tools, git, gh, repos, config.userData);

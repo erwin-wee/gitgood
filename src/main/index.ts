@@ -198,6 +198,7 @@ if (backgroundServer) {
     const git = new GitClient(tools);
     const gh = new GhClient(tools);
     const repos = new RepositoryManager(store, git, bus.emit);
+    tools.policyRepo = (repoPath) => repos.policyRepo(repoPath);
     configureUsage(userData);
     const resolver = new ConflictResolver(store, tools, git);
     const review = new ReviewService(store, tools, git, gh, repos, userData);

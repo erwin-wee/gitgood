@@ -99,7 +99,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
 
   // One chokepoint for the per-repository AI opt-out: the local toggle (Repositories menu) or `"ai": false` in .gitgood/config.json.
   guardAiHandlers(handlers as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>, async (repoPath) => {
-    if (repos.getByPath(repoPath)?.aiDisabled) return 'AI is turned off for this repository on this machine. Turn it back on from the repository list menu.';
+    if ((await repos.policyRepo(repoPath))?.aiDisabled) return 'AI is turned off for this repository on this machine. Turn it back on from the repository list menu.';
     if (!(await readRepoConfig(repoPath)).ai) return 'AI is turned off for this repository by "ai": false in .gitgood/config.json.';
     return null;
   });

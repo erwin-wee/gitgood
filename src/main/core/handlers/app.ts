@@ -10,6 +10,7 @@ import { getLogPath, log } from '../../logger';
 import { canonicalPath } from '../../repo/paths';
 import { sanitizeWatchedFolders } from '../../repo/watched-folders';
 import { canInstall } from '../../update/update-core';
+import type { OperationKind } from '@shared/types';
 import type { ApiMethods } from '@shared/ipc';
 import { operationControllers, type HandlerContext } from './context';
 
@@ -125,13 +126,21 @@ export function appHandlers(ctx: HandlerContext) {
       if (state.status === 'available') await host.openExternal(state.url);
     },
     'app.update.install': async () => {
-      const currentId = store.getState().currentRepositoryId;
-      const repo = currentId ? repos.get(currentId) : null;
-      const operationKind = repo ? (await freshStatus(repo.path)).operation.kind : 'none';
-      const gate = canInstall({ operationKind, aiActive: resolver.isActive() || review.isActive() || triage.isActive() || prDraft.isActive() || releaseNotes.isActive() || explain.isActive() || errorExplain.isActive() || splitter.isActive() || rebasePlan.isActive() || nlPalette.isActive() });
-      if (!gate.ok) throw new Error(gate.reason);
-      // Reopen the same repository after the relaunch an install causes.
-      if (repo) store.updateState({ currentRepositoryId: repo.id });
+      // Every repository any client (desktop window or server client) has open, not just the last one opened.
+      const kinds: OperationKind[] = [];
+      for (const path of repos.openPaths().filter((p) => existsSync(p))) {
+        try {
+          kinds.push((await freshStatus(path)).operation.kind);
+        } catch (err) {
+          throw new Error(`Cannot install: could not check ${path} for an operation in progress (${(err as Error).message}).`);
+        }
+      }
+      const aiActive = resolver.isActive() || review.isActive() || triage.isActive() || prDraft.isActive() || releaseNotes.isActive() || explain.isActive() || errorExplain.isActive() || splitter.isActive() || rebasePlan.isActive() || nlPalette.isActive();
+      for (const operationKind of kinds.length ? kinds : (['none'] as const)) {
+        const gate = canInstall({ operationKind, aiActive });
+        if (!gate.ok) throw new Error(gate.reason);
+      }
+      // The last-opened repository (state.currentRepositoryId, set by repo.open) is what a relaunch reopens.
       await updater.quitAndInstall();
     },
     'app.update.dismiss': async (version) => updater.dismiss(version),

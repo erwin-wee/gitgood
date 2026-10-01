@@ -12,7 +12,7 @@ import { getGitDir, getStatus, getStatusIndicator } from '../git/status';
 import { getCommonDir, getMainWorktreePath, listWorktrees } from '../git/worktree';
 import { log } from '../logger';
 import type { Store } from '../store';
-import { canonicalPath, isInside, normalizePath } from './paths';
+import { canonicalPath, isInside, normalizePath, samePath } from './paths';
 import { RepositoryWatcher } from './watcher';
 
 const normalizeForCompare = normalizePath;
@@ -66,6 +66,11 @@ export function repositoryId(path: string): string {
   return createHash('sha1').update(normalized).digest('hex').slice(0, 16);
 }
 
+/** A linked worktree's own controls for these are disabled: it follows its main repository's machine-local AI opt-out and GitHub account. */
+function withMainPolicy<T extends RepositoryInfo>(repo: T, main: RepositoryInfo | undefined): T {
+  return main ? { ...repo, aiDisabled: main.aiDisabled, githubAccount: main.githubAccount } : repo;
+}
+
 export class RepositoryManager {
   private watchers = new Map<string, RepositoryWatcher>();
   private githubCache = new Map<string, GitHubRepoRef | null>();
@@ -90,7 +95,31 @@ export class RepositoryManager {
     if (fresh) this.invalidateWorktrees();
     const stored = this.store.getRepositories().map((r) => ({ ...r, missing: !existsSync(r.path) }));
     const derived = await this.deriveWorktreeChildren(stored);
-    return [...stored, ...derived].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    const mains = new Map(stored.map((r) => [r.id, r]));
+    return [...stored, ...derived].map((r) => withMainPolicy(r, r.worktreeOf ? mains.get(r.worktreeOf) : undefined)).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  }
+
+  /**
+   * The repository whose machine-local policy (GitHub account, AI opt-out) governs `repoPath`: its own
+   * entry, or for a linked worktree, registered or only known to git, its main repository's. Null when
+   * `repoPath` is not (a worktree of) a registered repository.
+   */
+  async policyRepo(repoPath: string): Promise<RepositoryInfo | null> {
+    const repos = this.store.getRepositories();
+    const own = repos.find((r) => samePath(r.path, repoPath));
+    if (own) return own.worktreeOf ? (repos.find((r) => r.id === own.worktreeOf) ?? own) : own;
+    // ponytail: one `git rev-parse` per call for an unregistered path; cache if derived worktrees get hot.
+    try {
+      const mainPath = await getMainWorktreePath(this.git, repoPath);
+      return mainPath ? (repos.find((r) => samePath(r.path, mainPath)) ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The repository paths some client (desktop window or server client) currently has open. */
+  openPaths(): string[] {
+    return [...new Set(this.watching.values())];
   }
 
   /** `git worktree list` output per main repository, cached briefly so that event-driven list(false) calls are not a git run per repository each time. */
@@ -500,7 +529,7 @@ export class RepositoryManager {
     const info = (await this.getOrAdd(path));
     this.touch(info.id);
     await this.watch(info.path);
-    return { ...info, github: await this.detectGitHub(info.path) };
+    return withMainPolicy({ ...info, github: await this.detectGitHub(info.path) }, info.worktreeOf ? this.get(info.worktreeOf) ?? undefined : undefined);
   }
 
   private async getOrAdd(path: string): Promise<RepositoryInfo> {
