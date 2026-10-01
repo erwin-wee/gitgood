@@ -12,7 +12,7 @@ import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { buildReleaseNotes, collectPrNumbers } from './release-notes-core';
 import { buildReleaseNotesPrompt, RELEASE_NOTES_SCHEMA, releaseNotesSystemPrompt, type ReleaseNotesPromptCommit, type ReleaseNotesPromptPr } from './prompts';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 
 /** Pull request numbers beyond this many in one range are not looked up (spec: "capped at 100"). */
@@ -31,17 +31,17 @@ export type ReleaseNotesReporter = (phase: ReleaseNotesProgressPhase, message: s
  * actions (see repo.changelog.insert and GhClient.releaseCreate).
  */
 export class ReleaseNotesService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient, private readonly gh: GhClient, private readonly repos: RepositoryManager) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a generation is in flight; used by the update install gate to refuse installing mid-generation. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   /** Pull request numbers referenced in a range, fetched (title/labels/author/url) up to MAX_PR_LOOKUPS with PR_LOOKUP_CONCURRENCY in flight; empty when `includePrs` is off, there is no GitHub remote, or the user is not signed in. */
@@ -74,8 +74,7 @@ export class ReleaseNotesService {
   }
 
   async generate(repoPath: string, input: ReleaseNotesInput, report: ReleaseNotesReporter): Promise<ReleaseNotes> {
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     const signal = controller.signal;
     try {
       report('started', 'Reading commits…');
@@ -120,7 +119,7 @@ export class ReleaseNotesService {
       if (!signal.aborted) report('error', message);
       throw err;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 }

@@ -11,7 +11,7 @@ import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { buildSplitPrompt, SPLIT_SCHEMA, SPLIT_SYSTEM_PROMPT, type SplitPromptHunkInput } from './prompts';
 import { annotateHunks } from './review-core';
@@ -39,17 +39,17 @@ interface ClassifiedIncluded {
  * calls the model.
  */
 export class SplitterService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a plan proposal is in flight; used by the update-install gate. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   private async fileHash(repoPath: string, path: string): Promise<string> {
@@ -137,8 +137,7 @@ export class SplitterService {
     if (hunks.length + wholeFileOnlyPaths.length < 2) throw new AiError('At least two hunks or whole files are needed to split into commits.', 'other');
 
     const { backend, settings: aiSettings } = await createBackend(this.store, this.tools, 'split');
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     try {
       let bytes = 0;
       for (const fileHunks of hunksByFile.values()) bytes += annotateHunks(fileHunks).length;
@@ -159,7 +158,7 @@ export class SplitterService {
       log.info(`AI split plan ${plan.id}: ${commits.length} commit(s) from ${hunks.length} hunk(s)/${wholeFileOnlyPaths.length} whole file(s) via ${backend.name}/${response.model}`);
       return plan;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 

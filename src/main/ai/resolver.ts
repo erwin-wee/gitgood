@@ -15,7 +15,7 @@ import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError, type AiBackend } from './backends';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { buildCommitMessagePrompt, buildResolvePrompt, COMMIT_MESSAGE_SCHEMA, COMMIT_MESSAGE_SYSTEM_PROMPT, RESOLUTION_SCHEMA, RESOLVE_SYSTEM_PROMPT } from './prompts';
 
@@ -68,9 +68,9 @@ async function readConflictFile(repoPath: string, path: string): Promise<string>
 }
 
 export class ConflictResolver {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
   /** Commit-message generation is cancelled on its own (`ai.cancel('commitMessage')`), never by a conflict-resolution cancel. */
-  private commitController: AbortController | null = null;
+  private readonly commitJobs = new ClientJobs();
   /** Manual resolutions recorded for the current operation, keyed by repository path, most recent first. Cleared once the repository's operation ends (see getExamplePaths) or on app exit (in-memory only, never persisted). */
   private examples = new Map<string, ManualResolutionExample[]>();
 
@@ -81,14 +81,12 @@ export class ConflictResolver {
   }
 
   cancel(feature: 'resolver' | 'commitMessage' = 'resolver'): void {
-    if (feature === 'commitMessage') {
-      if (cancelOwned(this.commitController)) this.commitController = null;
-    } else if (cancelOwned(this.controller)) this.controller = null;
+    (feature === 'commitMessage' ? this.commitJobs : this.jobs).cancel();
   }
 
   /** True while a resolve/resolveAll run is in flight; used by the update install gate to refuse installing mid-resolution. */
   isActive(): boolean {
-    return this.controller !== null || this.commitController !== null;
+    return this.jobs.isActive() || this.commitJobs.isActive();
   }
 
   async test(): Promise<{ ok: boolean; message: string }> {
@@ -242,49 +240,61 @@ export class ConflictResolver {
   }
 
   async resolve(repoPath: string, path: string, report: ProgressReporter, checkOutput?: { command: string; tail: string; original: string }): Promise<ConflictResolutionResult> {
-    this.controller = ownedController();
-    const status = await getStatus(this.git, repoPath);
-    const file = status.files.find((f) => f.path === path);
-    return this.resolveFile(repoPath, path, report, this.controller.signal, file, { checkOutput });
+    const job = this.jobs.start();
+    try {
+      const status = await getStatus(this.git, repoPath);
+      const file = status.files.find((f) => f.path === path);
+      return await this.resolveFile(repoPath, path, report, job.signal, file, { checkOutput });
+    } finally {
+      this.jobs.end(job);
+    }
   }
 
   async resolveAll(repoPath: string, report: ProgressReporter): Promise<ConflictResolutionResult[]> {
-    this.controller = ownedController();
-    const signal = this.controller.signal;
-    const status = await getStatus(this.git, repoPath);
-    const conflicted = status.files.filter((f) => f.conflict !== null);
-    const results: ConflictResolutionResult[] = [];
-    // Resolve a few files concurrently; each request is independent.
-    const concurrency = 3;
-    let index = 0;
-    const worker = async () => {
-      while (index < conflicted.length && !signal.aborted) {
-        const file = conflicted[index++];
-        results.push(await this.resolveFile(repoPath, file.path, report, signal, file));
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(concurrency, conflicted.length) }, worker));
-    return results.sort((a, b) => a.path.localeCompare(b.path));
+    const job = this.jobs.start();
+    const signal = job.signal;
+    try {
+      const status = await getStatus(this.git, repoPath);
+      const conflicted = status.files.filter((f) => f.conflict !== null);
+      const results: ConflictResolutionResult[] = [];
+      // Resolve a few files concurrently; each request is independent.
+      const concurrency = 3;
+      let index = 0;
+      const worker = async () => {
+        while (index < conflicted.length && !signal.aborted) {
+          const file = conflicted[index++];
+          results.push(await this.resolveFile(repoPath, file.path, report, signal, file));
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(concurrency, conflicted.length) }, worker));
+      return results.sort((a, b) => a.path.localeCompare(b.path));
+    } finally {
+      this.jobs.end(job);
+    }
   }
 
   /** Resolves every remaining conflicted file, guided by the manual resolutions recorded for this operation (see recordExample). */
   async resolveAllGuided(repoPath: string, report: ProgressReporter): Promise<ConflictResolutionResult[]> {
-    this.controller = ownedController();
-    const signal = this.controller.signal;
-    const status = await getStatus(this.git, repoPath);
-    const conflicted = status.files.filter((f) => f.conflict !== null);
-    const examples = capExamples(await this.getExamples(repoPath));
-    const results: ConflictResolutionResult[] = [];
-    const concurrency = 3;
-    let index = 0;
-    const worker = async () => {
-      while (index < conflicted.length && !signal.aborted) {
-        const file = conflicted[index++];
-        results.push(await this.resolveFile(repoPath, file.path, report, signal, file, { examples }));
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(concurrency, conflicted.length) }, worker));
-    return results.sort((a, b) => a.path.localeCompare(b.path));
+    const job = this.jobs.start();
+    const signal = job.signal;
+    try {
+      const status = await getStatus(this.git, repoPath);
+      const conflicted = status.files.filter((f) => f.conflict !== null);
+      const examples = capExamples(await this.getExamples(repoPath));
+      const results: ConflictResolutionResult[] = [];
+      const concurrency = 3;
+      let index = 0;
+      const worker = async () => {
+        while (index < conflicted.length && !signal.aborted) {
+          const file = conflicted[index++];
+          results.push(await this.resolveFile(repoPath, file.path, report, signal, file, { examples }));
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(concurrency, conflicted.length) }, worker));
+      return results.sort((a, b) => a.path.localeCompare(b.path));
+    } finally {
+      this.jobs.end(job);
+    }
   }
 
   /** Records a manual resolution (edited by hand, or via per-block side selection) as a worked example for the rest of this operation. Silently ignored when `original` has no parseable conflict blocks. */
@@ -360,8 +370,7 @@ export class ConflictResolver {
     const files = selected.filter((f) => !secretFileReason(f.path));
     if (!files.length) throw new AiError(`Every selected file looks like it holds secrets, so nothing was sent to the AI (${skipped.join('; ')}).`, 'other');
     const { patch, truncated, stat } = await getPatchForFiles(this.git, repoPath, files, 120_000);
-    const controller = ownedController();
-    this.commitController = controller;
+    const controller = this.commitJobs.start();
     let response;
     try {
       response = await backend.complete({
@@ -373,7 +382,7 @@ export class ConflictResolver {
         signal: controller.signal,
       });
     } finally {
-      if (this.commitController === controller) this.commitController = null;
+      this.commitJobs.end(controller);
     }
     const json = response.json as { summary?: unknown; description?: unknown };
     const summary = typeof json.summary === 'string' ? json.summary.trim().replace(/\.$/, '') : '';

@@ -19,7 +19,7 @@ import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { evaluatePlan, type NlPolicyContext, type RawNlPlan, type RawNlStep } from './nlPolicy';
 import { buildNlPalettePrompt, NL_PALETTE_SCHEMA, NL_PALETTE_SYSTEM_PROMPT, type NlPalettePromptContext } from './prompts';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs, currentClient } from '../core/client-context';
 import { createBackend } from './provider';
 
 const RISKS: NlRisk[] = ['safe', 'changes-history', 'discards-work', 'touches-remote'];
@@ -166,35 +166,35 @@ const EXECUTABLE_ACTIONS = new Set<keyof ApiMethods>([
 ]);
 
 export class NlPaletteService {
-  private controller: AbortController | null = null;
-  /** One request (plan or run) at a time per repository, per spec.md/design.md. */
+  private readonly jobs = new ClientJobs();
+  /** One request (plan or run) at a time per client and repository; another client on the same repository is independent. */
   private busy = new Set<string>();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   isActive(): boolean {
-    return this.controller !== null || this.busy.size > 0;
+    return this.jobs.isActive() || this.busy.size > 0;
   }
 
   private async withBusy<T>(repoPath: string, fn: () => Promise<T>): Promise<T> {
-    if (this.busy.has(repoPath)) throw new AiError('Another command palette request is already running for this repository.', 'other');
-    this.busy.add(repoPath);
+    const key = `${currentClient()}\0${repoPath}`;
+    if (this.busy.has(key)) throw new AiError('Another command palette request is already running for this repository.', 'other');
+    this.busy.add(key);
     try {
       return await fn();
     } finally {
-      this.busy.delete(repoPath);
+      this.busy.delete(key);
     }
   }
 
   async plan(repoPath: string, request: string, priorQuestion: string | null, answer: string | null): Promise<NlPlan> {
     return this.withBusy(repoPath, async () => {
       const { backend, settings } = await createBackend(this.store, this.tools, 'nlPalette');
-      const controller = ownedController();
-      this.controller = controller;
+      const controller = this.jobs.start();
       try {
         const { policy, prompt } = await gatherContext(this.git, repoPath);
         const response = await backend.complete({
@@ -210,7 +210,7 @@ export class NlPaletteService {
         const clarifyingQuestion = evaluated.tooManySteps ? 'That request needs more than 8 steps; try splitting it into smaller requests.' : evaluated.clarifyingQuestion;
         return { id: newId(), request, steps: evaluated.steps, clarifyingQuestion, model: response.model };
       } finally {
-        if (this.controller === controller) this.controller = null;
+        this.jobs.end(controller);
       }
     });
   }

@@ -23,7 +23,7 @@ import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { budgetCommitPatches, capCommitsForPlanning, REBASE_MAX_PATCH_BYTES_PER_COMMIT, type OriginalCommitInfo, validateRebasePlan } from './rebase-plan-core';
 import { buildRebasePlanPrompt, REBASE_PLAN_SCHEMA, REBASE_PLAN_SYSTEM_PROMPT, type RebasePlanPromptCommit } from './prompts';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 
 function newPlanId(): string {
@@ -31,18 +31,18 @@ function newPlanId(): string {
 }
 
 export class RebasePlanService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
   private readonly applier = new RebaseApplyService();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a plan proposal is in flight; used by the update-install gate alongside the other AI services. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   hasPendingApply(repoPath: string): boolean {
@@ -178,8 +178,7 @@ export class RebasePlanService {
     }));
 
     const { backend, settings: aiSettings } = await createBackend(this.store, this.tools, 'rebase');
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     try {
       const currentBranchLabel = currentBranch ?? 'HEAD';
       const response = await backend.complete({
@@ -196,7 +195,7 @@ export class RebasePlanService {
       log.info(`AI rebase plan ${plan.id} for ${repoPath}: ${plan.rows.length} row(s), ${plan.warnings.length} warning(s), via ${backend.name}/${response.model}${includedShas.size < oldestFirst.length ? ` (${includedShas.size}/${oldestFirst.length} commits sent)` : ''}`);
       return plan;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 

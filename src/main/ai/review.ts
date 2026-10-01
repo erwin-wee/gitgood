@@ -21,7 +21,7 @@ import type { RepositoryManager } from '../repo/manager';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { EXPORT_DIR_SEGMENTS, LATEST_JSON, RUNS_DIR, buildExportJson, exportFileNames, renderExportMarkdown, serializeExport, type ExportPlatform, type ReviewExport } from './review-export';
 import { buildPrecommitFilePrompt, buildPrecommitSummaryPrompt, buildReviewFilePrompt, buildReviewSummaryPrompt, PRECOMMIT_SUMMARY_SCHEMA, PRECOMMIT_SUMMARY_SYSTEM_PROMPT, precommitReviewSystemPrompt, REVIEW_FILE_SCHEMA, REVIEW_SUMMARY_SCHEMA, REVIEW_SUMMARY_SYSTEM_PROMPT, reviewSystemPrompt, type PrecommitPromptContext, type ReviewPromptContext } from './prompts';
@@ -91,18 +91,18 @@ function newRunId(): string {
  * diff, persists runs per head SHA, and posts reviews to GitHub on request.
  */
 export class ReviewService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
   private diffCache = new Map<string, DiffSet>();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient, private readonly gh: GhClient, private readonly repos: RepositoryManager, private readonly userDataDir: string) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a review run is in flight; used by the update install gate to refuse installing mid-review. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   // ---------- storage ----------
@@ -518,17 +518,15 @@ export class ReviewService {
   }
 
   async start(repoPath: string, input: ReviewTarget, opts: ReviewStartOptions, report: (e: AiReviewProgressEvent) => void): Promise<ReviewRun> {
-    this.controller?.abort();
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     // `finally`, not a tail assignment: anything that throws on the way (AI
     // disabled, an unknown base branch, gh failing) would otherwise leave the
-    // controller set, so `isActive()` stays true for the rest of the process
+    // job listed, so `isActive()` stays true for the rest of the process
     // and blocks installing an update forever.
     try {
       return await this.runReview(repoPath, input, opts, report, controller);
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 
@@ -770,13 +768,11 @@ export class ReviewService {
   }
 
   async startWorktree(repoPath: string, opts: WorktreeReviewOptions, report: (e: AiReviewProgressEvent) => void): Promise<ReviewRun> {
-    this.controller?.abort();
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     try {
       return await this.runWorktreeReview(repoPath, opts, report, controller);
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 

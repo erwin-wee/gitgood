@@ -11,7 +11,7 @@ import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError, type AiBackend } from './backends';
 import { buildTriagePrompt, TRIAGE_SCHEMA, TRIAGE_SYSTEM_PROMPT, type TriagePromptPr } from './prompts';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { stableHash } from './review-core';
 import { BATCH_SIZE, evictTriageCache, splitBatches, validateTriageBatch, type TriageBatchResult } from './triage-core';
@@ -26,17 +26,17 @@ const MAX_FILE_STATS = 50;
  * `updatedAt` changes. See review.ts for the sibling orchestration pattern.
  */
 export class TriageService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly gh: GhClient, private readonly repos: RepositoryManager, private readonly userDataDir: string) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a triage run is in flight; used by the update install gate to refuse installing mid-run. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   // ---------- storage ----------
@@ -136,9 +136,7 @@ export class TriageService {
    * Returns the full, updated cache for the repository.
    */
   async run(repoPath: string, numbers: number[], report: (e: AiTriageProgressEvent) => void): Promise<Record<number, PrTriage>> {
-    this.controller?.abort();
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     const signal = controller.signal;
     try {
       const { backend, settings } = await createBackend(this.store, this.tools, 'triage');
@@ -188,7 +186,7 @@ export class TriageService {
       log.info(`AI triage for ${repoPath}: ${wanted.length} pull request(s) requested via ${backend.name}/${modelFor(settings, 'triage')}`);
       return cache;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 }

@@ -19,7 +19,7 @@ import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { buildExplainFollowUpPrompt, buildExplainPrompt, EXPLAIN_FOLLOWUP_SCHEMA, EXPLAIN_FOLLOWUP_SYSTEM_PROMPT, EXPLAIN_SCHEMA, EXPLAIN_SYSTEM_PROMPT, type ExplainFilePromptInput } from './prompts';
 import { buildRangeContext, explainCacheKey, indexNewSideLines, isVolatileExplainTarget, markSelectedRange, splitPatchByFile, validateExplanation, validateFollowUpAnswer } from './explain-core';
@@ -45,18 +45,18 @@ interface PromptResult {
 }
 
 export class ExplainService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
   private cache = new Map<string, Map<string, CacheEntry>>();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while an explanation or follow-up is in flight; used by the update install gate alongside the resolver/review services. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   private cacheFor(repoPath: string): Map<string, CacheEntry> {
@@ -82,8 +82,7 @@ export class ExplainService {
     if (cached && !volatile) return cached.explanation;
 
     const { backend, settings } = await createBackend(this.store, this.tools, 'explain');
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     try {
       const built = await this.buildPrompt(repoPath, target);
       // The prompt embeds the file's content, so an unchanged working tree
@@ -104,7 +103,7 @@ export class ExplainService {
       log.info(`AI explain (${target.kind}) via ${backend.name}/${explanation.model}: ${droppedReferences} reference(s) dropped${built.truncated ? ', input truncated' : ''}`);
       return explanation;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 
@@ -123,8 +122,7 @@ export class ExplainService {
     }
 
     const { backend, settings } = await createBackend(this.store, this.tools, 'explain');
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     try {
       const response = await backend.complete({
         system: EXPLAIN_FOLLOWUP_SYSTEM_PROMPT,
@@ -138,7 +136,7 @@ export class ExplainService {
       if (!answer) throw new AiError('The model returned an empty answer.', 'invalid-output');
       return answer;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 

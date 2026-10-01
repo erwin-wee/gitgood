@@ -24,7 +24,7 @@ import {
   templateCheckboxLabels,
 } from './pr-draft-core';
 import { buildPrDraftPrompt, PR_DRAFT_SCHEMA, PR_DRAFT_SYSTEM_PROMPT, type PrDraftPromptCommit, type PrDraftPromptIssue } from './prompts';
-import { cancelOwned, ownedController } from '../core/client-context';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { stripFences } from './review-core';
 
@@ -45,17 +45,17 @@ export type PrDraftReporter = (phase: PrDraftProgressPhase, message: string) => 
  * (see pr-draft-core.ts), and never creates the pull request itself.
  */
 export class PrDraftService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient, private readonly gh: GhClient, private readonly repos: RepositoryManager) {}
 
   cancel(): void {
-    if (cancelOwned(this.controller)) this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a draft is in flight; used by the update install gate to refuse installing mid-draft. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   private async resolveBaseRef(repoPath: string, base: string): Promise<string | null> {
@@ -65,8 +65,7 @@ export class PrDraftService {
   }
 
   async draft(repoPath: string, input: PrDraftInput, report: PrDraftReporter): Promise<PrDraft> {
-    const controller = ownedController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     const signal = controller.signal;
     try {
       report('started', 'Reading commits and diff…');
@@ -165,7 +164,7 @@ export class PrDraftService {
       if (!signal.aborted) report('error', message);
       throw err;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 }

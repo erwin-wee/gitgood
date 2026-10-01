@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAnthropicParams } from '../src/main/ai/backends';
 import { addUsage, configureUsage, readUsage, recordUsage, type UsageLog } from '../src/main/ai/usage';
 import { writeRepoFile } from '../src/main/repo/paths';
-import { cancelOwned, clientContext, ownedController } from '../src/main/core/client-context';
 import { createHandlers, type HandlerDeps } from '../src/main/core/handlers';
 
 const u = (input: number, output: number, cacheRead = 0, cacheWrite = 0, costUsd: number | null = null) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, costUsd });
@@ -89,17 +88,6 @@ describe('ai.cancel', () => {
     expect(deps.review.cancel).not.toHaveBeenCalled();
     expect(deps.explain.cancel).not.toHaveBeenCalled();
     expect(deps.nlPalette.cancel).not.toHaveBeenCalled();
-  });
-
-  it("does not abort another client's job", () => {
-    const a = clientContext.run('a', () => ownedController());
-    const b = clientContext.run('b', () => ownedController());
-    expect(clientContext.run('a', () => cancelOwned(b))).toBe(false);
-    expect(b.signal.aborted).toBe(false);
-    expect(clientContext.run('b', () => cancelOwned(b))).toBe(true);
-    expect(b.signal.aborted).toBe(true);
-    expect(a.signal.aborted).toBe(false);
-    expect(cancelOwned(null)).toBe(false);
   });
 });
 

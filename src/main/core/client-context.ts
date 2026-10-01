@@ -26,18 +26,35 @@ export function scopeRepoHandlers(handlers: Record<string, (...args: unknown[]) 
   }
 }
 
-const controllerOwners = new WeakMap<AbortController, string>();
+/**
+ * The outstanding jobs of one AI feature, each tagged with the client that started it, so one client's
+ * start/cancel never touches another client's job. A job stays listed until its own `end` (call it from
+ * `finally`), so `isActive` also covers a job that was aborted but has not unwound yet.
+ */
+export class ClientJobs {
+  private readonly jobs = new Map<AbortController, string>();
 
-/** An AbortController tagged with the client that started the job, so `cancelOwned` can leave other clients' jobs alone. */
-export function ownedController(): AbortController {
-  const controller = new AbortController();
-  controllerOwners.set(controller, currentClient());
-  return controller;
-}
+  /** Starts the calling client's job; its earlier job of this feature is aborted (replaced). Read `signal` from the returned controller, never from shared state. */
+  start(): AbortController {
+    this.cancel();
+    const job = new AbortController();
+    this.jobs.set(job, currentClient());
+    return job;
+  }
 
-/** Aborts `controller` if the calling client started it; returns whether it did. */
-export function cancelOwned(controller: AbortController | null): boolean {
-  if (!controller || controllerOwners.get(controller) !== currentClient()) return false;
-  controller.abort();
-  return true;
+  /** Aborts the calling client's jobs. */
+  cancel(): void {
+    const client = currentClient();
+    for (const [job, owner] of this.jobs) if (owner === client) job.abort();
+  }
+
+  /** Forgets a finished job. */
+  end(job: AbortController): void {
+    this.jobs.delete(job);
+  }
+
+  /** True while any client's job (including an aborted one still unwinding) is outstanding. */
+  isActive(): boolean {
+    return this.jobs.size > 0;
+  }
 }
