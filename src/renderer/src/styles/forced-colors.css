@@ -1,0 +1,101 @@
+/* Windows High Contrast / forced-colors: the browser replaces our palette with system colours, dropping backgrounds
+   tints and box-shadows. Selection, focus, buttons, badges and diff markers that rely on those must be restated with
+   system colours and borders/outlines/text to stay distinguishable. Imported last so it wins ties. */
+@media (forced-colors: active) {
+  /* Selected rows and the active tab. */
+  .list-row.selected,
+  .file-row.selected,
+  .commit-row.selected {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .list-row.selected *,
+  .file-row.selected *,
+  .commit-row.selected * {
+    color: HighlightText;
+  }
+  .tab.active,
+  .tabbar-item.active {
+    border-bottom-color: Highlight;
+    text-decoration: underline;
+  }
+
+  /* Focus rings: box-shadow rings vanish, so use real outlines. A selected row is filled with Highlight, so its ring flips to HighlightText. */
+  .commit-row:focus-visible,
+  .file-row:focus-visible,
+  .list-row:focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+  .commit-row.selected:focus-visible,
+  .file-row.selected:focus-visible,
+  .list-row.selected:focus-visible {
+    outline-color: HighlightText;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  .commit-files-resizer:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+  .inbox-item.focused {
+    outline-color: Highlight;
+  }
+  .sidebar-resizer:hover,
+  .sidebar-resizer.active,
+  .commit-files-resizer:hover,
+  .commit-files-resizer.active {
+    background: Highlight;
+  }
+
+  /* Buttons and badges: tinted fills are gone, so give each a visible border; emphasis buttons use the Highlight border. */
+  .btn {
+    border-color: ButtonText;
+  }
+  .btn.primary,
+  .btn.accent {
+    border-color: Highlight;
+    border-width: 2px;
+  }
+  .btn.ghost {
+    border-color: transparent;
+  }
+  .btn.ghost:hover:not(:disabled) {
+    border-color: Highlight;
+  }
+  .btn.link {
+    color: LinkText;
+  }
+  .btn:disabled {
+    color: GrayText;
+    border-color: GrayText;
+  }
+  .badge {
+    border: 1px solid CanvasText;
+  }
+
+  /* Diff: the +/− marker characters carry meaning in unified view; split view (no marker) and word highlights get borders/underlines. */
+  table.diff .marker {
+    color: CanvasText;
+    font-weight: 700;
+  }
+  table.diff.unified tr.add .code,
+  table.diff .code.add-code {
+    border-left: 3px solid LinkText;
+  }
+  table.diff.unified tr.delete .code,
+  table.diff .code.del-code {
+    border-left: 3px dashed CanvasText;
+  }
+  table.diff .word-add {
+    text-decoration: underline;
+  }
+  table.diff .word-del {
+    text-decoration: line-through;
+  }
+  table.diff tr.selected-line .code {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

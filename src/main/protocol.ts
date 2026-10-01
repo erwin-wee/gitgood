@@ -8,8 +8,8 @@
 
 export type ProtocolAction =
   | { kind: 'open-repo'; url: string; branch: string | null; filepath: string | null }
-  /** Re-run the most recent AI review for the repository at `repoPath` (decoded, native path). */
-  | { kind: 'review-rerun'; repoPath: string };
+  /** Re-run the most recent AI review for the repository at `repoPath` (decoded, native path). `token` is the per-run secret from the exported link, or null when the link has none. */
+  | { kind: 'review-rerun'; repoPath: string; token: string | null };
 
 export function parseProtocolUrl(raw: string): ProtocolAction | null {
   const text = raw.trim();
@@ -17,16 +17,19 @@ export function parseProtocolUrl(raw: string): ProtocolAction | null {
   if (rerun) {
     // Decoded by hand rather than with URLSearchParams, which reads '+' as a
     // space; '+' is a legal character in a path on every platform.
-    const raw = rerun[1].split('&').map((p) => p.split('=')).find((p) => p[0] === 'repo')?.[1];
-    if (raw === undefined) return null;
-    let repoPath: string;
-    try {
-      repoPath = decodeURIComponent(raw).trim();
-    } catch {
-      return null;
-    }
+    const params = rerun[1].split('&').map((p) => p.split('='));
+    const decode = (key: string): string | null | undefined => {
+      const value = params.find((p) => p[0] === key)?.[1];
+      if (value === undefined) return undefined;
+      try {
+        return decodeURIComponent(value).trim();
+      } catch {
+        return null;
+      }
+    };
+    const repoPath = decode('repo');
     if (!repoPath) return null;
-    return { kind: 'review-rerun', repoPath };
+    return { kind: 'review-rerun', repoPath, token: decode('token') || null };
   }
   const m = /^(?:x-github-client|github-windows|github-mac|gitgood):\/\/openRepo\/(.+)$/i.exec(text);
   if (!m) return null;

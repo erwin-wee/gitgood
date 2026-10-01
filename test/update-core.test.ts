@@ -161,8 +161,12 @@ describe('detectDisabledReason', () => {
     expect(detectDisabledReason({ ...packaged, platform: 'darwin' })).toMatch(/unsigned/i);
   });
 
-  it('allows a packaged, non-portable, non-AppImage, non-macOS build through', () => {
-    expect(detectDisabledReason(packaged)).toBeNull();
+  it('disables a packaged Linux run that is not an AppImage (.deb)', () => {
+    expect(detectDisabledReason(packaged)).toMatch(/\.deb/);
+  });
+
+  it('allows a packaged Windows build through', () => {
+    expect(detectDisabledReason({ ...packaged, platform: 'win32' })).toBeNull();
   });
 });
 

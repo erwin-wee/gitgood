@@ -40,7 +40,7 @@ import { findShells, openShell, openShellWithCommand } from '../integrations/she
 import { getLogPath, log } from '../logger';
 import { readRepoConfig } from '../repo/config';
 import type { RepositoryManager } from '../repo/manager';
-import { canonicalPath } from '../repo/paths';
+import { assertInsideRepo, canonicalPath } from '../repo/paths';
 import { addWatchedFolder, folderProblem, sanitizeWatchedFolders, type WatchedFolderScanner } from '../repo/watched-folders';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
@@ -554,9 +554,14 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'repo.stash.files': async (repoPath, stashRef) => getStashFiles(git, repoPath, stashRef),
     'repo.stash.resolveRef': async (repoPath, sha) => ops.resolveStashRef(git, repoPath, sha),
     'repo.compare': async (repoPath, base, head) => compareRefs(git, repoPath, base, head),
-    'repo.readFile': async (repoPath, path) => readFile(toFsPath(repoPath, path), 'utf8'),
+    'repo.readFile': async (repoPath, path) => {
+      const fsPath = toFsPath(repoPath, path);
+      await assertInsideRepo(repoPath, fsPath);
+      return readFile(fsPath, 'utf8');
+    },
     'repo.writeFile': async (repoPath, path, content) => {
       const fsPath = toFsPath(repoPath, path);
+      await assertInsideRepo(repoPath, fsPath);
       await mkdir(dirname(fsPath), { recursive: true });
       await writeFile(fsPath, content, 'utf8');
     },
@@ -853,10 +858,12 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       const trust = store.getRepoConfigTrust(repoPath, command);
       return { command, trustState: trust === true ? 'trusted' : trust === false ? 'declined' : 'unknown' };
     },
-    'repo.trustConfig': async (repoPath, trusted) => {
-      // Bind the decision to the command that was shown in the confirmation, so a later change to .gitgood/config.json re-prompts.
-      const command = (await readRepoConfig(repoPath)).postResolveCheck;
+    'repo.trustConfig': async (repoPath, trusted, command) => {
+      // A grant is bound to the command the user was shown. If the file changed since, refuse and report the current command so the renderer re-prompts.
+      const current = (await readRepoConfig(repoPath)).postResolveCheck;
+      if (trusted && current !== command) return { ok: false, command: current };
       store.setRepoConfigTrust(repoPath, trusted, command);
+      return { ok: true };
     },
     'ai.cancel': async () => {
       resolver.cancel();
@@ -880,6 +887,7 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'ai.review.applySuggestion': async (repoPath, runId, findingId) => review.applySuggestion(repoPath, runId, findingId),
     'ai.review.latest': async (repoPath) => review.latest(repoPath),
     'ai.review.exportPath': async (repoPath, runId) => review.exportPath(repoPath, runId),
+    'ai.review.consumeRerunToken': async (repoPath, token) => review.consumeRerunToken(repoPath, token),
     'ai.review.fixWithAgent': async (repoPath, runId) => {
       const settings = store.getSettings();
       const template = agentTemplate(settings.ai);

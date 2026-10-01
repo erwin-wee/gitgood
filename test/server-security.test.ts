@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import { describe, expect, it } from 'vitest';
+import { createHandlers, type HandlerDeps } from '../src/main/core/handlers';
 import { hostOk, identityOk, loadOrCreateToken, offendingPath, originOk, pathArgs, safeEqual, tokenOk } from '../src/server/security';
 
 function req(headers: Record<string, string>, url = '/invoke'): IncomingMessage {
@@ -109,5 +110,22 @@ describe('token persistence', () => {
     expect(first).toHaveLength(64); // 32 bytes hex
     expect(readFileSync(file, 'utf8').trim()).toBe(first);
     expect(loadOrCreateToken(file, dir)).toBe(first);
+  });
+});
+
+describe('repo.readFile / repo.writeFile path confinement', () => {
+  it('refuse a "../" or absolute file path even when the repository path is allowed', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'gg-readfile-'));
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    writeFileSync(join(base, 'secret.txt'), 'outside');
+    writeFileSync(join(repo, 'ok.txt'), 'inside');
+    const { dispatch } = createHandlers({ emit: () => {}, nlPalette: { setDispatcher: () => {} } } as unknown as HandlerDeps);
+    expect(await dispatch('repo.readFile', [repo, 'ok.txt'])).toMatchObject({ ok: true, value: 'inside' });
+    expect(await dispatch('repo.readFile', [repo, '../secret.txt'])).toMatchObject({ ok: false });
+    expect(await dispatch('repo.readFile', [repo, join(base, 'secret.txt')])).toMatchObject({ ok: false });
+    expect(await dispatch('repo.writeFile', [repo, '../pwned.txt', 'x'])).toMatchObject({ ok: false });
+    expect(existsSync(join(base, 'pwned.txt'))).toBe(false);
+    rmSync(base, { recursive: true, force: true });
   });
 });

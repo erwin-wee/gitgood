@@ -857,13 +857,29 @@
   min-height: 0;
 }
 .commit-files {
-  width: min(280px, 32%);
+  position: relative;
+  width: var(--commit-files-width, min(280px, 32%));
   min-width: 160px;
+  max-width: 60%;
   flex: 0 0 auto;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+.commit-files-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.commit-files-resizer:hover,
+.commit-files-resizer.active,
+.commit-files-resizer:focus-visible {
+  background: var(--accent-muted);
 }
 .commit-files .changes-header {
   font-weight: 500;
@@ -1464,9 +1480,13 @@
   .commit-body {
     flex-direction: column;
   }
+  .commit-files-resizer {
+    display: none;
+  }
   .app[data-view='history'][data-pane='detail'] .commit-files {
     width: 100%;
     min-width: 0;
+    max-width: none;
     flex: 1;
     border-right: none;
   }
@@ -1830,6 +1850,9 @@
     max-height: 30%;
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+  .commit-files-resizer {
+    display: none;
   }
   #commit-diff-slot {
     min-height: 0;

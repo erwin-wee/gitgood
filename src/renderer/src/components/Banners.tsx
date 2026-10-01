@@ -3,6 +3,7 @@ import type { UpdateState } from '@shared/types';
 import { formatRelativeTime } from '@shared/util';
 import * as actions from '../state/actions';
 import { openDialog, store, useAppStore } from '../state/store';
+import { on } from '../api';
 import { Button, Icon, Spinner } from './ui';
 
 function lfsInstallHint(platform: string): string {
@@ -81,6 +82,36 @@ function CheckFailedBanner(): React.JSX.Element | null {
   );
 }
 
+/** Event-socket state of a browser tab or remote-server session (see src/server/web-bridge.ts); null while healthy. */
+function useServerBanner(): React.JSX.Element | null {
+  const [connected, setConnected] = useState(true);
+  const [updatedTo, setUpdatedTo] = useState<string | null>(null);
+  useEffect(() => {
+    const offs = [on('server.connection', (p) => setConnected(p.connected)), on('server.updated', (p) => setUpdatedTo(p.version))];
+    return () => offs.forEach((off) => off());
+  }, []);
+  if (!connected) {
+    return (
+      <div key="server-connection" className="banner danger" role="status">
+        <Spinner />
+        <span className="banner-text"><strong>Reconnecting to server…</strong> Changes made elsewhere will appear once the connection is back.</span>
+      </div>
+    );
+  }
+  if (updatedTo) {
+    return (
+      <div key="server-updated" className="banner info" role="status">
+        <Icon name="download" />
+        <span className="banner-text"><strong>GitGood server was updated to {updatedTo}.</strong> Reload to use the new version.</span>
+        <span className="banner-actions">
+          <Button size="sm" variant="primary" onClick={() => window.location.reload()}>Reload</Button>
+        </span>
+      </div>
+    );
+  }
+  return null;
+}
+
 export function Banners(): React.JSX.Element | null {
   const status = useAppStore((s) => s.status);
   const repo = useAppStore((s) => s.currentRepo);
@@ -117,7 +148,8 @@ export function Banners(): React.JSX.Element | null {
   }, [dismissedLfsRepo, repo?.path, showLfsBanner]);
 
   const update = updateBanner(updateState);
-  if (!repo || !status) return update ? <div className="banner-stack">{update}</div> : null;
+  const serverBanner = useServerBanner();
+  if (!repo || !status) return update || serverBanner ? <div className="banner-stack">{serverBanner}{update}</div> : null;
   const banners: React.ReactNode[] = [];
   const op = status.operation;
 
@@ -227,5 +259,6 @@ export function Banners(): React.JSX.Element | null {
   }
 
   if (update) banners.push(update);
+  if (serverBanner) banners.unshift(serverBanner);
   return banners.length ? <div className="banner-stack">{banners}</div> : null;
 }

@@ -15,13 +15,15 @@ async function withScenario(rules: Parameters<typeof createStubScenario>[0], fn:
 }
 
 describe('GhClient gist wrappers (settings sync) against the gh stub', () => {
-  it('gistFind matches by description in a gists listing', async () => {
+  it('gistFind matches a secret gist by description and file in a gists listing', async () => {
+    const files = { 'gitgood-settings.json': {} };
     const raw = [
-      { id: 'aaa', description: 'Something else', updated_at: '2026-01-01T00:00:00Z' },
-      { id: 'bbb', description: 'GitGood settings', updated_at: '2026-02-01T00:00:00Z' },
+      { id: 'aaa', description: 'Something else', public: false, files, updated_at: '2026-01-01T00:00:00Z' },
+      { id: 'pub', description: 'GitGood settings', public: true, files, updated_at: '2026-03-01T00:00:00Z' },
+      { id: 'bbb', description: 'GitGood settings', public: false, files, updated_at: '2026-02-01T00:00:00Z' },
     ];
     await withScenario([{ match: 'gists', stdout: JSON.stringify(raw) }], async (client, scenario) => {
-      const found = await client.gistFind('GitGood settings');
+      const found = await client.gistFind('GitGood settings', 'gitgood-settings.json');
       expect(found).toEqual({ id: 'bbb', updatedAt: '2026-02-01T00:00:00Z' });
       const log = await readStubLog(scenario.logPath);
       expect(log[0].args).toEqual(['api', 'gists', '--paginate']);
@@ -30,7 +32,7 @@ describe('GhClient gist wrappers (settings sync) against the gh stub', () => {
 
   it('gistFind returns null when no gist matches the description', async () => {
     await withScenario([{ match: 'gists', stdout: '[]' }], async (client) => {
-      expect(await client.gistFind('GitGood settings')).toBeNull();
+      expect(await client.gistFind('GitGood settings', 'gitgood-settings.json')).toBeNull();
     });
   });
 
@@ -66,9 +68,9 @@ describe('GhClient gist wrappers (settings sync) against the gh stub', () => {
     });
   });
 
-  it('gistMetadata returns updatedAt for an existing gist', async () => {
-    await withScenario([{ match: ['api', 'gists/abc123'], stdout: JSON.stringify({ updated_at: '2026-03-01T00:00:00Z' }) }], async (client) => {
-      expect(await client.gistMetadata('abc123')).toEqual({ updatedAt: '2026-03-01T00:00:00Z' });
+  it('gistMetadata returns updatedAt and visibility for an existing gist', async () => {
+    await withScenario([{ match: ['api', 'gists/abc123'], stdout: JSON.stringify({ updated_at: '2026-03-01T00:00:00Z', public: false }) }], async (client) => {
+      expect(await client.gistMetadata('abc123')).toEqual({ updatedAt: '2026-03-01T00:00:00Z', public: false });
     });
   });
 

@@ -90,7 +90,7 @@ export async function bootstrap(): Promise<void> {
   });
   on('menu.action', ({ action, args }) => {
     if (action === 'protocol-open') void handleProtocolOpen(args as { url: string; branch: string | null; filepath: string | null });
-    else if (action === 'protocol-review-rerun') void handleProtocolReviewRerun(args as { repoPath: string });
+    else if (action === 'protocol-review-rerun') void handleProtocolReviewRerun(args as { repoPath: string; token: string | null });
     else void handleMenuAction(action, args);
   });
   on('gh.auth.code', ({ code, url }) => store.set((s) => ({ login: { ...s.login, code, url } })));
@@ -676,18 +676,20 @@ async function ensureCheckTrustPrompted(repoPath: string): Promise<void> {
     return;
   }
   if (!info.command || info.trustState !== 'unknown') return;
-  const command = info.command;
-  await new Promise<void>((resolvePromise) => {
-    openDialog({
-      kind: 'trust-repo-check',
-      repoPath,
-      command,
-      onDecision: (accept) => {
-        closeDialog();
-        void invoke('repo.trustConfig', repoPath, accept).finally(resolvePromise);
-      },
+  let command: string | null = info.command;
+  // Re-prompt with the new command whenever the file changed while the dialog was open (repo.trustConfig refuses a grant for a command the user was not shown).
+  while (command) {
+    const shown: string = command;
+    const accept = await new Promise<boolean>((resolvePromise) => {
+      openDialog({ kind: 'trust-repo-check', repoPath, command: shown, onDecision: (a) => { closeDialog(); resolvePromise(a); } });
     });
-  });
+    try {
+      const result = await invoke('repo.trustConfig', repoPath, accept, shown);
+      command = result.ok ? null : result.command;
+    } catch {
+      return;
+    }
+  }
 }
 
 export function dismissCheckBanner(): void {

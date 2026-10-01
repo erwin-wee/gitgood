@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { RepositoryStatus } from '../src/shared/types';
 import { FIX_ACTIONS, getFixAction, riskMax } from '../src/main/ai/fixActions';
-import { checkLockFileGuard, extractRemoteHost, isSafeCopyCommand, scrubAndTail, scrubSecrets, tailText, validateErrorExplanation, validateFixes } from '../src/main/ai/error-explain-core';
+import { checkLockFileGuard, extractRemoteHost, isSafeCopyCommand, scrubAndTail, tailText, validateErrorExplanation, validateFixes } from '../src/main/ai/error-explain-core';
+import { scrubSecrets } from '../src/shared/secrets';
 
 function status(overrides: Partial<RepositoryStatus> = {}): RepositoryStatus {
   return {

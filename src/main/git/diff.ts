@@ -1,5 +1,5 @@
-import { readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, readlink } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import type { DiffOptions } from '@shared/ipc';
 import type { CommitFile, FileDiff, ImagePayload, WorkingFile } from '@shared/types';
 import { parseConflicts } from '@shared/diff/conflicts';
@@ -8,6 +8,7 @@ import { buildStagePatch, selectAll } from '@shared/diff/patch';
 import { imageMediaType, isImagePath, languageFromPath } from '@shared/util';
 import { EMPTY_TREE_SHA, type GitClient } from './git';
 import { isLfsPointerBuffer, readLfsObject } from './lfs';
+import { isInside, readRepoFile } from '../repo/paths';
 import { mergeBase, parseNameStatusZ } from './log';
 import { getGitDir } from './status';
 
@@ -19,8 +20,11 @@ const MAX_DIFF_LINES = 40_000;
 const MAX_CONTENT_BYTES = 1_500_000;
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
+/** Absolute filesystem path of a repo-relative git path. Throws for absolute paths and anything that resolves outside the repository (`../x`); callers that take the path from a client rely on this. */
 export function toFsPath(repoPath: string, gitPath: string): string {
-  return join(repoPath, ...gitPath.split('/'));
+  const fsPath = join(repoPath, ...gitPath.split('/'));
+  if (gitPath.startsWith('/') || isAbsolute(gitPath) || !isInside(repoPath, fsPath)) throw new Error(`Path is outside the repository: ${gitPath}`);
+  return fsPath;
 }
 
 export function looksBinary(buf: Buffer): boolean {
@@ -40,12 +44,12 @@ export async function readBlob(git: GitClient, repoPath: string, ref: string, pa
   return res ? res.stdoutBuffer : null;
 }
 
+/** Working-tree content with git semantics: a symlink reads as its link text (what git stores), never the file it points at. */
 export async function readWorktree(repoPath: string, path: string): Promise<Buffer | null> {
   try {
     const p = toFsPath(repoPath, path);
-    const s = await stat(p);
-    if (!s.isFile()) return null;
-    return await readFile(p);
+    if ((await lstat(p)).isSymbolicLink()) return Buffer.from(await readlink(p));
+    return await readRepoFile(repoPath, path);
   } catch {
     return null;
   }

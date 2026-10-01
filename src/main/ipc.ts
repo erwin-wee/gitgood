@@ -3,6 +3,7 @@ import type { ApiMethodName, EventPayloads } from '@shared/ipc';
 import { IPC_EVENT_CHANNEL, IPC_INVOKE_CHANNEL } from '@shared/ipc';
 import type { IpcResult } from '@shared/types';
 import { createHandlers, type HandlerDeps } from './core/handlers';
+import { appEntryUrl, isTrustedSender } from './app-url';
 
 export type { HandlerDeps } from './core/handlers';
 
@@ -15,5 +16,9 @@ export function sendEvent<K extends keyof EventPayloads>(win: BrowserWindow | nu
 /** Binds the Electron-free core dispatch to `ipcMain` for the desktop app. */
 export function registerIpc(deps: HandlerDeps): void {
   const { dispatch } = createHandlers(deps);
-  ipcMain.handle(IPC_INVOKE_CHANNEL, (_event, method: ApiMethodName, ...args: unknown[]): Promise<IpcResult<unknown>> => dispatch(method, args));
+  const entry = appEntryUrl();
+  ipcMain.handle(IPC_INVOKE_CHANNEL, (event, method: ApiMethodName, ...args: unknown[]): Promise<IpcResult<unknown>> => {
+    if (!isTrustedSender(event, entry)) throw new Error('IPC refused: sender is not the app window.');
+    return dispatch(method, args);
+  });
 }

@@ -37,7 +37,7 @@ import { auditLine, isMutating, KeyedMutex, locksRepo, mutationKey, RateLimiter 
 import { loadServerConfig, type ServerConfig } from './config';
 import { hostOk, identityOk, offendingPath, originOk, pathArgs, tokenOk } from './security';
 import { WebHost } from './web-host';
-import { BRIDGE_TAG, bridgeScript } from './web-bridge';
+import { BRIDGE_TAG, bridgeFetchAllowed, bridgeScript } from './web-bridge';
 import { WsHub } from './ws';
 
 const RELEASES_URL = 'https://github.com/erwin-wee/gitgood/releases';
@@ -332,7 +332,11 @@ async function main(): Promise<void> {
   const serveStatic = (req: IncomingMessage, res: ServerResponse): void => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (url.pathname === '/gitgood-bridge.js') {
-      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' }).end(bridgeScript(config.token, process.platform));
+      // The script embeds the token: a cross-site page must not be able to include it.
+      if (!bridgeFetchAllowed(req.headers['sec-fetch-site'])) return fail(res, 403, 'Cross-origin request rejected.');
+      res
+        .writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'Cross-Origin-Resource-Policy': 'same-origin' })
+        .end(bridgeScript(config.token, process.platform, config.version));
       return;
     }
     let decoded: string;
@@ -415,8 +419,9 @@ async function main(): Promise<void> {
   server.listen(config.port, config.host, () => {
     log.info(`GitGood server ${config.version} listening on http://${config.host}:${config.port}`);
     log.info(`Expose it on your tailnet with: tailscale serve --bg ${config.port}`);
-    if (config.tokenCreated) log.info(`Access token (shown once): ${config.token}`);
-    else log.info(`Access token stored at ${join(config.userData, 'server-token')}`);
+    // The token never goes through the logger (journal/log files are not secret stores): print it once to an interactive terminal, otherwise point at the 0600 file.
+    if (config.tokenCreated && process.stdout.isTTY) process.stdout.write(`Access token (shown once): ${config.token}\n`);
+    log.info(`Access token stored at ${join(config.userData, 'server-token')}`);
     if (config.allowedLogin) log.info(`Tailnet access allowed for ${config.allowedLogin}`);
     else log.warn('No Tailscale login to allow (set GITGOOD_ALLOWED_LOGIN): requests through tailscale serve are refused.');
   });

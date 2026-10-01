@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +10,7 @@ import { parseUnifiedDiffs } from '@shared/diff/parse';
 import { languageFromPath } from '@shared/util';
 import { isUnborn } from '../git/commit';
 import { buildTextDiff, getPatchForFiles, getRangeFileDiff, looksBinary, readBlobText, readWorktree, toFsPath } from '../git/diff';
+import { readRepoFile } from '../repo/paths';
 import { EMPTY_TREE_SHA, GitError, type GitClient } from '../git/git';
 import { getGitDir, getStatus } from '../git/status';
 import type { GhClient } from '../gh/gh';
@@ -138,6 +140,29 @@ export class ReviewService {
     return process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux';
   }
 
+  /** Rerun secrets minted for exported runs, by run id: memory only, so a restart invalidates every link already written to disk. */
+  private readonly rerunTokens = new Map<string, { repoPath: string; token: string }>();
+
+  /** The random per-run token embedded in the export's `gitgood://review/rerun` link; stable across rewrites of the same run until consumed. */
+  private rerunToken(run: ReviewRun): string {
+    let entry = this.rerunTokens.get(run.id);
+    if (!entry) {
+      entry = { repoPath: run.repoPath, token: randomBytes(16).toString('hex') };
+      this.rerunTokens.set(run.id, entry);
+    }
+    return entry.token;
+  }
+
+  /** True once for a token minted for `repoPath`'s export; the token is spent either way a caller uses it, so a leaked link cannot be replayed. */
+  consumeRerunToken(repoPath: string, token: string): boolean {
+    for (const [runId, entry] of this.rerunTokens) {
+      if (entry.token !== token || entry.repoPath !== repoPath) continue;
+      this.rerunTokens.delete(runId);
+      return true;
+    }
+    return false;
+  }
+
   private async readExport(file: string): Promise<ReviewExport | null> {
     try {
       return JSON.parse(await readFile(file, 'utf8')) as ReviewExport;
@@ -196,8 +221,9 @@ export class ReviewService {
     const names = exportFileNames(run.id);
     const previousRunId = await this.previousExportId(runsDir, run);
     const platform = ReviewService.exportPlatform();
-    const json = serializeExport(buildExportJson(run, previousRunId, platform));
-    const md = renderExportMarkdown(run, previousRunId, platform);
+    const rerunToken = this.rerunToken(run);
+    const json = serializeExport(buildExportJson(run, previousRunId, platform, rerunToken));
+    const md = renderExportMarkdown(run, previousRunId, platform, rerunToken);
     await this.writeExportFile(join(dir, ...names.json.split('/')), json);
     await this.writeExportFile(join(dir, ...names.md.split('/')), md);
     // Dismissing a finding on an older run re-exports it; that must not make it
@@ -434,17 +460,12 @@ export class ReviewService {
     const parts: string[] = [];
     let budget = MAX_GUIDELINE_CHARS;
     for (const c of candidates) {
-      const p = join(repoPath, ...c.split('/'));
-      if (!existsSync(p) || budget <= 0) continue;
-      try {
-        const text = (await readFile(p, 'utf8')).trim();
-        if (!text) continue;
-        const slice = text.slice(0, budget);
-        budget -= slice.length;
-        parts.push(`## ${c}\n${slice}`);
-      } catch {
-        /* unreadable */
-      }
+      if (budget <= 0) break;
+      const text = (await readRepoFile(repoPath, c))?.toString('utf8').trim();
+      if (!text) continue;
+      const slice = text.slice(0, budget);
+      budget -= slice.length;
+      parts.push(`## ${c}\n${slice}`);
     }
     return parts.length ? parts.join('\n\n') : null;
   }

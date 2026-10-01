@@ -3,15 +3,17 @@
 ## Building packages locally
 
 ```bash
-npm run dist:win   # produces release/<version>/GitGood-Setup-<version>.exe (NSIS installer)
+npm run dist:win   # produces release/<version>/GitGood-Setup-<version>.exe (one NSIS installer for x64 + arm64)
 ```
 
-`npm run dist:linux` builds an AppImage and `npm run dist:mac` a dmg/zip. Builds are unsigned; add your certificate configuration to `electron-builder.yml` for signed releases.
+`npm run dist:linux` builds an AppImage and a `.deb`, `npm run dist:mac` a universal (Intel + Apple silicon) dmg/zip. Local builds are unsigned unless the signing environment variables below are set.
 
 Packaging notes:
 
 - Build the Windows installer on Windows (`npm run dist:win`). Cross-building it from Linux/macOS also works but needs `wine` installed for electron-builder's NSIS step; without it you still get `release/<version>/win-unpacked/` (a runnable portable folder) but no `Setup.exe`.
-- A `.deb` target can be added back to `linux.target` in `electron-builder.yml`, but electron-builder's `fpm` needs `libcrypt.so.1` (`libxcrypt-compat` on Arch-based systems) on the build machine.
+- The `.deb` target uses electron-builder's `fpm`, which needs `libcrypt.so.1` (`libxcrypt-compat` on Arch-based systems) on the build machine.
+- The macOS universal build merges x64 and arm64 apps and is meant to be built on macOS.
+- Flathub and AUR packages are separate repositories (a Flathub manifest, a PKGBUILD); nothing here builds or publishes them.
 - The installer registers the `gitgood://` and `x-github-client://` URL schemes, so GitHub's "Open with GitHub Desktop" buttons open the repository in GitGood (or offer to clone it).
 
 ## Cutting a release
@@ -27,7 +29,7 @@ npm run release:tag                # tag main at package.json's version and push
 
 `prepare` refuses a version that does not move forward, a tag that already
 exists, or a dirty or diverged `main`; `tag` additionally refuses to run while the
-Test workflow on `main` is failing or unfinished (`--no-verify` skips that).
+Test workflow on `main` is failing, unfinished or for a different commit than `HEAD`. If `gh` cannot answer, `tag` refuses too; `--skip-ci-check` skips the check entirely.
 Both ask before doing anything; `--yes` answers for you.
 
 By hand it is a bump of `version` in `package.json`, merged to `main`, then a
@@ -37,7 +39,7 @@ tag matching it:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-`.github/workflows/release.yml` builds Windows/macOS/Linux in parallel and publishes the artifacts to a **draft** GitHub Release (`electron-builder.yml`'s `publish` block, `releaseType: draft`) — review the draft, add notes, and publish it manually from the Releases page.
+`.github/workflows/release.yml` builds Windows/macOS/Linux in parallel with read-only permissions (`--publish never`) and uploads the installers, blockmaps and `latest*.yml` as workflow artifacts. A separate `publish` job, the only one with `contents: write`, then creates (or reuses) the **draft** GitHub Release for the tag and uploads them — review the draft, add notes, and publish it manually from the Releases page. It refuses to touch a release that is already published. Every action in the workflows is pinned to a commit SHA (Dependabot keeps them current); when bumping one by hand, look the SHA up with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` (dereference annotated tags) and keep the `# vX.Y.Z` comment.
 
 The tag is what starts a release, so two things have to hold or the assets never arrive:
 
@@ -46,13 +48,18 @@ The tag is what starts a release, so two things have to hold or the assets never
 
 ## Auto-update
 
-Installed copies check the GitHub releases feed (via `electron-updater`) on launch and every 6 hours, download a newer eligible release in the background, and offer **Restart to update**. See `openspec/changes/add-auto-update` for the full design (channels, install gating, per-machine Windows installs, and what's still unverified end-to-end).
+Installed copies check the GitHub releases feed (via `electron-updater`) on launch and every 6 hours, download a newer eligible release in the background, and offer **Restart to update**. `.deb` installs are excluded on purpose (electron-updater would `dpkg -i` the download as root): they show *Updates are unavailable for system-package (.deb) installs* and update from the Releases page or a package manager. See `openspec/changes/add-auto-update` for the full design (channels, install gating, per-machine Windows installs, and what's still unverified end-to-end).
 
 ## Signing
 
-Releases are currently unsigned:
+`release.yml` passes these repository secrets to the build step, and electron-builder signs and notarizes only when they are set; with none set the build is unsigned, exactly as before:
 
-- **Windows** triggers a SmartScreen "unknown publisher" prompt on first run of a new version.
-- **macOS** Gatekeeper may refuse to open the `.dmg` outright without notarization.
+| Secret | Used for |
+| --- | --- |
+| `CSC_LINK` | Certificate (`.p12`/`.pfx`, base64 or URL) for macOS (Developer ID Application) and Windows signing |
+| `CSC_KEY_PASSWORD` | Password of that certificate |
+| `APPLE_ID` | Apple ID used for notarization |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for that Apple ID |
+| `APPLE_TEAM_ID` | Apple Developer team ID |
 
-Setting up real signing needs accounts/credentials this repo's automation doesn't manage (an Apple Developer Program membership + Developer ID certificate for macOS notarization, and a CI-compatible signing service — e.g. SignPath's free OSS tier, or Azure Trusted Signing — for Windows, since CA/Browser Forum rules require OV/EV code-signing keys to live on a hardware token or HSM). Once you've created the certificates/accounts and added the resulting secrets to the repo's GitHub Actions secrets, `electron-builder.yml` and `.github/workflows/release.yml` can be wired to consume them (notarize block, `azureSignOptions`, or a SignPath step) — that wiring isn't done yet.
+**Not done, needs you:** the certificates and accounts themselves — an Apple Developer Program membership with a Developer ID Application certificate, and a Windows code-signing certificate. `CSC_LINK` is one variable shared by both platforms, so a single secret cannot hold both a Mac and a Windows certificate; and OV/EV Windows keys must live on a hardware token/HSM under CA/Browser Forum rules, which a `.pfx` secret cannot satisfy — for those, use a signing service (SignPath's free OSS tier, Azure Trusted Signing) and extend the workflow (`azureSignOptions` or a SignPath step). Until signed builds are verified, the updater stays disabled on macOS (`detectDisabledReason` in `src/main/update/update-core.ts`), and Windows shows SmartScreen's "unknown publisher" prompt.

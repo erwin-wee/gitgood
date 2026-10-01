@@ -20,9 +20,19 @@ import { AboutDialog, SettingsDialog, ShortcutsDialog, UpdateNotesDialog } from 
 import { ExportSettingsDialog, ImportSettingsDialog } from './SettingsSyncDialogs';
 import { BranchFromStashDialog, StashSelectedFilesDialog } from './StashDialogs';
 import { SubmodulesDialog } from './SubmoduleDialogs';
+import { ServerFolderPicker } from './ServerFolderPicker';
 import { AddWorktreeDialog, LockWorktreeDialog, PruneWorktreesDialog, RemoveWorktreeDialog, WorktreesDialog } from './WorktreeDialogs';
 
-export function Dialogs(): React.JSX.Element | null {
+export function Dialogs(): React.JSX.Element {
+  return (
+    <>
+      <CurrentDialog />
+      <ServerFolderPicker />
+    </>
+  );
+}
+
+function CurrentDialog(): React.JSX.Element | null {
   const dialog = useAppStore((s) => s.dialog);
   if (!dialog) return null;
   switch (dialog.kind) {

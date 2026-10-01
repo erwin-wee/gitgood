@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { log } from '../logger';
+import { readRepoFile } from './paths';
 
 export interface RepoConfig {
   /** Shell command from `.gitgood/config.json`'s `postResolveCheck` field, or null when absent/invalid. */
@@ -14,17 +13,13 @@ const EMPTY_REPO_CONFIG: RepoConfig = { postResolveCheck: null };
  * never runs the command it reports and never gates on trust: it is a pure
  * read used both by the trust-confirmation flow and by the resolver, which
  * itself decides (via the store's `trustedRepoConfigs`) whether the returned
- * command may actually be run. Missing file, unreadable file or malformed
+ * command may actually be run. Missing file, symlink (or one leaving the repository), unreadable file or malformed
  * JSON all resolve to the empty config rather than throwing.
  */
 export async function readRepoConfig(repoPath: string): Promise<RepoConfig> {
-  const file = join(repoPath, '.gitgood', 'config.json');
-  let text: string;
-  try {
-    text = await readFile(file, 'utf8');
-  } catch {
-    return EMPTY_REPO_CONFIG;
-  }
+  const file = '.gitgood/config.json';
+  const text = (await readRepoFile(repoPath, file))?.toString('utf8');
+  if (text === undefined) return EMPTY_REPO_CONFIG;
   try {
     const parsed = JSON.parse(text) as unknown;
     return parseRepoConfig(parsed);

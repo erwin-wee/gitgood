@@ -6,7 +6,8 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/erwin-wee/gitgood/main/scripts/install-linux.sh | bash
-#   ./install-linux.sh [--version vX.Y.Z] [--prefix DIR] [--no-prereqs] [-y|--yes] [-h|--help]
+#   ./install-linux.sh [--version vX.Y.Z] [--prefix DIR] [--no-prereqs] [-y|--yes] [--insecure-skip-verify] [-h|--help]
+#   ./install-linux.sh --uninstall [--prefix DIR]
 
 set -euo pipefail
 
@@ -17,6 +18,8 @@ DESKTOP_DIR="$HOME/.local/share/applications"
 GITGOOD_VERSION=""
 INSTALL_PREREQS=1
 ASSUME_YES=0
+SKIP_VERIFY=0
+UNINSTALL=0
 # Piped via `curl ... | bash`: stdin is the script itself, so there is no
 # terminal to prompt on. Default to non-interactive in that case.
 if [ ! -t 0 ]; then ASSUME_YES=1; fi
@@ -33,6 +36,11 @@ Usage: install-linux.sh [options]
   --prefix DIR        Install under DIR instead of ~/.local/share/GitGood
   --no-prereqs         Skip installing git/gh/the AppImage runtime dependency
   -y, --yes            Don't prompt before installing packages with sudo
+  --insecure-skip-verify
+                       Install even if the download's SHA-512 cannot be checked
+                       against the release's latest-linux.yml (default: refuse)
+  --uninstall          Remove the AppImage, the `gitgood` command and the menu
+                       entry this script installed (user settings are kept)
   -h, --help           Show this help
 EOF
 }
@@ -43,12 +51,25 @@ while [ $# -gt 0 ]; do
     --prefix) PREFIX="$2"; shift 2 ;;
     --no-prereqs) INSTALL_PREREQS=0; shift ;;
     -y|--yes) ASSUME_YES=1; shift ;;
+    --insecure-skip-verify) SKIP_VERIFY=1; shift ;;
+    --uninstall) UNINSTALL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1 (see --help)" ;;
   esac
 done
 
 [ "$(uname -s)" = "Linux" ] || die "this script only supports Linux"
+
+if [ "$UNINSTALL" -eq 1 ]; then
+  INSTALLED_PATH="$PREFIX/GitGood.AppImage"
+  # Only remove the command if it is the symlink this script made.
+  if [ "$(readlink "$BIN_DIR/gitgood" 2>/dev/null)" = "$INSTALLED_PATH" ]; then rm -f "$BIN_DIR/gitgood"; fi
+  rm -f "$INSTALLED_PATH" "$DESKTOP_DIR/gitgood.desktop"
+  rmdir "$PREFIX" 2>/dev/null || true
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
+  log "Removed GitGood from $PREFIX (settings in ~/.config/GitGood and installed git/gh packages were left alone)."
+  exit 0
+fi
 
 DOWNLOADER=""
 if command -v curl >/dev/null 2>&1; then DOWNLOADER="curl"
@@ -200,27 +221,48 @@ WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 fetch_to_file "$APPIMAGE_URL" "$WORKDIR/$APPIMAGE_NAME"
 
-# Best-effort integrity check against electron-builder's own manifest; a
-# missing yml, an unparseable one, or no openssl just skips verification
-# rather than failing the install outright.
-if [ -n "$YML_URL" ] && command -v openssl >/dev/null 2>&1; then
-  if fetch_to_file "$YML_URL" "$WORKDIR/latest-linux.yml" 2>/dev/null; then
-    EXPECTED_SHA512="$(grep -E '^sha512:' "$WORKDIR/latest-linux.yml" | tail -1 | sed -E "s/^sha512:[[:space:]]*['\"]?([^'\"]+)['\"]?\$/\1/")"
-    if [ -n "$EXPECTED_SHA512" ]; then
-      ACTUAL_SHA512="$(openssl dgst -sha512 -binary "$WORKDIR/$APPIMAGE_NAME" | openssl base64 -A)"
-      if [ "$EXPECTED_SHA512" = "$ACTUAL_SHA512" ]; then
-        log "Checksum verified against $TAG_NAME's latest-linux.yml."
-      else
-        die "checksum mismatch for $APPIMAGE_NAME — refusing to install a corrupted or tampered download"
-      fi
-    else
-      warn "could not parse a sha512 from latest-linux.yml; skipping checksum verification"
-    fi
-  else
-    warn "could not download latest-linux.yml; skipping checksum verification"
+# Integrity check against electron-builder's manifest (the sha512 of this exact
+# file in latest-linux.yml). Fails closed: if it cannot be verified the install
+# stops, unless --insecure-skip-verify was passed.
+unverified() { # unverified REASON
+  if [ "$SKIP_VERIFY" -eq 1 ]; then warn "$1; installing unverified (--insecure-skip-verify)"
+  else die "$1 — refusing to install an unverified download (re-run with --insecure-skip-verify to override)"
   fi
+}
+
+# Digests are compared as hex: coreutils sha512sum/base64/od, or openssl if those are missing.
+sha512_hex() { # sha512_hex FILE
+  if command -v sha512sum >/dev/null 2>&1; then sha512sum "$1" | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha512 -r "$1" | cut -d' ' -f1
+  else return 1
+  fi
+}
+
+base64_to_hex() { # base64_to_hex STRING
+  if command -v base64 >/dev/null 2>&1; then printf '%s' "$1" | base64 -d | od -An -vtx1 | tr -d ' \n'
+  elif command -v openssl >/dev/null 2>&1; then printf '%s' "$1" | openssl base64 -d -A | od -An -vtx1 | tr -d ' \n'
+  else return 1
+  fi
+}
+
+if [ -z "$YML_URL" ]; then
+  unverified "release $TAG_NAME has no latest-linux.yml"
+elif ! fetch_to_file "$YML_URL" "$WORKDIR/latest-linux.yml" 2>/dev/null; then
+  unverified "could not download latest-linux.yml"
 else
-  warn "openssl not found or no manifest available; skipping checksum verification"
+  # The manifest lists every file ("- url: NAME" then "sha512: DIGEST"); match ours by name.
+  EXPECTED_SHA512="$(awk -v n="$APPIMAGE_NAME" '
+    $1 == "-" && $2 == "url:" { u = $3; gsub(/["'"'"']/, "", u); hit = (u == n) }
+    hit && $1 == "sha512:" { v = $2; gsub(/["'"'"']/, "", v); print v; exit }' "$WORKDIR/latest-linux.yml")"
+  if [ -z "$EXPECTED_SHA512" ]; then
+    unverified "latest-linux.yml has no sha512 for $APPIMAGE_NAME"
+  elif ! ACTUAL_SHA512="$(sha512_hex "$WORKDIR/$APPIMAGE_NAME")" || ! EXPECTED_HEX="$(base64_to_hex "$EXPECTED_SHA512")"; then
+    unverified "could not compute or decode the sha512 (need sha512sum+base64 or openssl)"
+  elif [ -n "$EXPECTED_HEX" ] && [ "$EXPECTED_HEX" = "$ACTUAL_SHA512" ]; then
+    log "Checksum verified against $TAG_NAME's latest-linux.yml."
+  else
+    die "checksum mismatch for $APPIMAGE_NAME — refusing to install a corrupted or tampered download"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

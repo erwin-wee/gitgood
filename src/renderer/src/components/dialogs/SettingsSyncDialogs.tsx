@@ -59,7 +59,7 @@ export function ExportSettingsDialog(): React.JSX.Element {
         <Checkbox key={s} checked={sections.has(s)} onChange={() => toggle(s)} label={SECTION_LABELS[s]} />
       ))}
       <Callout tone="info" icon="lock">
-        This file never includes your API key, saved GitHub credentials, tool paths, or window position — only the settings above.
+        This file never includes your API key, saved GitHub credentials, custom agent command, tool paths, or window position — only the settings above.
       </Callout>
       {error ? <Callout tone="danger">{error}</Callout> : null}
     </Dialog>
@@ -273,7 +273,7 @@ export function SettingsSyncCard(): React.JSX.Element {
     openDialog({
       kind: 'confirm',
       title: 'Enable settings sync',
-      message: 'GitGood stores an export of your settings in a secret GitHub gist. Secret gists are not listed publicly, but anyone with the link can read them. Only the fields you can also export to a file are included — never your API key or saved credentials.',
+      message: 'GitGood stores an export of your settings in a secret GitHub gist. Secret gists are not listed publicly, but anyone with the link can read them, and GitGood refuses to sync to a gist that is public. Only the fields you can also export to a file are included — never your API key, saved credentials or custom agent command.',
       confirmLabel: 'Enable',
       onConfirm: async () => {
         try {

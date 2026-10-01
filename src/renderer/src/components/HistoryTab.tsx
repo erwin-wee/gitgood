@@ -12,6 +12,72 @@ import { useWindowedRows } from '../lib/windowing';
 const COMMIT_ROW_ESTIMATES = { row: 60 };
 const commitRowKind = (): string => 'row';
 
+const FILES_WIDTH_KEY = 'gitgood.commitFilesWidth';
+const FILES_WIDTH_MIN = 160;
+const FILES_WIDTH_MAX = 640;
+const FILES_WIDTH_DEFAULT = 280;
+const FILES_WIDTH_STEP = 16;
+
+function loadFilesWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(FILES_WIDTH_KEY));
+    return Number.isFinite(n) && n >= FILES_WIDTH_MIN && n <= FILES_WIDTH_MAX ? n : FILES_WIDTH_DEFAULT;
+  } catch {
+    return FILES_WIDTH_DEFAULT;
+  }
+}
+
+/** Drag handle on the right edge of the commit's changed-files pane. The width is written straight to the DOM while dragging and committed (state + localStorage) on release; arrow keys resize too. The `.commit-files` CSS min/max-width keep it usable in narrow windows, and phone/tablet-portrait layouts hide the handle and override the width. */
+function FilesResizer({ width, onCommit }: { width: number; onCommit: (width: number) => void }): React.JSX.Element {
+  const [active, setActive] = useState(false);
+  const clamp = (w: number, pane: HTMLElement): number => {
+    const available = pane.parentElement?.clientWidth ?? FILES_WIDTH_MAX;
+    return Math.round(Math.max(FILES_WIDTH_MIN, Math.min(FILES_WIDTH_MAX, available * 0.6, w)));
+  };
+  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const pane = e.currentTarget.parentElement;
+    if (!pane) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = width;
+    let next = width;
+    setActive(true);
+    const move = (ev: MouseEvent): void => {
+      next = clamp(startWidth + ev.clientX - startX, pane);
+      pane.style.setProperty('--commit-files-width', `${next}px`);
+    };
+    const up = (): void => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      setActive(false);
+      onCommit(next);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const pane = e.currentTarget.parentElement;
+    const delta = e.key === 'ArrowLeft' ? -FILES_WIDTH_STEP : e.key === 'ArrowRight' ? FILES_WIDTH_STEP : 0;
+    if (!pane || !delta) return;
+    e.preventDefault();
+    onCommit(clamp(width + (e.shiftKey ? delta * 4 : delta), pane));
+  };
+  return (
+    <div
+      className={`commit-files-resizer ${active ? 'active' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize changed files pane"
+      aria-valuemin={FILES_WIDTH_MIN}
+      aria-valuemax={FILES_WIDTH_MAX}
+      aria-valuenow={width}
+      tabIndex={0}
+      onMouseDown={onMouseDown}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
+
 const SIGNATURE_BADGES: Partial<Record<SignatureStatus, { icon: IconName; className: string; label: (signer: string | null) => string }>> = {
   good: { icon: 'check-circle', className: 'sig-good', label: (signer) => `Good signature${signer ? ` from ${signer}` : ''}` },
   bad: { icon: 'x-circle', className: 'sig-bad', label: () => 'Bad signature' },
@@ -381,6 +447,15 @@ export function CommitDetailsPane(): React.JSX.Element {
   const verifySignatures = useAppStore((s) => s.settings?.historyVerifySignatures ?? false);
   const aiEnabled = useAppStore((s) => (s.settings?.ai.provider ?? 'disabled') !== 'disabled');
   const [expanded, setExpanded] = useState(false);
+  const [filesWidth, setFilesWidth] = useState(loadFilesWidth);
+  const commitFilesWidth = useCallback((width: number): void => {
+    setFilesWidth(width);
+    try {
+      localStorage.setItem(FILES_WIDTH_KEY, String(width));
+    } catch {
+      /* private mode / storage disabled: keep the width for this session only */
+    }
+  }, []);
 
   if (history.selectedShas.length > 1) {
     const selectedCommits = history.commits.filter((c) => history.selectedShas.includes(c.sha));
@@ -469,7 +544,7 @@ export function CommitDetailsPane(): React.JSX.Element {
         ) : null}
       </div>
       <div className="commit-body">
-        <div className="commit-files">
+        <div className="commit-files" style={{ '--commit-files-width': `${filesWidth}px` } as React.CSSProperties}>
           <div className="changes-header">
             <span className="count">
               {visibleFiles.length} {history.matchingFiles ? 'matching' : 'changed'} file{visibleFiles.length === 1 ? '' : 's'}
@@ -500,6 +575,7 @@ export function CommitDetailsPane(): React.JSX.Element {
               />
             ))}
           </div>
+          <FilesResizer width={filesWidth} onCommit={commitFilesWidth} />
         </div>
         <div id="commit-diff-slot" style={{ display: 'flex', flex: 1, minWidth: 0 }} />
       </div>

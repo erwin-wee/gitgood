@@ -306,8 +306,8 @@ export interface ApiMethods {
   'repos.work': () => Promise<RepoWork[]>;
   /** Reads (never runs) the repository's `.gitgood/config.json` post-resolution check command, for the trust-confirmation flow; `command` is null when absent or invalid. `trustState` is 'unknown' only the first time (before the user has ever been asked); 'declined' is sticky until `repo.trustConfig` re-trusts it. */
   'repo.checkConfig': (repoPath: string) => Promise<{ command: string | null; trustState: 'trusted' | 'declined' | 'unknown' }>;
-  /** Records whether the user trusts this repository's `.gitgood/config.json` check command; `false` disables it until re-trusted. */
-  'repo.trustConfig': (repoPath: string, trusted: boolean) => Promise<void>;
+  /** Records whether the user trusts this repository's `.gitgood/config.json` check command; `false` disables it until re-trusted. Trusting passes the command the user was shown: when the file's current command differs the grant is refused (`ok: false`) with the current command so the caller can re-prompt. */
+  'repo.trustConfig': (repoPath: string, trusted: boolean, command: string | null) => Promise<{ ok: true } | { ok: false; command: string | null }>;
 
   'git.commit': (repoPath: string, opts: CommitOptions) => Promise<string>;
   'git.undoCommit': (repoPath: string) => Promise<void>;
@@ -406,6 +406,8 @@ export interface ApiMethods {
   'ai.review.exportPath': (repoPath: string, runId: string) => Promise<string>;
   /** Writes the export, then opens the repository in the configured terminal running the configured agent command. `launched` is false when the terminal could not run a command and the command was copied to the clipboard instead. */
   'ai.review.fixWithAgent': (repoPath: string, runId: string) => Promise<{ launched: boolean; command: string }>;
+  /** Spends the per-run token from an exported `gitgood://review/rerun` link; true only once, only for the repository the token was minted for. A false result means the re-review must be confirmed by the user before anything is uploaded. */
+  'ai.review.consumeRerunToken': (repoPath: string, token: string) => Promise<boolean>;
   'ai.explain': (repoPath: string, target: ExplainTarget) => Promise<Explanation>;
   'ai.explain.followUp': (repoPath: string, target: ExplainTarget, history: ExplainFollowUp[], question: string) => Promise<string>;
   'ai.explainError': (repoPath: string | null, error: GitErrorInfo, retryable: boolean) => Promise<ErrorExplanation>;
@@ -501,6 +503,12 @@ export interface EventPayloads {
   'gh.inbox.new': InboxItem[];
   'app.update.changed': UpdateState;
   'repos.scanProgress': RepositoryScanProgress;
+  /** Browser/remote bridge only (src/server/web-bridge.ts): the event socket dropped or came back. */
+  'server.connection': { connected: boolean };
+  /** Browser bridge only: the server reports a different version than the one this page loaded. */
+  'server.updated': { version: string };
+  /** Browser/remote bridge only: asks the app to show its folder picker for the server's filesystem; `done` settles `app.chooseDirectory`. */
+  'server.pickDirectory': { opts: { title?: string; defaultPath?: string; buttonLabel?: string }; done: (path: string | null) => void };
 }
 
 export type EventName = keyof EventPayloads;

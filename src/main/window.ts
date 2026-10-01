@@ -3,6 +3,7 @@ import { BrowserWindow, nativeTheme, screen, shell } from 'electron';
 import { debounce } from '@shared/util';
 import { log } from './logger';
 import type { Store } from './store';
+import { appEntryUrl, isEntryUrl } from './app-url';
 import { sendEvent } from './ipc';
 
 /**
@@ -75,9 +76,9 @@ export function createMainWindow(store: Store, onFocusChange?: (focused: boolean
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+  const entry = appEntryUrl(remoteUrl);
   win.webContents.on('will-navigate', (event, url) => {
-    const allowed = remoteUrl ? `${remoteUrl}/` : (process.env.ELECTRON_RENDERER_URL ?? 'file://');
-    if (!url.startsWith(allowed)) {
+    if (!isEntryUrl(url, entry)) {
       event.preventDefault();
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     }

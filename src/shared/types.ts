@@ -1734,8 +1734,8 @@ export interface Housekeeping {
 
 export type SettingsSection = 'preferences' | 'repositories' | 'integrations';
 
-/** Fields of AppSettings['ai'] that are safe to export: never the stored-key flag or the CLI path (both machine/secret specific). */
-export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter' | 'agentCommand' | 'agentCustomCommand'>;
+/** Fields of AppSettings['ai'] that are safe to export: never the stored-key flag, the CLI path or the custom agent command (machine-specific or runs a shell command). */
+export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter' | 'agentCommand'>;
 
 /**
  * Explicit allowlist of AppSettings fields that may leave the machine (a

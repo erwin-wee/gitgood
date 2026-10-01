@@ -8,14 +8,20 @@ describe('parseProtocolUrl', () => {
   });
 
   it('parses the re-review deep link with a percent-encoded path', () => {
-    expect(parseProtocolUrl('gitgood://review/rerun?repo=%2Fhome%2Fdev%2Fmy%20app')).toEqual({ kind: 'review-rerun', repoPath: '/home/dev/my app' });
-    expect(parseProtocolUrl(' GITGOOD://review/rerun/?repo=C%3A%5Cwork%5Capp \n')).toEqual({ kind: 'review-rerun', repoPath: 'C:\\work\\app' });
+    expect(parseProtocolUrl('gitgood://review/rerun?repo=%2Fhome%2Fdev%2Fmy%20app')).toEqual({ kind: 'review-rerun', repoPath: '/home/dev/my app', token: null });
+    expect(parseProtocolUrl(' GITGOOD://review/rerun/?repo=C%3A%5Cwork%5Capp \n')).toEqual({ kind: 'review-rerun', repoPath: 'C:\\work\\app', token: null });
+  });
+
+  it('keeps the per-run token of the exported link, in either parameter order', () => {
+    expect(parseProtocolUrl('gitgood://review/rerun?repo=%2Fr&token=abc123')).toEqual({ kind: 'review-rerun', repoPath: '/r', token: 'abc123' });
+    expect(parseProtocolUrl('gitgood://review/rerun?token=abc123&repo=%2Fr')).toEqual({ kind: 'review-rerun', repoPath: '/r', token: 'abc123' });
+    expect(parseProtocolUrl('gitgood://review/rerun?repo=%2Fr&token=')).toEqual({ kind: 'review-rerun', repoPath: '/r', token: null });
   });
 
   it('keeps a plus sign in the path instead of decoding it as a space', () => {
     // URLSearchParams would turn '+' into ' '; '+' is legal in a path everywhere.
-    expect(parseProtocolUrl('gitgood://review/rerun?repo=%2Fsrc%2Fc%2B%2B%20app')).toEqual({ kind: 'review-rerun', repoPath: '/src/c++ app' });
-    expect(parseProtocolUrl('gitgood://review/rerun?repo=/src/c+/x')).toEqual({ kind: 'review-rerun', repoPath: '/src/c+/x' });
+    expect(parseProtocolUrl('gitgood://review/rerun?repo=%2Fsrc%2Fc%2B%2B%20app')).toEqual({ kind: 'review-rerun', repoPath: '/src/c++ app', token: null });
+    expect(parseProtocolUrl('gitgood://review/rerun?repo=/src/c+/x')).toEqual({ kind: 'review-rerun', repoPath: '/src/c+/x', token: null });
   });
 
   it('ignores rerun links without a repo and unknown paths', () => {

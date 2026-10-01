@@ -15,7 +15,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for installing dependencies and running the
 ## Before opening a pull request
 
 ```bash
-npm run typecheck
+npm run lint        # eslint (react-hooks) + typecheck
 npm test
 ```
 

@@ -1,5 +1,5 @@
-import { realpath } from 'node:fs/promises';
-import { normalize, parse, sep } from 'node:path';
+import { lstat, readFile, realpath } from 'node:fs/promises';
+import { dirname, join, normalize, parse, sep } from 'node:path';
 
 /**
  * Path comparison for watched folders and exclusions, matching the rules
@@ -48,4 +48,37 @@ export function isInside(parent: string, child: string): boolean {
   const p = normalizePath(parent);
   const c = normalizePath(child);
   return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+}
+
+/**
+ * Reads a regular file inside the repository, or returns null. Repo contents are
+ * untrusted: a symlink (or a symlinked parent directory) must never make us read
+ * — and later upload to an AI backend or run — a file outside the repo. Symlinks
+ * are refused outright and the resolved path must stay inside the resolved repo.
+ * ponytail: lstat/realpath then read is not atomic; a racing local writer could swap in a link.
+ */
+export async function readRepoFile(repoPath: string, relPath: string): Promise<Buffer | null> {
+  try {
+    const file = join(repoPath, ...relPath.split('/'));
+    if (!(await lstat(file)).isFile()) return null;
+    if (!isInside(await realpath(repoPath), await realpath(file))) return null;
+    return await readFile(file);
+  } catch {
+    return null;
+  }
+}
+
+/** Throws unless the deepest existing ancestor of `fsPath` resolves (symlinks included) to a place inside the repository. For writes that may create new directories. */
+export async function assertInsideRepo(repoPath: string, fsPath: string): Promise<void> {
+  const root = await realpath(repoPath);
+  let dir = dirname(fsPath);
+  for (;;) {
+    try {
+      if (isInside(root, await realpath(dir))) return;
+      throw new Error(`Path escapes the repository: ${fsPath}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      dir = dirname(dir);
+    }
+  }
 }

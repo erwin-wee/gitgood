@@ -15,7 +15,7 @@ import { SplitterService } from './ai/splitter';
 import { TriageService } from './ai/triage';
 import { applyInboxBadge } from './badge';
 import { clientServerUrl, fetchServerVersion, isLocalServerUrl, registerClientIpc, showInboxNotification, waitForServer, watchServerVersion } from './client';
-import { ensureManagedServer, setUpManagedServer } from './local-server';
+import { BACKGROUND_SERVER_FLAG, ensureManagedServer, managedServerSupported, setUpManagedServer, startBackgroundServer } from './local-server';
 import { GitClient } from './git/git';
 import { fetch as gitFetch } from './git/operations';
 import { GhClient } from './gh/gh';
@@ -59,8 +59,12 @@ if (process.env.GITGOOD_USER_DATA) app.setPath('userData', process.env.GITGOOD_U
 const PROTOCOLS = ['gitgood', 'x-github-client'];
 const pendingProtocolUrls: string[] = [];
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
+const backgroundServer = process.argv.includes(BACKGROUND_SERVER_FLAG);
+const gotLock = backgroundServer || app.requestSingleInstanceLock();
+if (backgroundServer) {
+  // Windows login item: only the headless server, no window/menu and no single-instance lock (the GUI app must still start).
+  startBackgroundServer();
+} else if (!gotLock) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | null = null;
@@ -76,7 +80,7 @@ if (!gotLock) {
     }
     if (win.isMinimized()) win.restore();
     win.focus();
-    if (parsed.kind === 'review-rerun') sendEvent(win, 'menu.action', { action: 'protocol-review-rerun', args: { repoPath: parsed.repoPath } });
+    if (parsed.kind === 'review-rerun') sendEvent(win, 'menu.action', { action: 'protocol-review-rerun', args: { repoPath: parsed.repoPath, token: parsed.token } });
     else sendEvent(win, 'menu.action', { action: 'protocol-open', args: { url: parsed.url, branch: parsed.branch, filepath: parsed.filepath } });
   };
 
@@ -203,7 +207,7 @@ if (!gotLock) {
     }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv, isPerMachineInstall: isPerMachineInstall(process.execPath, process.platform) });
     const deps: HandlerDeps = { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, watchedFolders, host, emit: bus.emit, busy };
     registerIpc(deps);
-    Menu.setApplicationMenu(buildMenu(getWindow, { showManagedServer: process.platform === 'linux' && app.isPackaged, onManagedServer: () => void setUpManagedServer(userData) }));
+    Menu.setApplicationMenu(buildMenu(getWindow, { showManagedServer: managedServerSupported(), onManagedServer: () => void setUpManagedServer(userData) }));
 
     /** Desktop notification for a freshly-arrived inbox item (only while the window is unfocused; see shouldNotifyInboxItem for the per-category gating). */
     function notifyNewInboxItems(items: InboxItem[]): void {

@@ -326,6 +326,17 @@ export function isValidBranchName(name: string): boolean {
   return true;
 }
 
+/** Main-process guard: git parses a ref/branch/tag/remote/sha argument that starts with "-" as an option. Never fix this with `--` (it would turn a checkout target into a pathspec). */
+export function assertNotOption(...values: (string | null | undefined)[]): void {
+  const bad = values.find((v) => v?.startsWith('-'));
+  if (bad) throw new Error(`"${bad}" is not a valid ref or name: it must not start with "-".`);
+}
+
+/** For a branch or tag name about to be created or renamed to. */
+export function assertNewBranchName(name: string): void {
+  if (!isValidBranchName(name)) throw new Error(`"${name}" is not a valid branch or tag name.`);
+}
+
 export function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 }

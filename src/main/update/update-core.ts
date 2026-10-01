@@ -158,6 +158,9 @@ export function detectDisabledReason(env: DisabledEnv): string | null {
   if (!env.isPackaged) return 'Updates unavailable in this build (development / unpackaged).';
   if (env.portableExecutableDir) return 'Updates are unavailable in portable Windows builds. Download new versions manually.';
   if (env.appImagePath && !env.appImageWritable) return 'Updates are unavailable when running from a read-only location. Download new versions manually.';
+  // A packaged Linux run that is not an AppImage is a system package (.deb): electron-updater would
+  // dpkg -i the download as root, so updates stay with the package manager / a manual download.
+  if (env.platform === 'linux' && !env.appImagePath) return 'Updates are unavailable for system-package (.deb) installs. Install new versions from the Releases page or your package manager.';
   if (env.platform === 'darwin') return 'Updates are unavailable on this unsigned, non-notarised build. Download new versions manually.';
   return null;
 }

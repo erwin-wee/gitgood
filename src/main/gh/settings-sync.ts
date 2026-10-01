@@ -44,7 +44,7 @@ export class SettingsSyncService {
 
   /** Reuses an existing "GitGood settings" gist (e.g. enabled from another machine) or creates a new one. Also used to recover from a deleted gist. */
   async enable(): Promise<{ gistId: string }> {
-    const existing = await this.gh.gistFind(GIST_DESCRIPTION);
+    const existing = await this.gh.gistFind(GIST_DESCRIPTION, GIST_FILENAME);
     if (existing) {
       this.store.setSettingsSync({ gistId: existing.id, lastSyncedAt: null, lastHash: null });
       return { gistId: existing.id };
@@ -70,6 +70,10 @@ export class SettingsSyncService {
   async upload(): Promise<void> {
     const sync = this.store.getSettingsSync();
     if (!sync.gistId) throw new Error('Sync is not enabled.');
+    const meta = await this.gh.gistMetadata(sync.gistId);
+    if (!meta) throw new Error('The settings gist no longer exists. Create a new one to sync again.');
+    // Checked on every upload: a stored id may predate this check or point at a gist someone made public.
+    if (meta.public) throw new Error('The sync gist is public, so GitGood will not upload settings to it. Disconnect sync and enable it again to create a secret gist.');
     const text = await this.currentExportText();
     await this.gh.gistEdit(sync.gistId, GIST_FILENAME, text);
     this.store.setSettingsSync({ ...sync, lastSyncedAt: new Date().toISOString(), lastHash: stableHash(text) });

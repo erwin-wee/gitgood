@@ -223,11 +223,13 @@ interface RawGist {
   id: string;
   description?: string | null;
   updated_at?: string;
+  public?: boolean;
+  files?: Record<string, unknown>;
 }
 
-/** Finds the gist matching `description` in a `gh api gists --paginate` listing. Pure so it can be unit tested without spawning `gh`. */
-export function findGistByDescription(gists: RawGist[], description: string): { id: string; updatedAt: string } | null {
-  const match = gists.find((g) => g.description === description);
+/** Finds the secret gist matching `description` that holds `filename` in a `gh api gists --paginate` listing. Public gists and look-alikes (same description, other files) are never adopted: they would receive uploads. Pure so it can be unit tested without spawning `gh`. */
+export function findGistByDescription(gists: RawGist[], description: string, filename: string): { id: string; updatedAt: string } | null {
+  const match = gists.find((g) => g.description === description && g.public === false && !!g.files && filename in g.files);
   return match ? { id: match.id, updatedAt: match.updated_at ?? '' } : null;
 }
 
@@ -767,9 +769,9 @@ export class GhClient {
   // ---------- settings sync (gists) ----------
 
   /** Finds an existing gist by its description (`gh gist list` output is not JSON in all versions, so the search goes through the API instead). */
-  async gistFind(description: string): Promise<{ id: string; updatedAt: string } | null> {
+  async gistFind(description: string, filename: string): Promise<{ id: string; updatedAt: string } | null> {
     const raw = await this.json<RawGist[]>(['api', 'gists', '--paginate'], { timeoutMs: 60000 });
-    return findGistByDescription(raw ?? [], description);
+    return findGistByDescription(raw ?? [], description, filename);
   }
 
   /** Creates a new secret gist from `content` (sent over stdin to avoid command-line length limits) and returns its id. */
@@ -797,11 +799,11 @@ export class GhClient {
     await this.run(['gist', 'edit', id, '--filename', filename, '-'], { stdin: content, timeoutMs: 60000 });
   }
 
-  /** The gist's `updated_at`, or null when it no longer exists (used to detect a deleted gist without treating it as an error). */
-  async gistMetadata(id: string): Promise<{ updatedAt: string } | null> {
+  /** The gist's `updated_at` and visibility, or null when it no longer exists (used to detect a deleted gist without treating it as an error). */
+  async gistMetadata(id: string): Promise<{ updatedAt: string; public: boolean } | null> {
     try {
-      const raw = await this.json<{ updated_at?: string }>(['api', `gists/${id}`], { timeoutMs: 30000 });
-      return raw ? { updatedAt: raw.updated_at ?? '' } : null;
+      const raw = await this.json<{ updated_at?: string; public?: boolean }>(['api', `gists/${id}`], { timeoutMs: 30000 });
+      return raw ? { updatedAt: raw.updated_at ?? '', public: raw.public !== false } : null;
     } catch (err) {
       if (err instanceof GitError && isGistNotFound(err.info)) return null;
       throw err;

@@ -15,22 +15,35 @@ interface Persisted<T> {
   value: T;
 }
 
+/** A missing file is the normal first-run case. A file that fails to parse is moved aside as `<file>.corrupt-<ts>` so the next write cannot silently destroy it. */
 function readJson<T>(file: string, fallback: T): T {
+  let text: string;
   try {
-    if (!existsSync(file)) return fallback;
-    const text = readFileSync(file, 'utf8');
+    text = readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log.error(`Failed to read ${file}`, err);
+    return fallback;
+  }
+  try {
     return { ...fallback, ...(JSON.parse(text) as T) };
   } catch (err) {
-    log.error(`Failed to read ${file}`, err);
+    const preserved = `${file}.corrupt-${Date.now()}`;
+    try {
+      renameSync(file, preserved);
+      log.error(`${file} is not valid JSON; kept as ${preserved} and starting from defaults`, err);
+    } catch (renameErr) {
+      log.error(`${file} is not valid JSON and could not be preserved`, renameErr);
+    }
     return fallback;
   }
 }
 
+/** Files here hold repo paths and (on the plaintext fallback) the API key, so they are owner-only; the temp file is created with the mode so it is never briefly readable. POSIX only, ignored on Windows. */
 function writeJson(file: string, value: unknown): void {
   const dir = join(file, '..');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2));
+  writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
   renameSync(tmp, file);
 }
 
@@ -266,7 +279,7 @@ export class Store {
       if (encrypted) {
         stored = `enc:${encrypted}`;
       } else {
-        log.warn('OS encryption unavailable; storing API key with restricted file permissions only');
+        log.warn('OS encryption unavailable; storing API key in plaintext in secrets.json (owner-only file permissions)');
         stored = key;
       }
     }

@@ -8,7 +8,7 @@ import { getBranches } from '../git/branches';
 import { currentClient } from '../core/client-context';
 import type { GitClient } from '../git/git';
 import { getRemotes, getStashes, getTopLevel } from '../git/operations';
-import { getGitDir, getStatus } from '../git/status';
+import { getGitDir, getStatus, getStatusIndicator } from '../git/status';
 import { getCommonDir, getMainWorktreePath, listWorktrees } from '../git/worktree';
 import { log } from '../logger';
 import type { Store } from '../store';
@@ -563,8 +563,7 @@ export class RepositoryManager {
     const updated = await mapWithConcurrency(repos, 3, async (repo): Promise<RepositoryInfo> => {
       if (!existsSync(repo.path)) return { ...repo, indicator: null };
       try {
-        const status = await getStatus(this.git, repo.path);
-        return { ...repo, indicator: { ahead: status.branch.ahead, behind: status.branch.behind, hasChanges: status.files.length > 0 } };
+        return { ...repo, indicator: await getStatusIndicator(this.git, repo.path) };
       } catch {
         return { ...repo, indicator: null };
       }
@@ -573,17 +572,14 @@ export class RepositoryManager {
     // Derived (unregistered) worktrees are not persisted, so their indicators
     // are computed fresh here rather than cached across refreshes.
     const list = await this.list(false);
-    const withDerivedIndicators = await Promise.all(
-      list.map(async (r) => {
-        if (!r.worktreeOf || r.missing || updated.some((u) => u.id === r.id)) return r;
-        try {
-          const status = await getStatus(this.git, r.path);
-          return { ...r, indicator: { ahead: status.branch.ahead, behind: status.branch.behind, hasChanges: status.files.length > 0 } };
-        } catch {
-          return r;
-        }
-      }),
-    );
+    const withDerivedIndicators = await mapWithConcurrency(list, 3, async (r) => {
+      if (!r.worktreeOf || r.missing || updated.some((u) => u.id === r.id)) return r;
+      try {
+        return { ...r, indicator: await getStatusIndicator(this.git, r.path) };
+      } catch {
+        return r;
+      }
+    });
     this.send('repos.changed', withDerivedIndicators);
     return withDerivedIndicators;
   }

@@ -7,7 +7,7 @@ import { isInside } from '../main/repo/paths';
 /** Reads the persisted bearer token, generating and storing a fresh 256-bit one on first run. */
 export function loadOrCreateToken(tokenFile: string, dir: string): string {
   if (existsSync(tokenFile)) return readFileSync(tokenFile, 'utf8').trim();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const token = randomBytes(32).toString('hex');
   writeFileSync(tokenFile, token, { mode: 0o600 });
   try {

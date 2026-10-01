@@ -157,7 +157,13 @@ describe.skipIf(!hasGitSync())('ReviewService agent export (real git)', () => {
     expect(latest.runId).toBe('run-1');
     expect(latest.previousRunId).toBeNull();
     expect(latest.findings.map((f: { id: string; dismissed: boolean }) => [f.id, f.dismissed])).toEqual([['f2', false], ['f1', true]]);
-    expect(latest.rerun.url).toBe(`gitgood://review/rerun?repo=${encodeURIComponent(repo.path)}`);
+    const token = /&token=([0-9a-f]{32})$/.exec(latest.rerun.url)?.[1];
+    expect(latest.rerun.url).toBe(`gitgood://review/rerun?repo=${encodeURIComponent(repo.path)}&token=${token}`);
+    expect(await readFile(join(dir, 'latest.md'), 'utf8')).toContain(`&token=${token}`);
+    expect(service.consumeRerunToken(repo.path, 'nope')).toBe(false);
+    expect(service.consumeRerunToken('/other/repo', token!)).toBe(false);
+    expect(service.consumeRerunToken(repo.path, token!)).toBe(true);
+    expect(service.consumeRerunToken(repo.path, token!)).toBe(false);
     expect(JSON.parse(await readFile(join(dir, 'runs', 'run-1.json'), 'utf8')).runId).toBe('run-1');
     const md = await readFile(join(dir, 'latest.md'), 'utf8');
     expect(md).toContain('Hard-coded token');

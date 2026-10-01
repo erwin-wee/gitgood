@@ -666,8 +666,9 @@ function PostResolveCheckSettings({ ai, updateAi }: { ai: AppSettings['ai']; upd
                 variant="link"
                 onClick={async () => {
                   if (!repo) return;
-                  await invoke('repo.trustConfig', repo.path, true);
-                  setRepoConfig({ ...repoConfig, trustState: 'trusted' });
+                  const result = await invoke('repo.trustConfig', repo.path, true, repoConfig.command);
+                  // Refused: the file changed since it was displayed. Show the new command and let the user decide again.
+                  setRepoConfig(result.ok ? { ...repoConfig, trustState: 'trusted' } : await invoke('repo.checkConfig', repo.path));
                 }}
               >
                 Trust it now
@@ -878,7 +879,7 @@ function AdvancedTab({ settings, update }: { settings: AppSettings; update: (p: 
       </div>
       <Button size="sm" icon="sync" onClick={() => void actions.refreshTools()}>Re-detect tools</Button>
       <h4>Portable settings</h4>
-      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Carry your preferences, repository list and integration choices to another machine, as a file or through a secret GitHub gist. Never includes your API key, saved credentials, tool paths or window position.</p>
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Carry your preferences, repository list and integration choices to another machine, as a file or through a secret GitHub gist. Never includes your API key, saved credentials, custom agent command, tool paths or window position.</p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <Button size="sm" icon="upload" onClick={() => openDialog({ kind: 'export-settings' })}>Export…</Button>
         <Button size="sm" icon="download" onClick={() => openDialog({ kind: 'import-settings' })}>Import…</Button>

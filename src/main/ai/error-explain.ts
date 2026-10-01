@@ -21,6 +21,7 @@ import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { createBackend } from './provider';
+import { scrubSecrets } from '@shared/secrets';
 import { buildErrorExplainPrompt, ERROR_EXPLAIN_SCHEMA, ERROR_EXPLAIN_SYSTEM_PROMPT, type ErrorExplainRemote } from './prompts';
 import { checkLockFileGuard, extractRemoteHost, scrubAndTail, validateErrorExplanation } from './error-explain-core';
 
@@ -66,7 +67,7 @@ export class ErrorExplainService {
 
       const prompt = buildErrorExplainPrompt({
         code: error.code,
-        command: error.command,
+        command: scrubSecrets(error.command),
         exitCode: error.exitCode,
         stderrTail: scrubAndTail(error.stderr),
         stdoutTail: scrubAndTail(error.stdout),

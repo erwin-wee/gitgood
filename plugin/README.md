@@ -37,6 +37,6 @@ The exported `latest.md` starts with the same instructions as the skill, so any 
 
 ## Re-review
 
-After a **pre-commit** review the agent finishes by opening `gitgood://review/rerun?repo=<path>` (the exact command is in `latest.json` under `rerun.command`). GitGood, if running with that repository in its list, re-runs the review over the working tree and rewrites `latest.json` with a new `runId` whose `previousRunId` points at the run the agent worked from.
+After a **pre-commit** review the agent finishes by opening `gitgood://review/rerun?repo=<path>&token=<single-use token>` (the exact command is in `latest.json` under `rerun.command`). GitGood, if running with that repository in its list, re-runs the review (a link without a valid, unspent token first asks the user to confirm the repository and files) over the working tree and rewrites `latest.json` with a new `runId` whose `previousRunId` points at the run the agent worked from.
 
 After a **pull request or branch** review, `rerun` is `null` and the agent stops instead: those reviews read committed history, so they cannot see edits still in the working tree. Commit the agent's changes in GitGood and press Re-review.

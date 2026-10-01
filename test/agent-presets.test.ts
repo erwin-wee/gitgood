@@ -16,10 +16,15 @@ describe('agent presets', () => {
     expect(agentTemplate({ agentCommand: 'custom', agentCustomCommand: 'aider --file {file}' })).toBe('aider --file {file}');
   });
 
-  it('validateAgentTemplate requires {file}', () => {
+  it('validateAgentTemplate requires {file}, every one inside double quotes', () => {
     expect(validateAgentTemplate('claude "fix {file}"')).toBeNull();
+    expect(validateAgentTemplate('aider "a {file}" --also "{file}"')).toBeNull();
+    expect(validateAgentTemplate('claude "it\'s {file}"')).toBeNull();
     expect(validateAgentTemplate('claude "fix it"')).toBe('The command must contain {file}');
     expect(validateAgentTemplate('   ')).toBe('Enter the command to run.');
+    for (const bad of ['aider --file {file}', "aider '{file}'", 'aider "{file}" {file}', 'aider "x" {file}', 'aider "{file}" \'{file}\'']) {
+      expect(validateAgentTemplate(bad), bad).toContain('inside double quotes');
+    }
   });
 
   it('escapes what each shell would expand inside the double-quoted prompt', () => {

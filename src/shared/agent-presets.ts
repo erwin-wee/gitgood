@@ -34,10 +34,28 @@ export function agentTemplate(settings: Pick<AiSettings, 'agentCommand' | 'agent
   return AGENT_PRESETS.find((p) => p.id === settings.agentCommand)?.template ?? AGENT_PRESETS[0].template;
 }
 
+/** Whether every `{file}` sits inside a double-quoted string. The path is escaped for double quotes only (see escapePathForTemplate), so bare or single-quoted placeholders would let a path containing spaces, `$` or quotes change what runs. */
+function placeholdersQuoted(template: string): boolean {
+  let quote: string | null = null;
+  for (let i = 0; i < template.length; i++) {
+    if (template.startsWith(FILE_PLACEHOLDER, i)) {
+      if (quote !== '"') return false;
+      i += FILE_PLACEHOLDER.length - 1;
+      continue;
+    }
+    const c = template[i];
+    if (quote === '"' && c === '\\') i++;
+    else if (c === quote) quote = null;
+    else if (quote === null && (c === '"' || c === "'")) quote = c;
+  }
+  return true;
+}
+
 /** Null when the template is usable, otherwise the message to show inline. */
 export function validateAgentTemplate(template: string): string | null {
   if (!template.trim()) return 'Enter the command to run.';
   if (!template.includes(FILE_PLACEHOLDER)) return `The command must contain ${FILE_PLACEHOLDER}`;
+  if (!placeholdersQuoted(template)) return `Write every ${FILE_PLACEHOLDER} inside double quotes, e.g. agent "Read ${FILE_PLACEHOLDER}" (unquoted or single-quoted paths are not escaped safely).`;
   return null;
 }
 
