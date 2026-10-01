@@ -281,15 +281,17 @@ if (backgroundServer) {
     // Discover git/gh/claude in the background and tell the renderer.
     void tools.refresh().then((state) => {
       log.info(`git: ${state.git.version ?? 'missing'} (${state.git.path ?? '-'}); gh: ${state.gh.version ?? 'missing'} (${state.gh.path ?? '-'}); account: ${state.ghAccount?.login ?? 'none'}`);
-      // A scan registers candidates through Git, so wait until initial tool discovery finishes.
-      if (store.getSettings().watchedFolders.length) {
+    });
+    // A scan registers candidates through Git only, so it waits for the git probe — never for gh, whose probe and sign-in read can take many seconds.
+    if (store.getSettings().watchedFolders.length) {
+      void tools.ensure('git').then(() => {
         log.info('Scanning watched folders');
-        void watchedFolders
+        return watchedFolders
           .scan()
           .then((r) => log.info(`Watched-folder scan: ${r.added} added, ${r.skipped} skipped, ${r.dropped} dropped, ${r.unreadable} unreadable${r.cancelled ? ', cancelled' : ''}`))
           .catch((err) => log.error('Watched-folder scan failed', err));
-      }
-    });
+      });
+    }
 
     // Periodic background fetch for the active repository.
     setInterval(async () => {
