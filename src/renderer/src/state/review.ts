@@ -1,3 +1,4 @@
+import { aiEnabled } from '@shared/ai-model';
 import type { PostReviewOptions, PullRequest, ReviewFinding, ReviewStartOptions, ReviewTarget } from '@shared/types';
 import { errorMessage, invoke } from '../api';
 import { loadDiff, showError } from './actions';
@@ -9,7 +10,7 @@ import { closeDialog, initialReview, openDialog, patchReview, showToast, store, 
 
 export function aiReviewAvailable(): boolean {
   const s = store.get();
-  return !!s.currentRepo && s.settings?.ai.provider !== 'disabled';
+  return !!s.currentRepo && aiEnabled(s.settings, s.currentRepo);
 }
 
 /** True when the repository has a GitHub remote and gh is signed in, so pull request mode is possible. */
@@ -103,7 +104,7 @@ export async function startReview(target: ReviewTarget, opts: ReviewStartOptions
 
 export async function cancelReview(): Promise<void> {
   try {
-    await invoke('ai.cancel');
+    await invoke('ai.cancel', 'review');
   } catch {
     /* nothing running */
   }

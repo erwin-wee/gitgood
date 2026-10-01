@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { NlRisk, NlStep } from '@shared/types';
 import * as actions from '../state/actions';
-import { closeDialog, useAppStore, type NlPaletteHistoryEntry } from '../state/store';
+import { closeDialog, useAppStore, type NlPaletteHistoryEntry, useAiEnabled } from '../state/store';
 import { Badge, Button, Dialog, Icon, Spinner, useFilter, type IconName } from './ui';
 
 /**
@@ -102,7 +102,7 @@ export function CommandPalette(): React.JSX.Element {
   const nl = useAppStore((s) => s.nlPalette);
   const settings = useAppStore((s) => s.settings);
   const [showHistory, setShowHistory] = useState(false);
-  const aiAvailable = settings?.ai.provider !== 'disabled' && settings?.ai.nlPaletteEnabled !== false;
+  const aiAvailable = useAiEnabled() && settings?.ai.nlPaletteEnabled !== false;
   const matches = useFilter(BUILTIN_ACTIONS, nl.query, (a) => [a.label, a.id]);
 
   const onClose = () => {

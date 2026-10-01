@@ -75,7 +75,7 @@
       "shot": "notice.png"
     },
     {
-      "js": "(async () => { const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); window.__gitgood.store.set({ dialog: null }); const ai = window.__gitgood.store.get().settings.ai; await window.__gitgood.actions.updateSettings({ ai: { ...ai, agentCommand: 'custom', agentCustomCommand: '' } }); window.__gitgood.store.set({ dialog: { kind: 'settings', tab: 'ai' } }); await sleep(400); const label = Array.from(document.querySelectorAll('.field label')).find((l) => l.textContent === 'Command'); const input = label && label.parentElement.querySelector('input'); if (!input) return JSON.stringify({ error: 'no Command input' }); const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; const type = (v) => { set.call(input, v); input.dispatchEvent(new Event('input', { bubbles: true })); }; type('aider --fix'); await sleep(400); const afterInvalid = window.__gitgood.store.get().settings.ai.agentCustomCommand; const errorText = (label.parentElement.querySelector('.error') || {}).textContent || null; type('aider --file {file}'); await sleep(400); const afterValid = window.__gitgood.store.get().settings.ai.agentCustomCommand; return JSON.stringify({ afterInvalid, errorText, afterValid }); })()",
+      "js": "(async () => { const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); window.__gitgood.store.set({ dialog: null }); const ai = window.__gitgood.store.get().settings.ai; await window.__gitgood.actions.updateSettings({ ai: { ...ai, agentCommand: 'custom', agentCustomCommand: '' } }); window.__gitgood.store.set({ dialog: { kind: 'settings', tab: 'ai' } }); await sleep(400); const label = Array.from(document.querySelectorAll('.field label')).find((l) => l.textContent === 'Command'); const input = label && label.parentElement.querySelector('input'); if (!input) return JSON.stringify({ error: 'no Command input' }); const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; const type = (v) => { set.call(input, v); input.dispatchEvent(new Event('input', { bubbles: true })); }; type('aider --fix'); await sleep(400); const afterInvalid = window.__gitgood.store.get().settings.ai.agentCustomCommand; const errorText = (label.parentElement.querySelector('.error') || {}).textContent || null; type('aider --file \"{file}\"'); await sleep(400); const afterValid = window.__gitgood.store.get().settings.ai.agentCustomCommand; return JSON.stringify({ afterInvalid, errorText, afterValid }); })()",
       "dump": "settings.json"
     },
     {
@@ -171,7 +171,7 @@
     {
       "dump": "settings.json",
       "jsonPath": "afterValid",
-      "equals": "aider --file {file}"
+      "equals": "aider --file \"{file}\""
     }
   ]
 }

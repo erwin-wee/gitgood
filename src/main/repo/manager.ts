@@ -447,6 +447,21 @@ export class RepositoryManager {
     this.send('repos.changed', await this.list(false));
   }
 
+  /** Machine-local list/commit prefs; only the keys present in `prefs` change (a blank group clears it). */
+  async setPrefs(id: string, prefs: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'>): Promise<void> {
+    const patch: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'> = {};
+    if (prefs.pinned !== undefined) patch.pinned = prefs.pinned === true || undefined;
+    if (prefs.group !== undefined) patch.group = typeof prefs.group === 'string' ? prefs.group.trim().slice(0, 60) || undefined : undefined;
+    if (prefs.signoff !== undefined) patch.signoff = prefs.signoff === true || undefined;
+    this.store.saveRepositories(this.store.getRepositories().map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    this.send('repos.changed', await this.list(false));
+  }
+
+  async setAiDisabled(id: string, disabled: boolean): Promise<void> {
+    this.store.saveRepositories(this.store.getRepositories().map((r) => (r.id === id ? { ...r, aiDisabled: disabled || undefined } : r)));
+    this.send('repos.changed', await this.list(false));
+  }
+
   touch(id: string): void {
     this.store.saveRepositories(this.store.getRepositories().map((r) => (r.id === id ? { ...r, lastOpened: Date.now() } : r)));
     const recent = [id, ...this.store.getState().recentRepositoryIds.filter((r) => r !== id)].slice(0, 10);

@@ -4,7 +4,7 @@ import { ZERO_SHA } from '@shared/types';
 import { buildDiscardPatch } from '@shared/diff/patch';
 import { formatBytes } from '@shared/util';
 import * as actions from '../../state/actions';
-import { openDialog, useAppStore } from '../../state/store';
+import { openDialog, useAppStore, useAiEnabled } from '../../state/store';
 import { Avatar, Button, Icon, RelativeTime, Segmented, Spinner, openContextMenu } from '../ui';
 import { ExplainPanel } from '../explain/ExplainPanel';
 import { FindingCard, SEVERITY_TONE } from '../review/ReviewView';
@@ -98,7 +98,7 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
   const renderBlameCard = useCallback((hunk: BlameHunk) => <BlameCard hunk={hunk} />, []);
   // Explain: same eligible modes as blame (Changes and History); hidden entirely when the AI provider is disabled.
   const explain = useAppStore((s) => s.explain);
-  const aiExplainEnabled = (settings?.ai.provider ?? 'disabled') !== 'disabled';
+  const aiExplainEnabled = useAiEnabled();
   const explainEligibleMode = mode === 'working' || mode === 'commit';
   const explainNotActionable = diff !== null && diff.kind !== 'text';
   const explainReason = diff?.kind === 'binary' ? 'binary file' : diff?.kind === 'image' ? 'image file' : diff?.kind === 'submodule' ? 'submodule' : diff?.kind === 'lfs' ? 'Git LFS object' : diff?.kind === 'too-large' ? 'diff too large' : diff?.kind === 'conflict' ? 'unresolved conflict' : null;
@@ -230,6 +230,7 @@ export const DiffPane = memo(function DiffPane({ path, oldPath, status, mode, em
             onClick={(e) =>
               openContextMenu(e, [
                 { label: 'Open in external editor', onClick: () => void actions.openInEditor(status === 'deleted' ? null : path) },
+                ...(mode === 'working' && status !== 'untracked' && status !== 'conflicted' ? [{ label: 'Open in external diff tool', onClick: () => void actions.openDiffTool(path, { kind: 'working' as const }) }] : mode === 'commit' && historySha ? [{ label: 'Open in external diff tool', onClick: () => void actions.openDiffTool(path, { kind: 'commit' as const, sha: historySha }) }] : []),
                 { label: 'Show in folder', onClick: () => void actions.showInFolder(status === 'deleted' ? null : path) },
                 { label: 'Copy relative path', onClick: () => void actions.copyToClipboard(path, 'Path copied') },
                 { type: 'separator' },

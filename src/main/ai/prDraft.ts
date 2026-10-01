@@ -1,4 +1,5 @@
 import type { PrDraft, PrDraftInput } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import { getRangePatch } from '../git/diff';
 import { GitError, type GitClient } from '../git/git';
 import { compareRefs, mergeBase } from '../git/log';
@@ -23,6 +24,7 @@ import {
   templateCheckboxLabels,
 } from './pr-draft-core';
 import { buildPrDraftPrompt, PR_DRAFT_SCHEMA, PR_DRAFT_SYSTEM_PROMPT, type PrDraftPromptCommit, type PrDraftPromptIssue } from './prompts';
+import { cancelOwned, ownedController } from '../core/client-context';
 import { createBackend } from './provider';
 import { stripFences } from './review-core';
 
@@ -48,8 +50,7 @@ export class PrDraftService {
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient, private readonly gh: GhClient, private readonly repos: RepositoryManager) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    if (cancelOwned(this.controller)) this.controller = null;
   }
 
   /** True while a draft is in flight; used by the update install gate to refuse installing mid-draft. */
@@ -64,12 +65,12 @@ export class PrDraftService {
   }
 
   async draft(repoPath: string, input: PrDraftInput, report: PrDraftReporter): Promise<PrDraft> {
-    const controller = new AbortController();
+    const controller = ownedController();
     this.controller = controller;
     const signal = controller.signal;
     try {
       report('started', 'Reading commits and diff…');
-      const { backend, settings } = await createBackend(this.store, this.tools);
+      const { backend, settings } = await createBackend(this.store, this.tools, 'prDraft');
 
       const baseRef = await this.resolveBaseRef(repoPath, input.base);
       if (!baseRef) throw new GitError({ message: `Base branch "${input.base}" was not found locally. Fetch first.`, command: '', exitCode: null, stderr: '', stdout: '', code: 'unknown' });
@@ -86,7 +87,7 @@ export class PrDraftService {
       const subjectsOnly = totalAhead > SUBJECTS_ONLY_THRESHOLD;
       const commits: PrDraftPromptCommit[] = capped.map((c) => ({ summary: c.summary, body: subjectsOnly ? null : c.body || null }));
 
-      const { stat, patch, truncated } = await getRangePatch(this.git, repoPath, mb, headSha, MAX_DIFF_BYTES);
+      const { stat, patch, truncated, skipped } = await getRangePatch(this.git, repoPath, mb, headSha, MAX_DIFF_BYTES);
       const changedPaths = (await this.git.stdout(repoPath, ['diff', '--name-only', '-M', `${mb}...${headSha}`], { readOnly: true, okExitCodes: [1], signal })).split('\n').filter(Boolean);
 
       const rawTemplate = await findPullRequestTemplate(repoPath);
@@ -111,7 +112,7 @@ export class PrDraftService {
       }
       const promptIssues: PrDraftPromptIssue[] = validIssues.map((r) => ({ number: r.number, closing: r.closing, title: issueDetails.get(r.number)?.title ?? '', state: issueDetails.get(r.number)?.state ?? '' }));
 
-      report('thinking', `Drafting with ${settings.model}…`);
+      report('thinking', `Drafting with ${modelFor(settings, 'prDraft')}…`);
       const response = await backend.complete({
         system: PR_DRAFT_SYSTEM_PROMPT,
         prompt: buildPrDraftPrompt({
@@ -130,7 +131,7 @@ export class PrDraftService {
           existingBody: input.existingBody,
         }),
         schema: PR_DRAFT_SCHEMA as unknown as Record<string, unknown>,
-        model: settings.model,
+        model: modelFor(settings, 'prDraft'),
         effort: settings.effort === 'max' ? 'high' : settings.effort,
         signal,
         onProgress: (m) => report('writing', m),
@@ -158,7 +159,7 @@ export class PrDraftService {
 
       report('done', 'Draft ready');
       log.info(`AI PR draft for ${repoPath} (${input.head} -> ${input.base}): ${capped.length}/${totalAhead} commits, ${linkedIssues.length} linked issue(s), via ${backend.name}/${response.model}`);
-      return { title, body, linkedIssues, templateSectionsFilled, truncated, restored, model: response.model };
+      return { title, body, linkedIssues, templateSectionsFilled, truncated, restored, skipped, model: response.model };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!signal.aborted) report('error', message);

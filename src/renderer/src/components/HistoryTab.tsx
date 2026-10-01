@@ -1,9 +1,10 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { aiEnabled as aiOn } from '@shared/ai-model';
 import type { Commit, CommitSignature, HistoryQuery, SignatureStatus } from '@shared/types';
 import { isMac } from '../api';
 import * as actions from '../state/actions';
 import { historyFilterActive, historyReorderDisabled } from '../state/actions';
-import { openDialog, patchHistory, setPopover, store, useAppStore } from '../state/store';
+import { openDialog, patchHistory, setPopover, store, useAppStore, useAiEnabled } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
 import { onListKeyDown } from '../lib/listKeys';
 import { Avatar, Badge, Button, Callout, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
@@ -102,7 +103,7 @@ function commitMenu(commit: Commit, selected: string[]): MenuItem[] {
   const repo = s.currentRepo;
   const isHead = s.status?.branch.sha === commit.sha;
   const tags = commit.refs.filter((r) => r.startsWith('tag: ')).map((r) => r.slice(5));
-  const aiEnabled = (s.settings?.ai.provider ?? 'disabled') !== 'disabled';
+  const aiEnabled = aiOn(s.settings, s.currentRepo);
   if (selected.length > 1 && selected.includes(commit.sha)) {
     const target = s.history.commits.filter((c) => selected.includes(c.sha)).pop()!;
     const tidyReason = aiEnabled ? actions.tidyBranchDisabledReason(selected) : 'AI features are turned off';
@@ -445,7 +446,7 @@ export function CommitDetailsPane(): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
   const status = useAppStore((s) => s.status);
   const verifySignatures = useAppStore((s) => s.settings?.historyVerifySignatures ?? false);
-  const aiEnabled = useAppStore((s) => (s.settings?.ai.provider ?? 'disabled') !== 'disabled');
+  const aiEnabled = useAiEnabled();
   const [expanded, setExpanded] = useState(false);
   const [filesWidth, setFilesWidth] = useState(loadFilesWidth);
   const commitFilesWidth = useCallback((width: number): void => {

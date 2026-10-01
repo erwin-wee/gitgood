@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ToolsState } from '@shared/types';
+import { MIN_TOOL_VERSIONS } from '@shared/util';
 import { isMac, isWindows } from '../api';
 import * as actions from '../state/actions';
 import { openDialog } from '../state/store';
@@ -18,7 +19,7 @@ export function SetupScreen({ tools }: { tools: ToolsState }): React.JSX.Element
         <div className="setup-item">
           <Icon name={tools.git.installed ? 'check-circle' : 'x-circle'} />
           <div>
-            <strong>Git {tools.git.installed ? `${tools.git.version} found` : 'not found'}</strong>
+            <strong>Git {tools.git.installed ? `${tools.git.version} found` : `not found (Git ${MIN_TOOL_VERSIONS.git} or newer required)`}</strong>
             {!tools.git.installed ? (
               <span>
                 Install with <span className="mono">{gitInstall}</span> or download from <Button variant="link" onClick={() => void actions.openExternal('https://git-scm.com/downloads')}>git-scm.com</Button>.{tools.git.error ? ` (${tools.git.error})` : ''}
@@ -31,13 +32,16 @@ export function SetupScreen({ tools }: { tools: ToolsState }): React.JSX.Element
         <div className="setup-item">
           <Icon name={tools.gh.installed ? 'check-circle' : 'x-circle'} />
           <div>
-            <strong>GitHub CLI {tools.gh.installed ? `${tools.gh.version} found` : 'not found (needed for GitHub features)'}</strong>
+            <strong>GitHub CLI {tools.gh.installed ? `${tools.gh.version} found` : `not found (${MIN_TOOL_VERSIONS.gh} or newer; needed for GitHub features)`}</strong>
             {!tools.gh.installed ? (
               <span>
                 Install with <span className="mono">{ghInstall}</span> or download from <Button variant="link" onClick={() => void actions.openExternal('https://cli.github.com')}>cli.github.com</Button>.
               </span>
             ) : (
-              <span className="mono">{tools.gh.path}</span>
+              <>
+                <span className="mono">{tools.gh.path}</span>
+                {tools.gh.outdated ? <span>Older than the supported minimum {tools.gh.minVersion}, so GitHub features may fail. Update with <span className="mono">{ghInstall}</span> or download from <Button variant="link" onClick={() => void actions.openExternal('https://cli.github.com')}>cli.github.com</Button>.</span> : null}
+              </>
             )}
           </div>
         </div>

@@ -30,6 +30,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     changedFiles: 2,
     mergeable: 'MERGEABLE',
     mergeStateStatus: 'CLEAN',
+    autoMerge: null,
     labels: [],
     assignees: [],
     reviewRequests: [],

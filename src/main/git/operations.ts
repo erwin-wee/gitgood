@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { OperationOutcome } from '@shared/ipc';
-import type { RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
+import type { CloneOptions, RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
 import { assertNewBranchName, assertNotOption } from '@shared/util';
 import { getStashFiles, toFsPath } from './diff';
 import { GitError, TransferProgressParser, type GitClient } from './git';
@@ -104,12 +104,37 @@ export async function push(
   });
 }
 
-export async function clone(git: GitClient, url: string, directory: string, branch: string | null, onProgress: ProgressSink, signal?: AbortSignal): Promise<void> {
-  const parser = new TransferProgressParser('fetch');
-  const args = ['clone', '--progress', '--recurse-submodules'];
-  if (branch) args.push('--branch', branch);
+/** Cone-mode sparse-checkout directories: repository-relative, forward slashes, no `..`, nothing option-like. */
+export function normalizeSparseDirs(dirs: string[]): string[] {
+  const out = dirs.map((d) => d.trim().replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '').replace(/\/+$/, '')).filter(Boolean);
+  const bad = out.find((d) => d.startsWith('-') || d.split('/').includes('..'));
+  if (bad) throw new Error(`"${bad}" is not a valid sparse-checkout directory.`);
+  return [...new Set(out)];
+}
+
+/** argv for `git clone` honouring the advanced options (shallow, single branch, blobless partial clone, sparse checkout, submodules; submodules default to on). */
+export function cloneArgs(url: string, directory: string, opts: Omit<CloneOptions, 'url' | 'directory'>): string[] {
+  assertNotOption(opts.branch);
+  const args = ['clone', '--progress'];
+  if (opts.submodules !== false) args.push('--recurse-submodules');
+  if (opts.branch) args.push('--branch', opts.branch);
+  if (opts.depth != null) {
+    if (!Number.isInteger(opts.depth) || opts.depth < 1) throw new Error('Clone depth must be a whole number of 1 or more.');
+    args.push('--depth', String(opts.depth));
+    if (opts.submodules !== false) args.push('--shallow-submodules');
+  }
+  // --depth already implies --single-branch in git, so a shallow clone needs no flag.
+  if (opts.singleBranch) args.push('--single-branch');
+  if (opts.blobless) args.push('--filter=blob:none');
+  if (opts.sparse?.length) args.push('--sparse');
   args.push('--', url, directory);
-  await git.run(null, args, {
+  return args;
+}
+
+export async function clone(git: GitClient, url: string, directory: string, opts: Omit<CloneOptions, 'url' | 'directory'>, onProgress: ProgressSink, signal?: AbortSignal): Promise<void> {
+  const parser = new TransferProgressParser('fetch');
+  const sparse = normalizeSparseDirs(opts.sparse ?? []);
+  await git.run(null, cloneArgs(url, directory, { ...opts, sparse }), {
     signal,
     onStderr: (chunk) => {
       const p = parser.feed(chunk);
@@ -117,6 +142,7 @@ export async function clone(git: GitClient, url: string, directory: string, bran
     },
     timeoutMs: 60 * 60 * 1000,
   });
+  if (sparse.length) await git.run(directory, ['sparse-checkout', 'set', '--cone', ...sparse]);
 }
 
 // ---------- merge / rebase / cherry-pick / revert ----------

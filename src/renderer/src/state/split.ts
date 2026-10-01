@@ -1,3 +1,4 @@
+import { aiEnabled } from '@shared/ai-model';
 import type { SplitApplyProgress, SplitPlan, SplitPlanCommit } from '@shared/types';
 import { SPLIT_SUMMARY_PLACEHOLDER } from '@shared/util';
 import { errorInfo, errorMessage, invoke } from '../api';
@@ -15,7 +16,7 @@ type SplitTarget = string | typeof UNASSIGNED;
 /** Hidden unless the provider is enabled, a repository is open, no merge/cherry-pick/revert is in progress, and Amend is not checked (per spec: these three conditions hide the entry point entirely rather than merely disabling it). */
 export function splitEntryVisible(): boolean {
   const s = store.get();
-  return !!s.currentRepo && s.settings?.ai.provider !== 'disabled' && s.status?.operation.kind !== 'merge' && s.status?.operation.kind !== 'cherry-pick' && s.status?.operation.kind !== 'revert' && !s.changes.amend;
+  return !!s.currentRepo && aiEnabled(s.settings, s.currentRepo) && s.status?.operation.kind !== 'merge' && s.status?.operation.kind !== 'cherry-pick' && s.status?.operation.kind !== 'revert' && !s.changes.amend;
 }
 
 /**
@@ -75,7 +76,7 @@ export function reproposeSplit(): void {
 }
 
 export function cancelSplitPropose(): void {
-  void invoke('ai.cancel').catch(() => undefined);
+  void invoke('ai.cancel', 'split').catch(() => undefined);
 }
 
 export function closeSplitDialog(): void {

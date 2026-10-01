@@ -6,15 +6,45 @@
 export type Theme = 'system' | 'light' | 'dark';
 export type DiffViewMode = 'unified' | 'split';
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** The AI features that can run (and be cancelled / metered) independently. */
+export type AiFeature = 'resolver' | 'commitMessage' | 'review' | 'split' | 'triage' | 'prDraft' | 'rebase' | 'releaseNotes' | 'explain' | 'errorExplain' | 'nlPalette';
+
+/** Token usage reported by a backend for one request; `costUsd` only when the backend itself reports it. */
+export interface AiUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number | null;
+}
+
+/** Per-feature totals for one calendar month (machine-local; see ai/usage.ts). */
+export interface AiUsageTotals extends AiUsage {
+  requests: number;
+}
+
+export interface AiUsageMonth {
+  /** `YYYY-MM` (local time). */
+  month: string;
+  features: Partial<Record<AiFeature, AiUsageTotals>>;
+}
 export type PullBehavior = 'git-config' | 'merge' | 'rebase';
 export type UncommittedChangesStrategy = 'ask' | 'stash' | 'move';
 export type UpdateChannel = 'stable' | 'beta';
 
 export interface AiSettings {
-  /** Which backend performs AI conflict resolution. */
-  provider: 'anthropic' | 'claude-cli' | 'disabled';
+  /** Which backend performs AI features. 'openai-compatible' talks to any OpenAI-style `/chat/completions` server (see `openaiBaseUrl`). */
+  provider: 'anthropic' | 'claude-cli' | 'openai-compatible' | 'disabled';
   /** Anthropic model ID used by the API backend, or a model alias for the CLI backend. */
   model: string;
+  /** Base URL of the OpenAI-compatible server including any version path, e.g. `https://api.openai.com/v1` or `http://localhost:11434/v1`. Portable. */
+  openaiBaseUrl: string;
+  /** Model name sent to the OpenAI-compatible server. Portable. */
+  openaiModel: string;
+  /** True when an OpenAI-compatible API key has been stored (the key itself never crosses IPC and is never exported). */
+  hasOpenaiApiKey: boolean;
+  /** Optional per-feature model overrides; a missing/empty entry uses the global model of the active provider (see `modelFor`). */
+  featureModels: Partial<Record<AiFeature, string>>;
   effort: EffortLevel;
   /** True when an API key has been stored (the key itself never crosses IPC). */
   hasApiKey: boolean;
@@ -258,6 +288,16 @@ export interface RepositoryInfo {
    * hand keeps 'manual' even when a scan later finds it in a watched folder.
    */
   origin?: 'manual' | 'watched';
+  /** Machine-local "Disable AI for this repository" choice. Not part of a settings export. */
+  aiDisabled?: boolean;
+  /** Set (not persisted) when the repository's `.gitgood/config.json` says `"ai": false`; filled in by `repo.open`. */
+  aiConfigOff?: boolean;
+  /** Machine-local: pinned to the top of the repository list. */
+  pinned?: boolean;
+  /** Machine-local custom group (shown before the owner groups in the repository list); absent/null = no custom group. */
+  group?: string | null;
+  /** Machine-local: add a `Signed-off-by` trailer (`git commit --signoff`) to commits in this repository. */
+  signoff?: boolean;
 }
 
 /** `RepositoryInfo.origin` with the default applied: entries written before watched folders existed are manual. */
@@ -681,6 +721,8 @@ export interface PullRequest {
   changedFiles: number | null;
   mergeable: string | null;
   mergeStateStatus: string | null;
+  /** Auto-merge enabled on this pull request (gh `autoMergeRequest`); null when off or when gh does not report it. `method` is null if gh reports an unrecognised method. */
+  autoMerge: { method: 'merge' | 'squash' | 'rebase' | null; enabledBy: string | null } | null;
   labels: string[];
   assignees: string[];
   reviewRequests: string[];
@@ -719,6 +761,9 @@ export interface ToolInfo {
   version: string | null;
   path: string | null;
   error: string | null;
+  /** Set when the installed version is below the supported minimum (still usable; the UI only warns). */
+  outdated?: boolean;
+  minVersion?: string;
 }
 
 export interface ToolsState {
@@ -982,6 +1027,10 @@ export interface CommitOptions {
   partialPatches: Record<string, string>;
   /** 'default' follows the repository's signing configuration; 'sign' forces -S; 'unsigned' forces --no-gpg-sign for this commit only (never persisted). */
   signOverride?: 'default' | 'sign' | 'unsigned';
+  /** `--signoff`: add a Signed-off-by trailer. */
+  signoff?: boolean;
+  /** `--no-verify`: skip the pre-commit and commit-msg hooks for this commit only. */
+  noVerify?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1156,16 @@ export interface CloneOptions {
   directory: string;
   /** Branch to check out after cloning, optional. */
   branch: string | null;
+  /** Shallow clone with this many commits of history (`--depth`); null/absent = full history. */
+  depth?: number | null;
+  /** Fetch only the history of one branch (`--single-branch`); a shallow clone (`depth`) already does. */
+  singleBranch?: boolean;
+  /** Blobless partial clone (`--filter=blob:none`): file contents are fetched on demand. */
+  blobless?: boolean;
+  /** Cone-mode sparse checkout: only these directories (plus top-level files) are checked out. */
+  sparse?: string[];
+  /** Clone submodules too (`--recurse-submodules`). Defaults to true when absent. */
+  submodules?: boolean;
 }
 
 export interface NewRepositoryOptions {
@@ -1380,6 +1439,8 @@ export interface PrDraft {
   truncated: boolean;
   /** True when the model's body did not preserve the template's headings and the body was rebuilt around them. */
   restored: boolean;
+  /** Files left out of the request because they look like secrets (`path: reason`). */
+  skipped: string[];
   model: string;
 }
 
@@ -1734,8 +1795,8 @@ export interface Housekeeping {
 
 export type SettingsSection = 'preferences' | 'repositories' | 'integrations';
 
-/** Fields of AppSettings['ai'] that are safe to export: never the stored-key flag, the CLI path or the custom agent command (machine-specific or runs a shell command). */
-export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter' | 'agentCommand'>;
+/** Fields of AppSettings['ai'] that are safe to export: never the stored-key flags, the CLI path or the custom agent command (machine-specific or runs a shell command). API keys are never exported. */
+export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'openaiBaseUrl' | 'openaiModel' | 'featureModels' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter' | 'agentCommand'>;
 
 /**
  * Explicit allowlist of AppSettings fields that may leave the machine (a
@@ -1888,6 +1949,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     model: 'claude-opus-5',
     effort: 'high',
     hasApiKey: false,
+    openaiBaseUrl: '',
+    openaiModel: '',
+    hasOpenaiApiKey: false,
+    featureModels: {},
     claudeCliPath: null,
     autoStageAfterResolve: true,
     reviewStrictness: 'strict',

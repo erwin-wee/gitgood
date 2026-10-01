@@ -63,7 +63,7 @@ describe.skipIf(process.platform === 'win32')('repo files never follow symlinks 
     symlinkSync(join(base, 'cfg.json'), join(repo, '.gitgood', 'config.json'));
     expect(await findPullRequestTemplate(repo)).toBeNull();
     expect(await discoverIssueTemplates(repo)).toEqual([]);
-    expect(await readRepoConfig(repo)).toEqual({ postResolveCheck: null });
+    expect(await readRepoConfig(repo)).toEqual({ postResolveCheck: null, ai: true });
   });
 
   it('an untracked symlink diffs as its link text, not the target contents', async () => {

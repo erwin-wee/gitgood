@@ -1,11 +1,12 @@
 import type { AddWorktreeOptions, BlameHunk, BlameResult, Branch, BranchDeleteResult, Commit, CommitOptions, ErrorFix, ExplainSource, ExplainTarget, FileDiff, GitErrorInfo, HistoryQuery, PrTriage, PullRequest, RepoWork, RepositoryInfo, RepositoryScanResult, RepositoryStatus, Stash, StaleBranch, TriageState, UncommittedChangesStrategy, WorkingFile, ConflictResolutionResult, AppSettings, UpdateState, Worktree } from '@shared/types';
+import { aiEnabled } from '@shared/ai-model';
 import { EMPTY_HISTORY_QUERY, EXPLAIN_FOLLOWUP_LIMIT, ZERO_SHA } from '@shared/types';
 import type { OperationOutcome } from '@shared/ipc';
 import { buildFileViewDiff } from '@shared/diff/parse';
 import { buildStagePatch } from '@shared/diff/patch';
 import { checkRegexBrackets, explanationToMarkdown, extractWorktreePathFromError, formatHistoryQuery, isEmptyHistoryQuery, issueBranchSlug, parseHistoryQuery } from '@shared/util';
 import { ApiError, errorInfo, errorMessage, invoke, on } from '../api';
-import { closeAllDialogs, closeDialog, initialChanges, initialDiff, initialErrorExplain, initialExplain, initialHistory, initialNlPalette, initialPrecommitReview, initialReview, initialStashesView, initialTriage, NO_CONFLICT_EXAMPLES, openDialog, patchChanges, patchDiff, patchErrorExplain, patchExplain, patchHistory, patchNlPalette, patchStashesView, patchTriage, saveExplainPanelWidth, showToast, store, type DialogState, type View } from './store';
+import { closeAllDialogs, closeDialog, initialChanges, initialDiff, initialErrorExplain, initialExplain, initialHistory, initialNlPalette, initialPrecommitReview, initialReview, initialStashesView, initialTriage, NO_CONFLICT_EXAMPLES, openDialog, patchChanges, patchDiff, patchErrorExplain, patchExplain, patchHistory, patchNlPalette, patchStashesView, patchTriage, saveExplainPanelWidth, showToast, store, type ChangesState, type DialogState, type View } from './store';
 import { handleReviewProgress, reviewBranch, reviewCurrentPullRequest } from './review';
 import { handlePrecommitReviewProgress, refreshPrecommitStaleness, runPrecommitReviewForGate, syncPrecommitReviewSelection } from './precommitReview';
 import { handleRebaseProgress, tidyBranch } from './rebase';
@@ -73,7 +74,9 @@ export async function bootstrap(): Promise<void> {
   });
   on('repos.changed', (list) => {
     const current = store.get().currentRepo;
-    store.set({ repos: list, currentRepo: current ? list.find((r) => r.id === current.id) ?? current : null });
+    // `aiConfigOff` comes from the repository's config file via `repo.open`, not from the list, so carry it over.
+    const fresh = current ? list.find((r) => r.id === current.id) : undefined;
+    store.set({ repos: list, currentRepo: current ? (fresh ? { ...fresh, aiConfigOff: current.aiConfigOff } : current) : null });
   });
   on('progress', (p) => {
     store.set((s) => {
@@ -90,6 +93,7 @@ export async function bootstrap(): Promise<void> {
   });
   on('menu.action', ({ action, args }) => {
     if (action === 'protocol-open') void handleProtocolOpen(args as { url: string; branch: string | null; filepath: string | null });
+    else if (action === 'open-path') void openFolderAsRepository(args as { path: string });
     else if (action === 'protocol-review-rerun') void handleProtocolReviewRerun(args as { repoPath: string; token: string | null });
     else void handleMenuAction(action, args);
   });
@@ -321,7 +325,7 @@ export async function openRepository(repo: RepositoryInfo): Promise<void> {
   document.title = `${repo.alias ?? repo.name} — GitGood`;
   try {
     const opened = await invoke('repo.open', repo.path);
-    store.set((s) => ({ currentRepo: { ...(s.currentRepo ?? opened), github: opened.github }, repos: s.repos.map((r) => (r.id === opened.id ? { ...r, github: opened.github, lastOpened: Date.now() } : r)) }));
+    store.set((s) => ({ currentRepo: { ...(s.currentRepo ?? opened), github: opened.github, aiConfigOff: opened.aiConfigOff }, repos: s.repos.map((r) => (r.id === opened.id ? { ...r, github: opened.github, lastOpened: Date.now() } : r)) }));
   } catch (err) {
     showError('Could not open repository', err);
     return;
@@ -339,6 +343,12 @@ export async function addLocalRepository(path: string): Promise<void> {
   } catch (err) {
     showError('Could not add repository', err);
   }
+}
+
+/** Opens a folder dropped on the window or passed on the command line: a repository is added and opened; anything else goes to the Add dialog, which explains the problem and offers to create a repository. */
+export async function openFolderAsRepository({ path }: { path: string }): Promise<void> {
+  if (await invoke('app.isRepository', path).catch(() => false)) await addLocalRepository(path);
+  else openDialog({ kind: 'add-repo', path });
 }
 
 /** One sentence for a finished watched-folder scan, for the toast and the Options summary. */
@@ -1231,7 +1241,7 @@ export function includedFiles(): WorkingFile[] {
 
 export async function commit(): Promise<void> {
   const s = store.get();
-  const gateOn = s.settings?.ai.reviewBeforeCommit && s.settings.ai.provider !== 'disabled' && !s.changes.committing;
+  const gateOn = s.settings?.ai.reviewBeforeCommit && aiEnabled(s.settings, s.currentRepo) && !s.changes.committing;
   if (gateOn) {
     const run = await runPrecommitReviewForGate();
     const live = run ? run.findings.filter((f) => !f.dismissed) : [];
@@ -1272,9 +1282,11 @@ async function performCommit(signOverride: 'default' | 'unsigned'): Promise<void
       files: files.flatMap((f) => (f.oldPath ? [f.path, f.oldPath] : [f.path])),
       partialPatches,
       signOverride,
+      signoff: repo.signoff,
+      noVerify: s.changes.noVerify,
     };
     const sha = await invoke('git.commit', repo.path, opts);
-    patchChanges({ summary: '', description: '', amend: false, committing: false, partial: {}, excluded: [] });
+    patchChanges({ summary: '', description: '', amend: false, committing: false, noVerify: false, partial: {}, excluded: [] });
     patchDiff({ selectedLines: null });
     showToast({ kind: 'success', title: s.changes.amend ? 'Commit amended' : `Committed ${sha.slice(0, 7)}`, message: summary || undefined, action: s.changes.amend ? undefined : { label: 'Undo', onClick: () => void undoCommit() } });
     await refreshAll();
@@ -1317,6 +1329,34 @@ export async function undoCommit(): Promise<void> {
   }
 }
 
+/** Prefills an empty, non-amend commit form from `commit.template`; never overwrites anything the user (or an AI draft) already typed, and skips merges (git ignores the template there). */
+export async function prefillCommitTemplate(): Promise<void> {
+  const repo = store.get().currentRepo;
+  const empty = (c: ChangesState) => !c.amend && !c.summary && !c.description;
+  const idle = () => empty(store.get().changes) && store.get().status?.operation.kind === 'none';
+  if (!repo || !idle()) return;
+  const template = await invoke('repo.commitTemplate', repo.path).catch(() => null);
+  if (template && store.get().currentRepo?.path === repo.path && idle()) patchChanges({ summary: template.summary, description: template.description });
+}
+
+/** Machine-local per-repository prefs: pin, custom group, commit sign-off. */
+export async function setRepoPrefs(repo: RepositoryInfo, prefs: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'>): Promise<void> {
+  try {
+    await invoke('repos.setPrefs', repo.id, prefs);
+  } catch (err) {
+    showError('Could not save repository settings', err);
+  }
+}
+
+/** Machine-local "Disable AI for this repository" toggle; the list refreshes through `repos.changed`. */
+export async function setRepoAiDisabled(repo: RepositoryInfo, disabled: boolean): Promise<void> {
+  try {
+    await invoke('repos.setAiDisabled', repo.id, disabled);
+  } catch (err) {
+    showError('Could not save repository settings', err);
+  }
+}
+
 export async function setAmend(amend: boolean): Promise<void> {
   const repo = store.get().currentRepo;
   if (!repo) return;
@@ -1341,6 +1381,7 @@ export async function generateCommitMessage(): Promise<void> {
   try {
     const msg = await invoke('ai.commitMessage', repo.path, files.map((f) => f.path));
     patchChanges({ summary: msg.summary, description: msg.description });
+    if (msg.skipped.length) showToast({ kind: 'info', title: 'Left out of the AI request', message: msg.skipped.join('\n') }, 8000);
   } catch (err) {
     showError('Could not generate a commit message', err);
   } finally {
@@ -2331,7 +2372,7 @@ export async function loadPullRequests(force = false): Promise<void> {
     store.set((st) => ({ prs: { ...st.prs, list, loading: false, loadedAt: Date.now() } }));
     await loadTriageCache();
     const settings = store.get().settings;
-    if (settings && settings.ai.provider !== 'disabled' && settings.ai.triageAutoRefresh) void summarizePullRequests();
+    if (aiEnabled(settings, store.get().currentRepo) && settings?.ai.triageAutoRefresh) void summarizePullRequests();
   } catch (err) {
     const info = errorInfo(err);
     store.set((st) => ({ prs: { ...st.prs, loading: false, error: info.message } }));
@@ -2400,7 +2441,7 @@ export async function summarizePullRequests(): Promise<void> {
 }
 
 export function cancelTriage(): void {
-  void invoke('ai.cancel');
+  void invoke('ai.cancel', 'triage');
 }
 
 export async function loadCurrentPullRequest(force = false): Promise<void> {
@@ -2592,6 +2633,28 @@ export async function openInShell(): Promise<void> {
     await invoke('app.openInShell', repo.path);
   } catch (err) {
     showToast({ kind: 'error', title: 'Could not open terminal', message: errorMessage(err), action: { label: 'Settings', onClick: () => openDialog({ kind: 'settings', tab: 'integrations' }) } });
+  }
+}
+
+export async function openDiffTool(path: string, source: { kind: 'working' } | { kind: 'commit'; sha: string }): Promise<void> {
+  const repo = store.get().currentRepo;
+  if (!repo) return;
+  try {
+    await invoke('app.openDiffTool', repo.path, path, source);
+  } catch (err) {
+    showToast({ kind: 'error', title: 'Could not open diff tool', message: errorMessage(err) });
+  }
+}
+
+/** The merge tool refreshes repo state itself when it exits (main sends `repo.changed`). */
+export async function openMergeTool(path: string): Promise<void> {
+  const repo = store.get().currentRepo;
+  if (!repo) return;
+  try {
+    await invoke('app.openMergeTool', repo.path, path);
+    showToast({ kind: 'info', title: 'Merge tool started', message: 'Save and close it to pick up the result.' });
+  } catch (err) {
+    showToast({ kind: 'error', title: 'Could not open merge tool', message: errorMessage(err) });
   }
 }
 
@@ -3034,9 +3097,9 @@ export async function handleMenuAction(action: string, args?: unknown): Promise<
 // AI diff explanation
 // ---------------------------------------------------------------------------
 
-/** True when the AI provider is enabled; entry points across the app are hidden (not disabled) when it is not. */
+/** True when the AI provider is enabled and the current repository has not opted out; entry points across the app are hidden (not disabled) when it is not. */
 export function aiExplainAvailable(): boolean {
-  return (store.get().settings?.ai.provider ?? 'disabled') !== 'disabled';
+  return aiEnabled(store.get().settings, store.get().currentRepo);
 }
 
 /** Source (commit/working tree/stash) implied by the tab currently showing a diff, or null when explaining is not meaningful there (e.g. the AI review view). */
@@ -3105,7 +3168,7 @@ export function retryExplain(): void {
 }
 
 export function cancelExplain(): void {
-  void invoke('ai.cancel');
+  void invoke('ai.cancel', 'explain');
   patchExplain({ loading: false, followUpLoading: false });
 }
 
@@ -3185,7 +3248,7 @@ export async function requestErrorExplanation(error: GitErrorInfo, retryable: bo
 }
 
 export function cancelErrorExplanation(): void {
-  void invoke('ai.cancel');
+  void invoke('ai.cancel', 'errorExplain');
   patchErrorExplain({ loading: false });
 }
 

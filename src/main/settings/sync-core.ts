@@ -7,6 +7,7 @@
  * replacement) so this can be unit tested and reasoned about in isolation.
  */
 import type {
+  AiFeature,
   AiSettings,
   AppSettings,
   GitHubRepoRef,
@@ -73,6 +74,9 @@ const PREFERENCE_KEYS = {
 const AI_PREFERENCE_KEYS = {
   provider: true,
   model: true,
+  openaiBaseUrl: true,
+  openaiModel: true,
+  featureModels: true,
   effort: true,
   autoStageAfterResolve: true,
   reviewStrictness: true,
@@ -126,14 +130,15 @@ const ENUM_PREFERENCE_KEYS: Partial<Record<keyof PortablePreferences, readonly s
   diffViewMode: ['unified', 'split'],
 };
 const AI_ENUM_KEYS: Partial<Record<keyof PortableAiSettings, readonly string[]>> = {
-  provider: ['anthropic', 'claude-cli', 'disabled'],
+  provider: ['anthropic', 'claude-cli', 'openai-compatible', 'disabled'],
   effort: ['low', 'medium', 'high', 'xhigh', 'max'],
   reviewStrictness: ['strict', 'balanced', 'thorough'],
   agentCommand: ['claude', 'codex', 'omp', 'custom'],
 };
-const AI_STRING_KEYS = new Set<keyof PortableAiSettings>(['model']);
+const AI_STRING_KEYS = new Set<keyof PortableAiSettings>(['model', 'openaiBaseUrl', 'openaiModel']);
 const AI_BOOLEAN_KEYS = new Set<keyof PortableAiSettings>(['autoStageAfterResolve', 'reviewPostFooter']);
 const AI_NUMBER_KEYS = new Set<keyof PortableAiSettings>(['reviewMaxFiles']);
+const AI_FEATURES: Record<AiFeature, true> = { resolver: true, commitMessage: true, review: true, split: true, triage: true, prDraft: true, rebase: true, releaseNotes: true, explain: true, errorExplain: true, nlPalette: true };
 
 export function buildPortablePreferences(settings: AppSettings): PortablePreferences {
   const out: Record<string, unknown> = {};
@@ -183,6 +188,14 @@ export function buildSettingsExport(opts: BuildExportOptions): SettingsExport {
 // Validation
 // ---------------------------------------------------------------------------
 
+/** Keeps only known features with string model names; null when `raw` is not an object. */
+function validateFeatureModels(raw: unknown): Partial<Record<AiFeature, string>> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: Partial<Record<AiFeature, string>> = {};
+  for (const [feature, model] of Object.entries(raw)) if (Object.hasOwn(AI_FEATURES, feature) && typeof model === 'string' && model.trim()) out[feature as AiFeature] = model.trim();
+  return out;
+}
+
 function validateAi(raw: unknown): { value: Partial<PortableAiSettings>; warnings: string[] } {
   const warnings: string[] = [];
   const value: Partial<PortableAiSettings> = {};
@@ -199,6 +212,10 @@ function validateAi(raw: unknown): { value: Partial<PortableAiSettings>; warning
     if (AI_ENUM_KEYS[k]) {
       if (typeof v === 'string' && AI_ENUM_KEYS[k]!.includes(v)) (value as Record<string, unknown>)[k] = v;
       else warnings.push(`preferences.ai.${key}: unexpected value, ignored`);
+    } else if (k === 'featureModels') {
+      const models = validateFeatureModels(v);
+      if (models) value.featureModels = models;
+      else warnings.push(`preferences.ai.${key}: expected an object of model names, ignored`);
     } else if (AI_STRING_KEYS.has(k)) {
       if (typeof v === 'string') (value as Record<string, unknown>)[k] = v;
       else warnings.push(`preferences.ai.${key}: expected a string, ignored`);
@@ -495,7 +512,7 @@ function countPatchChanges(current: AppSettings, patch: Partial<AppSettings>): n
   for (const key of Object.keys(patch) as (keyof AppSettings)[]) {
     if (key === 'ai') {
       const patchAi = patch.ai;
-      if (patchAi) for (const ak of Object.keys(patchAi) as (keyof AiSettings)[]) if (current.ai[ak] !== patchAi[ak]) changes++;
+      if (patchAi) for (const ak of Object.keys(patchAi) as (keyof AiSettings)[]) if (JSON.stringify(current.ai[ak]) !== JSON.stringify(patchAi[ak])) changes++;
       continue;
     }
     if ((current as unknown as Record<string, unknown>)[key] !== (patch as Record<string, unknown>)[key]) changes++;

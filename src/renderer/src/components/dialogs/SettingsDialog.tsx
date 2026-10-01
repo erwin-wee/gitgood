@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { watchedFolderLabel, type AppSettings, type FoundEditor, type FoundShell, type RepositoryScanProgress, type SigningConfig, type SigningConfigInfo, type SigningKey, type WatchedFolderProblem, type WatchedFolderStatus } from '@shared/types';
+import { watchedFolderLabel, type AiFeature, type AiUsageMonth, type AppSettings, type FoundEditor, type FoundShell, type RepositoryScanProgress, type SigningConfig, type SigningConfigInfo, type SigningKey, type WatchedFolderProblem, type WatchedFolderStatus } from '@shared/types';
 import { errorMessage, invoke, isMac, modKey, on } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type SettingsTab } from '../../state/store';
+import { modelFor } from '@shared/ai-model';
 import { AGENT_PRESETS, agentTemplate, validateAgentTemplate } from '@shared/agent-presets';
 import { Avatar, Button, Callout, Checkbox, Dialog, FilterInput, Icon, Spinner, TextField, type IconName } from '../ui';
 import { LinkifiedText } from './IssueDialogs';
@@ -683,11 +684,78 @@ function PostResolveCheckSettings({ ai, updateAi }: { ai: AppSettings['ai']; upd
   );
 }
 
+const AI_FEATURE_LABELS: Record<AiFeature, string> = {
+  resolver: 'Conflict resolution',
+  commitMessage: 'Commit messages',
+  review: 'Code review',
+  split: 'Commit splitting',
+  triage: 'Pull request triage',
+  prDraft: 'Pull request drafts',
+  rebase: 'Rebase plans',
+  releaseNotes: 'Release notes',
+  explain: 'Diff explanations',
+  errorExplain: 'Error explanations',
+  nlPalette: 'Command palette',
+};
+
+/** This month's and last month's AI usage per feature, from the machine-local usage log. Cost is shown only when the backend reports it. */
+function AiUsageSection(): React.JSX.Element {
+  const [months, setMonths] = useState<AiUsageMonth[] | null>(null);
+  useEffect(() => {
+    void invoke('ai.usage.get').then(setMonths).catch(() => setMonths([]));
+  }, []);
+  const n = (v: number) => v.toLocaleString();
+  return (
+    <>
+      <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Usage</h4>
+      {(months ?? []).map((m, i) => {
+        const rows = (Object.entries(m.features) as [AiFeature, NonNullable<AiUsageMonth['features'][AiFeature]>][]).sort((a, b) => b[1].requests - a[1].requests);
+        return (
+          <div key={m.month} style={{ marginBottom: 10 }}>
+            <strong style={{ fontSize: 12 }}>{i === 0 ? 'This month' : 'Last month'} ({m.month})</strong>
+            {rows.length ? (
+              <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr className="muted" style={{ textAlign: 'right' }}>
+                    <th style={{ textAlign: 'left', fontWeight: 'normal' }}>Feature</th>
+                    <th style={{ fontWeight: 'normal' }}>Requests</th>
+                    <th style={{ fontWeight: 'normal' }}>Input</th>
+                    <th style={{ fontWeight: 'normal' }}>Output</th>
+                    <th style={{ fontWeight: 'normal' }}>Cache reads</th>
+                    <th style={{ fontWeight: 'normal' }}>Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(([feature, t]) => (
+                    <tr key={feature} style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'left' }}>{AI_FEATURE_LABELS[feature] ?? feature}</td>
+                      <td>{n(t.requests)}</td>
+                      <td>{n(t.inputTokens)}</td>
+                      <td>{n(t.outputTokens)}</td>
+                      <td>{n(t.cacheReadTokens)}</td>
+                      <td>{t.costUsd === null ? '—' : `$${t.costUsd.toFixed(2)}`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="muted" style={{ fontSize: 12, margin: '2px 0 0' }}>No AI requests.</p>
+            )}
+          </div>
+        );
+      })}
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Token counts are what the provider reports; cost appears only when the backend reports it (Claude Code does, the API does not). Kept on this machine only; not exported or synced.</p>
+    </>
+  );
+}
+
 function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }): React.JSX.Element {
   const tools = useAppStore((s) => s.tools);
   const errorFeedback = useAppStore((s) => s.aiErrorFeedback);
   const [key, setKey] = useState('');
   const [savingKey, setSavingKey] = useState(false);
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [savingOpenaiKey, setSavingOpenaiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [customModel, setCustomModel] = useState(!MODELS.some((m) => m.id === settings.ai.model));
@@ -707,15 +775,29 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
       setSavingKey(false);
     }
   };
+  const saveOpenaiKey = async () => {
+    setSavingOpenaiKey(true);
+    try {
+      const next = await invoke('app.setOpenaiApiKey', openaiKey.trim() || null);
+      store.set((s) => (s.settings ? { settings: { ...s.settings, ai: next } } : {}));
+      setOpenaiKey('');
+    } catch (err) {
+      actions.showError('Could not save API key', err);
+    } finally {
+      setSavingOpenaiKey(false);
+    }
+  };
   return (
     <>
       <h3>AI conflict resolution</h3>
       <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>One click asks Claude to reconcile both sides of every conflict block in a file. Only the conflicted regions, some surrounding context and the commit subjects on each side are sent. Results are written to the file and can be undone.</p>
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Files that look like secrets (.env, private keys, certificates, .netrc, credentials*.json, …) are never sent to any provider, and known token patterns are masked in the text the read-only features send. Individual repositories can opt out from the repository list menu, or with <span className="mono">{'{ "ai": false }'}</span> in <span className="mono">.gitgood/config.json</span>.</p>
       <div className="settings-row">
         <label htmlFor="settings-ai-provider">Provider</label>
         <select id="settings-ai-provider" value={ai.provider} onChange={(e) => updateAi({ provider: e.target.value as AppSettings['ai']['provider'] })}>
           <option value="anthropic">Anthropic API (API key)</option>
           <option value="claude-cli">Claude Code CLI (uses your existing login)</option>
+          <option value="openai-compatible">OpenAI-compatible server (OpenAI, Ollama, LM Studio, …)</option>
           <option value="disabled">Disabled</option>
         </select>
       </div>
@@ -731,6 +813,19 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
           </p>
         </>
       ) : null}
+      {ai.provider === 'openai-compatible' ? (
+        <>
+          <TextField label="Base URL" hint="Include the version path, e.g. https://api.openai.com/v1 or http://localhost:11434/v1. GitGood calls POST {base URL}/chat/completions." value={ai.openaiBaseUrl} placeholder="https://api.openai.com/v1" spellCheck={false} onChange={(e) => updateAi({ openaiBaseUrl: e.target.value.trim() })} />
+          <div className="settings-row">
+            <label>API key</label>
+            <input type="password" placeholder={ai.hasOpenaiApiKey ? '•••••••••••• (stored securely)' : 'Optional for local servers'} value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} spellCheck={false} autoComplete="off" />
+            <Button onClick={() => void saveOpenaiKey()} loading={savingOpenaiKey} disabled={!openaiKey.trim() && !ai.hasOpenaiApiKey}>{openaiKey.trim() ? 'Save' : ai.hasOpenaiApiKey ? 'Remove' : 'Save'}</Button>
+          </div>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Stored encrypted with the operating system's credential store like the Anthropic key, sent only to the base URL above, and never exported or synced. Changing the base URL through a settings import removes the stored key. Requests ask for strict JSON-schema output and fall back to plain JSON mode when the server does not support it.
+          </p>
+        </>
+      ) : null}
       {ai.provider === 'claude-cli' ? (
         <Callout tone={tools?.claudeCli.installed ? 'success' : 'warning'}>
           {tools?.claudeCli.installed ? `Claude Code ${tools.claudeCli.version ?? ''} found at ${tools.claudeCli.path}. Requests use its sign-in and plan.` : 'Claude Code CLI was not found on this machine. Install it (npm install -g @anthropic-ai/claude-code) and sign in, or set its path under Advanced.'}
@@ -740,7 +835,9 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
         <>
           <div className="settings-row">
             <label htmlFor="settings-ai-model">Model</label>
-            {customModel ? (
+            {ai.provider === 'openai-compatible' ? (
+              <input id="settings-ai-model" value={ai.openaiModel} placeholder="e.g. gpt-4o or llama3.1" onChange={(e) => updateAi({ openaiModel: e.target.value.trim() })} spellCheck={false} />
+            ) : customModel ? (
               <input id="settings-ai-model" value={ai.model} onChange={(e) => updateAi({ model: e.target.value })} spellCheck={false} />
             ) : (
               <select id="settings-ai-model" value={ai.model} onChange={(e) => updateAi({ model: e.target.value })}>
@@ -761,6 +858,25 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
               <option value="max">Max (most thorough)</option>
             </select>
           </div>
+          <details style={{ margin: '8px 0' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12 }}>Model per feature{Object.values(ai.featureModels ?? {}).some(Boolean) ? ' (customised)' : ''}</summary>
+            <p className="muted" style={{ fontSize: 12 }}>Leave a field empty to use the model above. A cheaper model for commit messages and triage, a stronger one for review, for example.</p>
+            {(Object.keys(AI_FEATURE_LABELS) as AiFeature[]).map((f) => (
+              <div className="settings-row" key={f}>
+                <label htmlFor={`settings-ai-model-${f}`}>{AI_FEATURE_LABELS[f]}</label>
+                <input
+                  id={`settings-ai-model-${f}`}
+                  value={ai.featureModels?.[f] ?? ''}
+                  placeholder={modelFor({ ...ai, featureModels: {} }, f)}
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const { [f]: _removed, ...rest } = ai.featureModels ?? {};
+                    updateAi({ featureModels: e.target.value.trim() ? { ...rest, [f]: e.target.value.trim() } : rest });
+                  }}
+                />
+              </div>
+            ))}
+          </details>
           <Checkbox checked={ai.autoStageAfterResolve} onChange={(v) => updateAi({ autoStageAfterResolve: v })} label="Mark files as resolved automatically after a successful AI resolution" />
           <PostResolveCheckSettings ai={ai} updateAi={updateAi} />
           <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Pull request review</h4>
@@ -832,6 +948,7 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
             {testResult ? <span style={{ color: testResult.ok ? 'var(--success)' : 'var(--danger)', fontSize: 12 }}>{testResult.message}</span> : null}
           </div>
           {ai.provider === 'anthropic' && /claude-(opus-5|fable)/.test(ai.model) ? <p className="muted" style={{ fontSize: 12 }}>Server-side refusal fallback is enabled: if a safety classifier declines a request, the API retries it on a fallback model automatically.</p> : null}
+          <AiUsageSection />
         </>
       ) : null}
     </>

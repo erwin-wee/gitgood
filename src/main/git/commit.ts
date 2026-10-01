@@ -1,3 +1,5 @@
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type { CommitOptions } from '@shared/types';
 import { GitError, type GitClient } from './git';
 
@@ -51,6 +53,35 @@ export function formatCommitMessage(summary: string, description: string, coAuth
   return `${message}\n`;
 }
 
+/** Per-commit flags (signing, --signoff, --no-verify) shared by the message path and the merge `--no-edit` path. */
+export function commitFlags(opts: Pick<CommitOptions, 'signOverride' | 'signoff' | 'noVerify'>): string[] {
+  const sign = opts.signOverride === 'sign' ? ['-S'] : opts.signOverride === 'unsigned' ? ['--no-gpg-sign'] : [];
+  return [...sign, ...(opts.signoff ? ['--signoff'] : []), ...(opts.noVerify ? ['--no-verify'] : [])];
+}
+
+const MAX_TEMPLATE_BYTES = 64 * 1024;
+
+/**
+ * The repository's `commit.template` as summary and description (comment lines dropped, as `--cleanup=strip` would), or null when none is
+ * configured, readable, or all comments. The path resolves like git does (`~` expanded by `--type=path`, relative paths against the working tree
+ * root). The file may live outside the repository, but a repository's own config can name it too, so only a small regular text file is read.
+ */
+export async function readCommitTemplate(git: GitClient, repoPath: string): Promise<{ summary: string; description: string } | null> {
+  const configured = (await git.tryRun(repoPath, ['config', '--type=path', '--get', 'commit.template'], { readOnly: true }))?.stdout.trim();
+  if (!configured) return null;
+  try {
+    const file = resolve(repoPath, configured);
+    const info = await stat(file);
+    if (!info.isFile() || info.size > MAX_TEMPLATE_BYTES) return null;
+    const text = await readFile(file, 'utf8');
+    if (text.includes('\0')) return null;
+    const [summary = '', ...rest] = text.replace(/\r\n/g, '\n').split('\n').filter((l) => !l.startsWith('#')).join('\n').trim().split('\n');
+    return summary || rest.length ? { summary, description: rest.join('\n').trim() } : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Creates a commit from the selected files, mirroring GitHub Desktop: the index
  * is rebuilt from the selection so that the commit matches what the UI shows.
@@ -64,11 +95,11 @@ export async function createCommit(git: GitClient, repoPath: string, opts: Commi
     await applyPatchToIndex(git, repoPath, patch);
   }
   const message = formatCommitMessage(opts.summary, opts.description, opts.coAuthors);
-  const signArgs = opts.signOverride === 'sign' ? ['-S'] : opts.signOverride === 'unsigned' ? ['--no-gpg-sign'] : [];
-  const args = ['commit', '-F', '-', '--cleanup=strip', ...signArgs];
+  const flags = commitFlags(opts);
+  const args = ['commit', '-F', '-', '--cleanup=strip', ...flags];
   if (opts.amend) args.push('--amend');
   if (mergeInProgress && !opts.summary.trim()) {
-    await git.run(repoPath, ['commit', '--no-edit', ...signArgs]);
+    await git.run(repoPath, ['commit', '--no-edit', ...flags]);
   } else {
     if (!opts.summary.trim() && !opts.amend) throw new GitError({ message: 'A commit summary is required.', command: 'git commit', exitCode: null, stderr: '', stdout: '', code: 'unknown' });
     await git.run(repoPath, args, { stdin: message });

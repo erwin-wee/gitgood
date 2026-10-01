@@ -1,3 +1,4 @@
+import { aiProviderLabel } from '@shared/ai-model';
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ReviewFinding, ReviewSeverity, ReviewTarget } from '@shared/types';
 import { errorMessage } from '../../api';
@@ -29,6 +30,7 @@ export function ReviewPreflightDialog({ target }: { target: ReviewTarget }): Rea
   });
   useEffect(() => setDeselected(new Set()), [plan?.target.headSha]);
 
+  const aiSettings = useAppStore((s) => s.settings?.ai);
   const pending = plan?.files.filter((f) => f.status === 'pending') ?? [];
   const skipped = plan?.files.filter((f) => f.status === 'skipped') ?? [];
   const selected = pending.filter((f) => !deselected.has(f.file.path));
@@ -66,7 +68,7 @@ export function ReviewPreflightDialog({ target }: { target: ReviewTarget }): Rea
       </p>
       {!noticeSeen ? (
         <Callout tone="info">
-          The diff, pull request description and up to 400 lines of surrounding code per file are sent to {plan?.provider === 'claude-cli' ? 'Claude Code' : 'the Anthropic API'}. Do not review changes you are not allowed to share with that service.
+          The diff, pull request description and up to 400 lines of surrounding code per file are sent to {aiProviderLabel(aiSettings)}. Do not review changes you are not allowed to share with that service.
           <div style={{ marginTop: 6 }}>
             <Button size="sm" onClick={() => setNoticeSeen(true)}>Got it</Button>
           </div>

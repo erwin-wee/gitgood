@@ -1,6 +1,7 @@
+import { modelFor } from '@shared/ai-model';
 import React, { useMemo } from 'react';
 import * as actions from '../../state/actions';
-import { closeDialog, useAppStore } from '../../state/store';
+import { closeDialog, useAppStore, useAiEnabled } from '../../state/store';
 import { Button, Callout, Dialog, Icon, PathLabel, Spinner } from '../ui';
 
 export function ConflictsDialog(): React.JSX.Element {
@@ -22,7 +23,7 @@ export function ConflictsDialog(): React.JSX.Element {
     [rawConflicted, conflictResolutions],
   );
   const kind = operation?.kind ?? 'none';
-  const aiEnabled = settings?.ai.provider !== 'disabled';
+  const aiEnabled = useAiEnabled();
   const opLabel = kind === 'merge' ? `merging ${operation?.targetName ?? 'branch'} into ${status?.branch.name ?? 'current branch'}` : kind === 'rebase' ? `rebasing ${operation?.headName ?? 'branch'} onto ${operation?.ontoName ?? operation?.onto?.slice(0, 7) ?? 'target'}` : kind === 'cherry-pick' ? `cherry-picking ${operation?.targetSha?.slice(0, 7) ?? ''}` : kind === 'revert' ? `reverting ${operation?.targetSha?.slice(0, 7) ?? ''}` : 'this operation';
   const done = conflicted.length === 0;
   const continueLabel = kind === 'merge' ? 'Commit merge' : kind === 'rebase' ? 'Continue rebase' : kind === 'cherry-pick' ? 'Continue cherry-pick' : kind === 'revert' ? 'Continue revert' : 'Continue';
@@ -64,7 +65,7 @@ export function ConflictsDialog(): React.JSX.Element {
                 </Button>
               ) : null}
               <span className="muted" style={{ fontSize: 12 }}>
-                Uses {settings?.ai.provider === 'claude-cli' ? 'Claude Code' : settings?.ai.model}; every resolution stays reviewable in the diff and can be undone.
+                Uses {settings?.ai.provider === 'claude-cli' ? 'Claude Code' : settings ? modelFor(settings.ai, 'resolver') : ''}; every resolution stays reviewable in the diff and can be undone.
               </span>
             </div>
           ) : (

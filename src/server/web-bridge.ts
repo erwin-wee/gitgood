@@ -109,6 +109,7 @@ export const WEB_BRIDGE_JS = `(function () {
     // Editor/terminal integrations run on the server's machine: a browser may be elsewhere, so only the desktop client (which blocks them for remote servers) sends them.
     if (!native && method === 'app.openInEditor') return unsupported('Open in editor is only available in the desktop app.');
     if (!native && method === 'app.openInShell') return unsupported('Open in terminal is only available in the desktop app.');
+    if (!native && (method === 'app.openDiffTool' || method === 'app.openMergeTool')) return unsupported('External diff and merge tools are only available in the desktop app.');
     return httpInvoke(method, args);
   }
   window.gitgoodBridge = {

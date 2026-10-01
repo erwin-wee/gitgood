@@ -11,6 +11,7 @@
 import { rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ErrorExplanation, GitErrorInfo } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import { exec } from '../exec';
 import { FIX_ACTIONS } from './fixActions';
 import type { GitClient } from '../git/git';
@@ -20,6 +21,7 @@ import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
+import { cancelOwned, ownedController } from '../core/client-context';
 import { createBackend } from './provider';
 import { scrubSecrets } from '@shared/secrets';
 import { buildErrorExplainPrompt, ERROR_EXPLAIN_SCHEMA, ERROR_EXPLAIN_SYSTEM_PROMPT, type ErrorExplainRemote } from './prompts';
@@ -34,8 +36,7 @@ export class ErrorExplainService {
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    if (cancelOwned(this.controller)) this.controller = null;
   }
 
   /** True while an explanation request is in flight; used by the update install gate alongside the other AI services. */
@@ -44,8 +45,8 @@ export class ErrorExplainService {
   }
 
   async explainError(repoPath: string | null, error: GitErrorInfo, retryable: boolean): Promise<ErrorExplanation> {
-    const { backend, settings } = await createBackend(this.store, this.tools);
-    const controller = new AbortController();
+    const { backend, settings } = await createBackend(this.store, this.tools, 'errorExplain');
+    const controller = ownedController();
     this.controller = controller;
     try {
       const hasRepo = repoPath !== null;
@@ -89,7 +90,7 @@ export class ErrorExplainService {
         system: ERROR_EXPLAIN_SYSTEM_PROMPT,
         prompt,
         schema: ERROR_EXPLAIN_SCHEMA as unknown as Record<string, unknown>,
-        model: settings.model,
+        model: modelFor(settings, 'errorExplain'),
         effort: settings.effort === 'max' ? 'high' : settings.effort,
         signal: controller.signal,
       });

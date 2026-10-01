@@ -3,8 +3,10 @@ import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { ApiMethodName, ApiMethods, DiffOptions, EventPayloads, HistoryOptions } from '@shared/ipc';
-import type { AppSettings, Commit, CommitFile, CommitOptions, GitErrorInfo, GitHubRepoRef, IpcResult, ProgressEvent, RepositoryStatus, WorkingFile } from '@shared/types';
+import type { AiFeature, AppSettings, Commit, CommitFile, CommitOptions, GitErrorInfo, GitHubRepoRef, IpcResult, ProgressEvent, RepositoryStatus, WorkingFile } from '@shared/types';
 import { AiError } from '../ai/backends';
+import { guardAiHandlers } from '../ai/repo-guard';
+import { readUsage } from '../ai/usage';
 import type { ErrorExplainService } from '../ai/error-explain';
 import type { ExplainService } from '../ai/explain';
 import type { NlPaletteService } from '../ai/nlPalette';
@@ -20,10 +22,11 @@ import type { InboxPoller } from '../gh/inbox-poller';
 import { discoverIssueTemplates } from '../gh/issue-templates';
 import type { SettingsSyncService } from '../gh/settings-sync';
 import { GitError, toGitErrorInfo, type GitClient } from '../git/git';
+import { difftoolArgs, launchGitTool } from '../git/external-tools';
 import { getBlameResult, readFileAtCommit } from '../git/blame';
 import { checkoutBranch, checkoutRemoteBranch, createBranch, deleteLocalBranch, deleteRemoteBranch, getBranches, getCurrentBranchName, getDefaultBranch, renameBranch } from '../git/branches';
-import { applyPatchToWorktree, createCommit, getLastCommitMessage, isUnborn, stageFiles, undoLastCommit, unstageFiles } from '../git/commit';
-import { getCommitFileDiff, getRangeFileDiff, getStashFileDiff, getStashFiles, getWorkingDiff, toFsPath } from '../git/diff';
+import { applyPatchToWorktree, createCommit, getLastCommitMessage, isUnborn, readCommitTemplate, stageFiles, undoLastCommit, unstageFiles } from '../git/commit';
+import { getCommitFileDiff, getRangeFileDiff, getRangeFiles, getStashFileDiff, getStashFiles, getWorkingDiff, toFsPath } from '../git/diff';
 import { deleteManyBranches, expireReflog, findLargestBlobs, getHousekeeping, getStaleBranches, pruneRemote, runGc } from '../git/health';
 import { getLfsFiles, getLfsStatus, lfsFetch, lfsInstallLocal, lfsPrune, setLfsTracking } from '../git/lfs';
 import { compareRefs, getCommit, getCommitFiles, getHistory, getMatchingFiles, getPathHistory, isCommitPushed, parseNameStatusZ } from '../git/log';
@@ -40,7 +43,7 @@ import { findShells, openShell, openShellWithCommand } from '../integrations/she
 import { getLogPath, log } from '../logger';
 import { readRepoConfig } from '../repo/config';
 import type { RepositoryManager } from '../repo/manager';
-import { assertInsideRepo, canonicalPath } from '../repo/paths';
+import { assertInsideRepo, canonicalPath, readRepoFile, writeRepoFile } from '../repo/paths';
 import { addWatchedFolder, folderProblem, sanitizeWatchedFolders, type WatchedFolderScanner } from '../repo/watched-folders';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
@@ -287,6 +290,10 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       store.setApiKey(key && key.trim() ? key.trim() : null);
       return store.getSettings().ai;
     },
+    'app.setOpenaiApiKey': async (key) => {
+      store.setOpenaiApiKey(key && key.trim() ? key.trim() : null);
+      return store.getSettings().ai;
+    },
     'app.openExternal': async (url) => {
       if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) links can be opened.');
       await host.openExternal(url);
@@ -309,6 +316,14 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'app.openInShell': async (repoPath) => {
       const settings = store.getSettings();
       await openShell(settings.shell, settings.shell === 'custom' ? settings.customShellPath : null, repoPath, (await tools.env()).PATH);
+    },
+    'app.openDiffTool': async (repoPath, path, source) => {
+      toFsPath(repoPath, path);
+      await launchGitTool(git, repoPath, 'diff', difftoolArgs(path, source), () => {});
+    },
+    'app.openMergeTool': async (repoPath, path) => {
+      toFsPath(repoPath, path);
+      await launchGitTool(git, repoPath, 'merge', ['mergetool', '--no-prompt', '--', path], () => send('repo.changed', { repoPath, reason: 'both' }));
     },
     'app.clipboard.write': async (text) => host.clipboardWrite(text),
     'app.pathExists': async (p) => existsSync(p),
@@ -385,7 +400,8 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     'gh.pr.checks': async (repoPath, number) => gh.prChecks(await requireGitHub(repoPath), number),
     'gh.pr.checkout': async (repoPath, number) => withBusy(repoPath, () => gh.prCheckout(repoPath, number)),
     'gh.pr.create': async (repoPath, opts) => gh.prCreate(repoPath, opts),
-    'gh.pr.merge': async (repoPath, number, method, deleteBranch) => gh.prMerge(await requireGitHub(repoPath), number, method, deleteBranch),
+    'gh.pr.merge': async (repoPath, number, method, deleteBranch, auto) => gh.prMerge(await requireGitHub(repoPath), number, method, deleteBranch, auto),
+    'gh.pr.disableAutoMerge': async (repoPath, number) => gh.prDisableAutoMerge(await requireGitHub(repoPath), number),
     'gh.pr.ready': async (repoPath, number, ready) => gh.prReady(await requireGitHub(repoPath), number, ready),
     'gh.pr.close': async (repoPath, number) => gh.prClose(await requireGitHub(repoPath), number),
     'gh.pr.reopen': async (repoPath, number) => gh.prReopen(await requireGitHub(repoPath), number),
@@ -479,13 +495,15 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       await mkdir(resolve(target, '..'), { recursive: true });
       const p = progress('clone', `Cloning ${name}`, null);
       try {
-        await withBusy(`clone:${target}`, () => ops.clone(git, url, target, opts.branch, (pct, desc) => p.update(pct, desc)));
+        await withBusy(`clone:${target}`, () => ops.clone(git, url, target, opts, (pct, desc) => p.update(pct, desc)));
       } finally {
         p.done();
       }
       return repos.add(target);
     },
     'repos.setAlias': async (id, alias) => repos.setAlias(id, alias),
+    'repos.setAiDisabled': async (id, disabled) => repos.setAiDisabled(id, disabled),
+    'repos.setPrefs': async (id, prefs) => repos.setPrefs(id, prefs),
     'repos.refreshIndicators': async () => repos.refreshIndicators(),
 
     // ---------------- watched folders ----------------
@@ -515,7 +533,10 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
     },
 
     // ---------------- repository reads ----------------
-    'repo.open': async (path) => repos.open(path),
+    'repo.open': async (path) => {
+      const info = await repos.open(path);
+      return (await readRepoConfig(path)).ai ? info : { ...info, aiConfigOff: true };
+    },
     'repo.close': async (path) => repos.release(path),
     'repo.status': async (repoPath) => freshStatus(repoPath),
     'repo.branches': async (repoPath) => getBranches(git, repoPath),
@@ -551,19 +572,22 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       const file = parseNameStatusZ(nameStatus).find((f) => f.path === path) ?? { path, oldPath: null, status: 'modified' as const, additions: null, deletions: null, binary: false, lfs: false };
       return getRangeFileDiff(git, repoPath, base, head, file, opts);
     },
+    'repo.diff.rangeFiles': async (repoPath, base, head) => getRangeFiles(git, repoPath, base, head),
+    'repo.commitTemplate': async (repoPath) => readCommitTemplate(git, repoPath),
     'repo.stash.files': async (repoPath, stashRef) => getStashFiles(git, repoPath, stashRef),
     'repo.stash.resolveRef': async (repoPath, sha) => ops.resolveStashRef(git, repoPath, sha),
     'repo.compare': async (repoPath, base, head) => compareRefs(git, repoPath, base, head),
     'repo.readFile': async (repoPath, path) => {
-      const fsPath = toFsPath(repoPath, path);
-      await assertInsideRepo(repoPath, fsPath);
-      return readFile(fsPath, 'utf8');
+      toFsPath(repoPath, path);
+      const buf = await readRepoFile(repoPath, path);
+      if (!buf) throw new Error(`Cannot read ${path}: missing, a symbolic link, or outside the repository`);
+      return buf.toString('utf8');
     },
     'repo.writeFile': async (repoPath, path, content) => {
       const fsPath = toFsPath(repoPath, path);
       await assertInsideRepo(repoPath, fsPath);
       await mkdir(dirname(fsPath), { recursive: true });
-      await writeFile(fsPath, content, 'utf8');
+      await writeRepoFile(repoPath, path, content);
     },
     'repo.gitignore.read': async (repoPath) => ops.readGitignore(repoPath),
     'repo.gitignore.write': async (repoPath, content) => ops.writeGitignore(repoPath, content),
@@ -865,18 +889,23 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       store.setRepoConfigTrust(repoPath, trusted, command);
       return { ok: true };
     },
-    'ai.cancel': async () => {
-      resolver.cancel();
-      review.cancel();
-      splitter.cancel();
-      triage.cancel();
-      prDraft.cancel();
-      rebasePlan.cancel();
-      releaseNotes.cancel();
-      explain.cancel();
-      errorExplain.cancel();
-      nlPalette.cancel();
+    'ai.cancel': async (feature) => {
+      const cancel: Record<AiFeature, () => void> = {
+        resolver: () => resolver.cancel('resolver'),
+        commitMessage: () => resolver.cancel('commitMessage'),
+        review: () => review.cancel(),
+        split: () => splitter.cancel(),
+        triage: () => triage.cancel(),
+        prDraft: () => prDraft.cancel(),
+        rebase: () => rebasePlan.cancel(),
+        releaseNotes: () => releaseNotes.cancel(),
+        explain: () => explain.cancel(),
+        errorExplain: () => errorExplain.cancel(),
+        nlPalette: () => nlPalette.cancel(),
+      };
+      cancel[feature]?.();
     },
+    'ai.usage.get': async () => readUsage(),
     'ai.review.plan': async (repoPath, target) => review.plan(repoPath, target),
     'ai.review.start': async (repoPath, target, opts) => review.start(repoPath, target, opts ?? {}, (e) => send('ai.review.progress', e)),
     'ai.review.get': async (repoPath, target) => review.get(repoPath, target),
@@ -1031,6 +1060,13 @@ export function createHandlers(deps: HandlerDeps): CoreHandlers {
       return settings;
     },
   };
+
+  // One chokepoint for the per-repository AI opt-out: the local toggle (Repositories menu) or `"ai": false` in .gitgood/config.json.
+  guardAiHandlers(handlers as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>, async (repoPath) => {
+    if (repos.getByPath(repoPath)?.aiDisabled) return 'AI is turned off for this repository on this machine. Turn it back on from the repository list menu.';
+    if (!(await readRepoConfig(repoPath)).ai) return 'AI is turned off for this repository by "ai": false in .gitgood/config.json.';
+    return null;
+  });
 
   // The palette's execution step calls back into these same handlers (never a shell, never a
   // bespoke code path) so it gets identical behaviour to a manual action for the same ApiMethods key.

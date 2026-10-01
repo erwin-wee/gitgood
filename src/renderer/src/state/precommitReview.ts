@@ -1,3 +1,4 @@
+import { aiEnabled } from '@shared/ai-model';
 import type { ReviewFinding, WorktreeReviewOptions } from '@shared/types';
 import { buildStagePatch } from '@shared/diff/patch';
 import { isImagePath } from '@shared/util';
@@ -13,7 +14,7 @@ import { initialPrecommitReview, openDialog, patchPrecommitReview, showToast, st
 
 export function precommitReviewAvailable(): boolean {
   const s = store.get();
-  return !!s.currentRepo && s.settings?.ai.provider !== 'disabled';
+  return !!s.currentRepo && aiEnabled(s.settings, s.currentRepo);
 }
 
 const LOCKFILE_NAMES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'cargo.lock', 'go.sum', 'composer.lock']);
@@ -113,7 +114,7 @@ export async function rereviewStalePrecommitFindings(): Promise<void> {
 }
 
 export function cancelPrecommitReview(): void {
-  void invoke('ai.cancel').catch(() => undefined);
+  void invoke('ai.cancel', 'review').catch(() => undefined);
 }
 
 export function togglePrecommitReviewStrip(): void {

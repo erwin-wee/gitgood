@@ -5,6 +5,7 @@ import type { CommitFile, FileDiff, ImagePayload, WorkingFile } from '@shared/ty
 import { parseConflicts } from '@shared/diff/conflicts';
 import { countDiffLines, parseUnifiedDiff, synthesizeAddedDiff, type ParsedDiff } from '@shared/diff/parse';
 import { buildStagePatch, selectAll } from '@shared/diff/patch';
+import { dropSecretFilePatches, secretFileReason } from '@shared/secrets';
 import { imageMediaType, isImagePath, languageFromPath } from '@shared/util';
 import { EMPTY_TREE_SHA, type GitClient } from './git';
 import { isLfsPointerBuffer, readLfsObject } from './lfs';
@@ -224,6 +225,12 @@ export async function getRangeFileDiff(git: GitClient, repoPath: string, base: s
   return finishRefDiff(git, repoPath, result.stdout, file, mergeBase, head, opts);
 }
 
+/** Files changed between the merge base of `base` and `head` (`base...head`), the file list for a pull-request-style comparison. */
+export async function getRangeFiles(git: GitClient, repoPath: string, base: string, head: string): Promise<CommitFile[]> {
+  const out = await git.stdout(repoPath, ['diff', '--name-status', '-z', '-M', `${base}...${head}`], { readOnly: true, okExitCodes: [1] });
+  return parseNameStatusZ(out).sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
+}
+
 /** Text of a blob at a ref, or null when missing or binary. */
 export async function readBlobText(git: GitClient, repoPath: string, ref: string, path: string): Promise<string | null> {
   return textOrNull(await readBlob(git, repoPath, ref, path));
@@ -266,15 +273,17 @@ export async function getStashFileDiff(git: GitClient, repoPath: string, stashRe
  * ref that does not resolve), so callers still get a best-effort diff rather
  * than an outright failure.
  */
-export async function getRangePatch(git: GitClient, repoPath: string, base: string, head: string, maxBytes: number): Promise<{ stat: string; patch: string; truncated: boolean }> {
+export async function getRangePatch(git: GitClient, repoPath: string, base: string, head: string, maxBytes: number): Promise<{ stat: string; patch: string; truncated: boolean; skipped: string[] }> {
   const mb = (await mergeBase(git, repoPath, base, head)) ?? base;
   const [statRes, diffRes] = await Promise.all([
     git.tryRun(repoPath, ['diff', '--no-color', '--no-ext-diff', '-M', '--stat=120', `${mb}...${head}`], { readOnly: true, okExitCodes: [1] }),
     git.run(repoPath, ['diff', '--no-color', '--no-ext-diff', '-M', `${mb}...${head}`], { readOnly: true, okExitCodes: [1], maxBuffer: 256 * 1024 * 1024 }),
   ]);
-  const patch = diffRes.stdout;
+  // Secret-shaped files (.env, keys, …) never reach the AI prompt; `skipped` says which were left out.
+  const { patch, skipped } = dropSecretFilePatches(diffRes.stdout);
+  const stat = (statRes?.stdout ?? '').split('\n').filter((l) => !secretFileReason(l.split(' | ')[0].trim())).join('\n');
   const truncated = patch.length > maxBytes;
-  return { stat: statRes?.stdout ?? '', patch: truncated ? patch.slice(0, maxBytes) : patch, truncated };
+  return { stat, patch: truncated ? patch.slice(0, maxBytes) : patch, truncated, skipped };
 }
 
 /**

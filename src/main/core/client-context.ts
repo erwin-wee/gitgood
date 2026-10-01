@@ -11,3 +11,19 @@ export const clientContext = new AsyncLocalStorage<string>();
 export function currentClient(): string {
   return clientContext.getStore() ?? '';
 }
+
+const controllerOwners = new WeakMap<AbortController, string>();
+
+/** An AbortController tagged with the client that started the job, so `cancelOwned` can leave other clients' jobs alone. */
+export function ownedController(): AbortController {
+  const controller = new AbortController();
+  controllerOwners.set(controller, currentClient());
+  return controller;
+}
+
+/** Aborts `controller` if the calling client started it; returns whether it did. */
+export function cancelOwned(controller: AbortController | null): boolean {
+  if (!controller || controllerOwners.get(controller) !== currentClient()) return false;
+  controller.abort();
+  return true;
+}

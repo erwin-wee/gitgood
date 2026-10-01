@@ -43,6 +43,7 @@ function makePr(number: number): PullRequest {
     changedFiles: 1,
     mergeable: 'MERGEABLE',
     mergeStateStatus: 'CLEAN',
+    autoMerge: null,
     labels: [],
     assignees: [],
     reviewRequests: [],

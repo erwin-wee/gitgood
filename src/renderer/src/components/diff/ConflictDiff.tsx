@@ -2,10 +2,10 @@ import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from '
 import type { ConflictBlockResolution, FileDiff } from '@shared/types';
 import { applyResolutions, parseConflicts, resolutionForChoice, type BlockChoice } from '@shared/diff/conflicts';
 import { escapeHtml } from '@shared/util';
-import { highlightBlockLine } from '../../lib/highlight';
+import { highlightBlockLine, useLanguageLoaded } from '../../lib/highlight';
 import { useWindowedRows } from '../../lib/windowing';
 import * as actions from '../../state/actions';
-import { openDialog, useAppStore } from '../../state/store';
+import { openDialog, useAppStore, useAiEnabled } from '../../state/store';
 import { Button, Icon, Spinner } from '../ui';
 
 type ConflictData = Extract<FileDiff, { kind: 'conflict' }>;
@@ -50,9 +50,11 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
     resetKey: diff.content,
   });
 
+  const grammarReady = useLanguageLoaded(syntax ? diff.language : null);
   const highlighted = useCallback(
     (lineNo: number): string | undefined => (syntax ? highlightBlockLine(hlCache.current, 'file', parsed.lines, lineNo, diff.language) : undefined),
-    [syntax, parsed.lines, diff.language],
+    // grammarReady: a freshly loaded grammar must give rows a new callback so they re-render highlighted.
+    [syntax, parsed.lines, diff.language, grammarReady],
   );
 
   const lineKinds = useMemo(() => {
@@ -117,7 +119,7 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
 
   const oursName = operation === 'rebase' ? `${diff.oursLabel} (upstream)` : `${diff.oursLabel} (current branch)`;
   const theirsName = operation === 'rebase' ? `${diff.theirsLabel} (your commit)` : `${diff.theirsLabel} (incoming)`;
-  const aiEnabled = settings?.ai.provider !== 'disabled';
+  const aiEnabled = useAiEnabled();
 
   const counts = resolution ? { high: resolution.blocks.filter((b) => b.confidence === 'high').length, medium: resolution.blocks.filter((b) => b.confidence === 'medium').length, low: resolution.blocks.filter((b) => b.confidence === 'low').length } : null;
 
@@ -166,6 +168,7 @@ export function ConflictDiff({ diff, path, syntax }: { diff: ConflictData; path:
         <Button size="sm" onClick={() => void actions.useSide(path, 'ours')} title={`Take the whole file from ${oursName}`}>Use ours</Button>
         <Button size="sm" onClick={() => void actions.useSide(path, 'theirs')} title={`Take the whole file from ${theirsName}`}>Use theirs</Button>
         <Button size="sm" icon="pencil" onClick={() => void actions.openInEditor(path)}>Open in editor</Button>
+        <Button size="sm" onClick={() => void actions.openMergeTool(path)} title="Run your configured merge.tool on this file (git mergetool). The conflict list refreshes when it exits.">Open in merge tool</Button>
         {parsed.blocks.length === 0 ? (
           <Button size="sm" variant="primary" icon="check" onClick={() => void actions.markResolved([path])}>Mark as resolved</Button>
         ) : null}

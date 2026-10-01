@@ -574,6 +574,9 @@ export function explanationToMarkdown(explanation: Explanation, target: ExplainT
 /** AI-drafted footer appended to a pull request body only at create time (see the ai-pr-description spec's "Attribution and no automatic submission"). */
 export const PR_DRAFT_FOOTER = '_Drafted with AI in GitGood; reviewed before creating._';
 
+/** Oldest git/gh the app supports (README requirements); older tools still run, they're only flagged (see src/main/tools.ts). */
+export const MIN_TOOL_VERSIONS = { git: '2.30.0', gh: '2.40.0' } as const;
+
 /** AI-drafted footer appended to a release body only when it is published to GitHub (see the add-ai-release-notes spec). */
 export const RELEASE_NOTES_FOOTER = '_Drafted with AI in GitGood; reviewed before publishing._';
 

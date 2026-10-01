@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, dialog, Menu, nativeTheme, Notification } from 'electron';
 import { autoUpdater } from 'electron-updater';
@@ -10,12 +10,14 @@ import { PrDraftService } from './ai/prDraft';
 import { RebasePlanService } from './ai/rebasePlan';
 import { ReleaseNotesService } from './ai/release-notes';
 import { ConflictResolver } from './ai/resolver';
+import { configureUsage } from './ai/usage';
 import { ReviewService } from './ai/review';
 import { SplitterService } from './ai/splitter';
 import { TriageService } from './ai/triage';
 import { applyInboxBadge } from './badge';
 import { clientServerUrl, fetchServerVersion, isLocalServerUrl, registerClientIpc, showInboxNotification, waitForServer, watchServerVersion } from './client';
 import { BACKGROUND_SERVER_FLAG, ensureManagedServer, managedServerSupported, setUpManagedServer, startBackgroundServer } from './local-server';
+import { pathFromArgv } from './argv';
 import { GitClient } from './git/git';
 import { fetch as gitFetch } from './git/operations';
 import { GhClient } from './gh/gh';
@@ -58,6 +60,7 @@ if (process.env.GITGOOD_USER_DATA) app.setPath('userData', process.env.GITGOOD_U
 
 const PROTOCOLS = ['gitgood', 'x-github-client'];
 const pendingProtocolUrls: string[] = [];
+const pendingOpenPaths: string[] = [];
 
 const backgroundServer = process.argv.includes(BACKGROUND_SERVER_FLAG);
 const gotLock = backgroundServer || app.requestSingleInstanceLock();
@@ -68,6 +71,7 @@ if (backgroundServer) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | null = null;
+  let clientMode = false;
   const getWindow = () => mainWindow;
 
   const deliverProtocolUrl = (raw: string) => {
@@ -84,13 +88,24 @@ if (backgroundServer) {
     else sendEvent(win, 'menu.action', { action: 'protocol-open', args: { url: parsed.url, branch: parsed.branch, filepath: parsed.filepath } });
   };
 
-  app.on('second-instance', (_event, argv) => {
+  /** Opens a folder passed on the command line (`gitgood <path>`). Local mode only: in client mode the path is on this machine, the repositories on the server. */
+  const openPath = (argv: string[], cwd: string) => {
+    if (clientMode) return;
+    const path = pathFromArgv(argv, { defaultApp: !!process.defaultApp, cwd, isDirectory: (p) => statSync(p, { throwIfNoEntry: false })?.isDirectory() ?? false });
+    if (!path) return;
+    const win = getWindow();
+    if (win) sendEvent(win, 'menu.action', { action: 'open-path', args: { path } });
+    else pendingOpenPaths.push(path);
+  };
+
+  app.on('second-instance', (_event, argv, workingDirectory) => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
     const url = protocolUrlFromArgv(argv);
     if (url) deliverProtocolUrl(url);
+    openPath(argv, workingDirectory);
   });
   app.on('open-url', (event, url) => {
     event.preventDefault();
@@ -98,6 +113,7 @@ if (backgroundServer) {
   });
   const initialUrl = protocolUrlFromArgv(process.argv);
   if (initialUrl) pendingProtocolUrls.push(initialUrl);
+  openPath(process.argv, process.cwd());
 
   /** Delivers protocol links that arrived before the renderer could take them. */
   const flushPendingProtocolUrls = (win: BrowserWindow) => {
@@ -105,6 +121,7 @@ if (backgroundServer) {
       // Give the renderer a moment to bootstrap before delivering queued links.
       setTimeout(() => {
         for (const raw of pendingProtocolUrls.splice(0)) deliverProtocolUrl(raw);
+        if (!clientMode) for (const path of pendingOpenPaths.splice(0)) sendEvent(win, 'menu.action', { action: 'open-path', args: { path } });
       }, 1500);
     });
   };
@@ -128,6 +145,7 @@ if (backgroundServer) {
     if (serverUrl) {
       // Client mode keeps the repository on the server, but the desktop still owns its installer update channel.
       log.info(`Client mode: using the GitGood server at ${serverUrl}`);
+      clientMode = true;
       const disabledEnv: DisabledEnv = { isPackaged: app.isPackaged, platform: process.platform, portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR, appImagePath: process.env.APPIMAGE, appImageWritable: appImageWritable(process.env.APPIMAGE) };
       const updateProvider = new ElectronUpdaterProvider(autoUpdater as unknown as ElectronAutoUpdater, () => store.getSettings().updateChannel);
       const updater = new Updater(store, updateProvider, (state) => {
@@ -173,6 +191,7 @@ if (backgroundServer) {
     const git = new GitClient(tools);
     const gh = new GhClient(tools);
     const repos = new RepositoryManager(store, git, bus.emit);
+    configureUsage(userData);
     const resolver = new ConflictResolver(store, tools, git);
     const review = new ReviewService(store, tools, git, gh, repos, userData);
     const splitter = new SplitterService(store, tools, git);

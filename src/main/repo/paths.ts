@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, parse, sep } from 'node:path';
 
 /**
@@ -81,4 +81,18 @@ export async function assertInsideRepo(repoPath: string, fsPath: string): Promis
       dir = dirname(dir);
     }
   }
+}
+
+/**
+ * Writes `content` to `relPath` inside the repository, refusing a symlinked leaf
+ * (an in-repo link pointing outside would otherwise be written through) and any
+ * path whose parent resolves outside the repo. For AI-generated file writes.
+ * ponytail: lstat then write is not atomic; a racing local writer could swap in a link.
+ */
+export async function writeRepoFile(repoPath: string, relPath: string, content: string): Promise<void> {
+  const file = join(repoPath, ...relPath.split('/'));
+  await assertInsideRepo(repoPath, file);
+  const leaf = await lstat(file).catch((err: NodeJS.ErrnoException) => (err.code === 'ENOENT' ? null : Promise.reject(err)));
+  if (leaf?.isSymbolicLink()) throw new Error(`Refusing to write through a symbolic link: ${relPath}`);
+  await writeFile(file, content, 'utf8');
 }

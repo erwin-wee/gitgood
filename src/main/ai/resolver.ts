@@ -1,5 +1,6 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import type { AiSettings, ConflictBlockResolution, ConflictResolutionResult, InProgressOperation, ManualResolutionExample, PostResolveCheckResult, WorkingFile } from '@shared/types';
+import type { AiFeature, AiSettings, ConflictBlockResolution, ConflictResolutionResult, InProgressOperation, ManualResolutionExample, PostResolveCheckResult, WorkingFile } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
+import { secretFileReason } from '@shared/secrets';
 import { applyResolutions, hasConflictMarkers, normalizeResolutionText, parseConflicts, resolutionForChoice, type BlockChoice } from '@shared/diff/conflicts';
 import { languageFromPath, splitLines } from '@shared/util';
 import { runPostResolveCheck, resolveCheckCommand } from './check-runner';
@@ -8,11 +9,13 @@ import { toFsPath, getPatchForFiles } from '../git/diff';
 import type { GitClient } from '../git/git';
 import { markResolved } from '../git/operations';
 import { readRepoConfig } from '../repo/config';
+import { readRepoFile, writeRepoFile } from '../repo/paths';
 import { getStatus } from '../git/status';
 import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError, type AiBackend } from './backends';
+import { cancelOwned, ownedController } from '../core/client-context';
 import { createBackend } from './provider';
 import { buildCommitMessagePrompt, buildResolvePrompt, COMMIT_MESSAGE_SCHEMA, COMMIT_MESSAGE_SYSTEM_PROMPT, RESOLUTION_SCHEMA, RESOLVE_SYSTEM_PROMPT } from './prompts';
 
@@ -56,25 +59,36 @@ export interface UseSideForBlockResult {
   ranges: { id: number; start: number; end: number }[];
 }
 
+/** Conflicted file text; symlinks and paths resolving outside the repository are refused (their target would otherwise be read and uploaded). */
+async function readConflictFile(repoPath: string, path: string): Promise<string> {
+  toFsPath(repoPath, path);
+  const buf = await readRepoFile(repoPath, path);
+  if (!buf) throw new AiError('This file is a symbolic link or outside the repository; resolve it manually.', 'other');
+  return buf.toString('utf8');
+}
+
 export class ConflictResolver {
   private controller: AbortController | null = null;
+  /** Commit-message generation is cancelled on its own (`ai.cancel('commitMessage')`), never by a conflict-resolution cancel. */
+  private commitController: AbortController | null = null;
   /** Manual resolutions recorded for the current operation, keyed by repository path, most recent first. Cleared once the repository's operation ends (see getExamplePaths) or on app exit (in-memory only, never persisted). */
   private examples = new Map<string, ManualResolutionExample[]>();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
-  private backend(): Promise<{ backend: AiBackend; settings: AiSettings }> {
-    return createBackend(this.store, this.tools);
+  private backend(feature: AiFeature = 'resolver'): Promise<{ backend: AiBackend; settings: AiSettings }> {
+    return createBackend(this.store, this.tools, feature);
   }
 
-  cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+  cancel(feature: 'resolver' | 'commitMessage' = 'resolver'): void {
+    if (feature === 'commitMessage') {
+      if (cancelOwned(this.commitController)) this.commitController = null;
+    } else if (cancelOwned(this.controller)) this.controller = null;
   }
 
   /** True while a resolve/resolveAll run is in flight; used by the update install gate to refuse installing mid-resolution. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.controller !== null || this.commitController !== null;
   }
 
   async test(): Promise<{ ok: boolean; message: string }> {
@@ -84,10 +98,10 @@ export class ConflictResolver {
         system: 'Reply using the requested JSON schema.',
         prompt: 'Return {"ok": true}.',
         schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false },
-        model: settings.model,
+        model: modelFor(settings, 'resolver'),
         effort: 'low',
       });
-      return { ok: true, message: `Connected via ${backend.name === 'anthropic' ? 'the Anthropic API' : 'Claude Code'} (model ${res.model}).` };
+      return { ok: true, message: `Connected via ${backend.name === 'anthropic' ? 'the Anthropic API' : backend.name === 'openai-compatible' ? settings.openaiBaseUrl : 'Claude Code'} (model ${res.model}).` };
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
@@ -117,12 +131,13 @@ export class ConflictResolver {
     const base: ConflictResolutionResult = { path, ok: false, error: null, blocks: [], staged: false, model: null, provider: null, original: null, check: null, guidedBy: opts.examples?.map((e) => e.path) ?? [] };
     try {
       report(path, 'started', 'Reading conflict…');
+      const secret = secretFileReason(path);
+      if (secret) throw new AiError(`${path} looks like a secrets file (${secret}), so it is never sent to AI. Resolve it manually.`, 'other');
       const { backend, settings } = await this.backend();
       base.provider = backend.name;
-      const fsPath = toFsPath(repoPath, path);
       // A checkOutput retry's "original" is the true pre-resolution conflicted content carried over
       // from the failed run; the file on disk at this point holds that run's (marker-free) output.
-      const original = opts.checkOutput?.original ?? (await readFile(fsPath, 'utf8'));
+      const original = opts.checkOutput?.original ?? (await readConflictFile(repoPath, path));
       base.original = original;
       if (!hasConflictMarkers(original)) {
         if (file?.conflict && file.conflict !== 'both-modified' && file.conflict !== 'both-added') {
@@ -151,12 +166,12 @@ export class ConflictResolver {
         examples: opts.examples,
         checkOutput: opts.checkOutput,
       });
-      report(path, 'thinking', `Resolving ${parsed.blocks.length} conflict${parsed.blocks.length === 1 ? '' : 's'} with ${settings.model}…`);
+      report(path, 'thinking', `Resolving ${parsed.blocks.length} conflict${parsed.blocks.length === 1 ? '' : 's'} with ${modelFor(settings, 'resolver')}…`);
       const response = await backend.complete({
         system: RESOLVE_SYSTEM_PROMPT,
         prompt,
         schema: RESOLUTION_SCHEMA as unknown as Record<string, unknown>,
-        model: settings.model,
+        model: modelFor(settings, 'resolver'),
         effort: settings.effort,
         signal,
         onProgress: (m) => report(path, 'writing', m),
@@ -178,10 +193,10 @@ export class ConflictResolver {
       // checkOutput retry: by design the file on disk holds the previous (failed-check) attempt's
       // output at this point, not `original`, so there is nothing to compare it against here.
       if (!opts.checkOutput) {
-        const current = await readFile(fsPath, 'utf8');
+        const current = await readConflictFile(repoPath, path);
         if (current !== original) throw new AiError('The file changed while the resolution was being generated; try again.', 'other');
       }
-      await writeFile(fsPath, resolved, 'utf8');
+      await writeRepoFile(repoPath, path, resolved);
 
       const check = await this.runConfiguredCheck(repoPath, settings, report, path, signal);
       let staged = false;
@@ -227,14 +242,14 @@ export class ConflictResolver {
   }
 
   async resolve(repoPath: string, path: string, report: ProgressReporter, checkOutput?: { command: string; tail: string; original: string }): Promise<ConflictResolutionResult> {
-    this.controller = new AbortController();
+    this.controller = ownedController();
     const status = await getStatus(this.git, repoPath);
     const file = status.files.find((f) => f.path === path);
     return this.resolveFile(repoPath, path, report, this.controller.signal, file, { checkOutput });
   }
 
   async resolveAll(repoPath: string, report: ProgressReporter): Promise<ConflictResolutionResult[]> {
-    this.controller = new AbortController();
+    this.controller = ownedController();
     const signal = this.controller.signal;
     const status = await getStatus(this.git, repoPath);
     const conflicted = status.files.filter((f) => f.conflict !== null);
@@ -254,7 +269,7 @@ export class ConflictResolver {
 
   /** Resolves every remaining conflicted file, guided by the manual resolutions recorded for this operation (see recordExample). */
   async resolveAllGuided(repoPath: string, report: ProgressReporter): Promise<ConflictResolutionResult[]> {
-    this.controller = new AbortController();
+    this.controller = ownedController();
     const signal = this.controller.signal;
     const status = await getStatus(this.git, repoPath);
     const conflicted = status.files.filter((f) => f.conflict !== null);
@@ -308,8 +323,7 @@ export class ConflictResolver {
    * (refusing if the file on disk no longer matches what those ranges say).
    */
   async useSideForBlock(repoPath: string, path: string, original: string, ranges: { id: number; start: number; end: number }[], blockId: number, side: 'ours' | 'theirs' | 'base'): Promise<UseSideForBlockResult> {
-    const fsPath = toFsPath(repoPath, path);
-    const current = await readFile(fsPath, 'utf8');
+    const current = await readConflictFile(repoPath, path);
     const parsed = parseConflicts(original);
     if (!parsed.blocks.length) throw new AiError('Conflict markers are malformed; resolve this file manually.', 'other');
     const rangeById = new Map(ranges.map((r) => [r.id, r]));
@@ -328,29 +342,42 @@ export class ConflictResolver {
     const final = new Map(verify);
     final.set(blockId, resolutionForChoice(target, side as BlockChoice));
     const { content, ranges: newRanges } = applyResolutions(parsed, final);
-    await writeFile(fsPath, content, 'utf8');
+    await writeRepoFile(repoPath, path, content);
     const outRanges = [...newRanges.entries()].map(([id, r]) => ({ id, ...r }));
     return { content, ranges: outRanges };
   }
 
-  async commitMessage(repoPath: string, paths: string[]): Promise<{ summary: string; description: string }> {
-    const { backend, settings } = await this.backend();
+  /** `skipped` lists selected files that were left out of the request because they look like secrets (`path: reason`). */
+  async commitMessage(repoPath: string, paths: string[]): Promise<{ summary: string; description: string; skipped: string[] }> {
+    const { backend, settings } = await this.backend('commitMessage');
     const status = await getStatus(this.git, repoPath);
-    const files = status.files.filter((f) => paths.includes(f.path));
-    if (!files.length) throw new AiError('Select at least one changed file first.', 'other');
-    const { patch, truncated, stat } = await getPatchForFiles(this.git, repoPath, files, 120_000);
-    this.controller = new AbortController();
-    const response = await backend.complete({
-      system: COMMIT_MESSAGE_SYSTEM_PROMPT,
-      prompt: buildCommitMessagePrompt(stat, patch, truncated, status.branch.name),
-      schema: COMMIT_MESSAGE_SCHEMA as unknown as Record<string, unknown>,
-      model: settings.model,
-      effort: settings.effort === 'max' ? 'high' : settings.effort,
-      signal: this.controller.signal,
+    const selected = status.files.filter((f) => paths.includes(f.path));
+    if (!selected.length) throw new AiError('Select at least one changed file first.', 'other');
+    const skipped = selected.flatMap((f) => {
+      const reason = secretFileReason(f.path);
+      return reason ? [`${f.path}: ${reason}`] : [];
     });
+    const files = selected.filter((f) => !secretFileReason(f.path));
+    if (!files.length) throw new AiError(`Every selected file looks like it holds secrets, so nothing was sent to the AI (${skipped.join('; ')}).`, 'other');
+    const { patch, truncated, stat } = await getPatchForFiles(this.git, repoPath, files, 120_000);
+    const controller = ownedController();
+    this.commitController = controller;
+    let response;
+    try {
+      response = await backend.complete({
+        system: COMMIT_MESSAGE_SYSTEM_PROMPT,
+        prompt: buildCommitMessagePrompt(stat, patch, truncated, status.branch.name),
+        schema: COMMIT_MESSAGE_SCHEMA as unknown as Record<string, unknown>,
+        model: modelFor(settings, 'commitMessage'),
+        effort: settings.effort === 'max' ? 'high' : settings.effort,
+        signal: controller.signal,
+      });
+    } finally {
+      if (this.commitController === controller) this.commitController = null;
+    }
     const json = response.json as { summary?: unknown; description?: unknown };
     const summary = typeof json.summary === 'string' ? json.summary.trim().replace(/\.$/, '') : '';
     if (!summary) throw new AiError('The model returned an empty summary.', 'invalid-output');
-    return { summary, description: typeof json.description === 'string' ? json.description.trim() : '' };
+    return { summary, description: typeof json.description === 'string' ? json.description.trim() : '', skipped };
   }
 }

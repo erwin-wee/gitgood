@@ -39,6 +39,7 @@ interface RawPr {
   changedFiles?: number;
   mergeable?: string;
   mergeStateStatus?: string;
+  autoMergeRequest?: { mergeMethod?: string; enabledBy?: { login?: string } | null } | null;
   labels?: { name: string }[];
   assignees?: { login: string }[];
   reviewRequests?: { login?: string; name?: string }[];
@@ -51,7 +52,7 @@ interface RawPr {
 // Bulk list (up to 100 PRs) must stay under GitHub's GraphQL cost limits: no `commits` (nested authors: 100×100×100 nodes, over the
 // 500k cap) and no mergeability (computed per PR on demand; times out on repos with many open PRs). Single-PR calls add mergeability back.
 const PR_LIST_FIELDS = 'number,title,url,author,headRefName,baseRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,isDraft,state,createdAt,updatedAt,statusCheckRollup,reviewDecision,body,additions,deletions,changedFiles,labels,assignees,reviewRequests,files,reviews,latestReviews,comments';
-const PR_FIELDS = `${PR_LIST_FIELDS},mergeable,mergeStateStatus`;
+const PR_FIELDS = `${PR_LIST_FIELDS},mergeable,mergeStateStatus,autoMergeRequest`;
 
 const ISSUE_FIELDS = 'number,title,url,state,author,labels,assignees,milestone,createdAt,updatedAt,comments,body';
 
@@ -173,6 +174,7 @@ export function toPullRequest(raw: RawPr): PullRequest {
     changedFiles: raw.changedFiles ?? null,
     mergeable: raw.mergeable ?? null,
     mergeStateStatus: raw.mergeStateStatus ?? null,
+    autoMerge: raw.autoMergeRequest ? { method: ({ MERGE: 'merge', SQUASH: 'squash', REBASE: 'rebase' } as const)[(raw.autoMergeRequest.mergeMethod ?? '').toUpperCase()] ?? null, enabledBy: raw.autoMergeRequest.enabledBy?.login ?? null } : null,
     labels: (raw.labels ?? []).map((l) => l.name),
     assignees: (raw.assignees ?? []).map((a) => a.login),
     reviewRequests: (raw.reviewRequests ?? []).map((r) => r.login ?? r.name ?? '').filter(Boolean),
@@ -213,6 +215,16 @@ export function parseRateLimitReset(text: string, now: number = Date.now()): str
 
 export function repoSelector(ref: GitHubRepoRef): string {
   return ref.host === 'github.com' ? `${ref.owner}/${ref.name}` : `${ref.host}/${ref.owner}/${ref.name}`;
+}
+
+/** argv for `gh pr merge`: merge now, enable auto-merge (`--auto`, which on merge-queue branches queues the PR once checks pass), or turn auto-merge off. */
+export function prMergeArgs(selector: string, number: number, mode: { method: 'merge' | 'squash' | 'rebase'; deleteBranch: boolean; auto: boolean } | 'disable-auto'): string[] {
+  const args = ['pr', 'merge', String(number), '--repo', selector];
+  if (mode === 'disable-auto') return [...args, '--disable-auto'];
+  args.push(`--${mode.method}`);
+  if (mode.auto) args.push('--auto');
+  if (mode.deleteBranch) args.push('--delete-branch');
+  return args;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,10 +542,12 @@ export class GhClient {
     return { url: /https?:\/\/\S+\/pull\/\d+/.exec(res.stdout + res.stderr)?.[0] ?? null };
   }
 
-  async prMerge(ref: GitHubRepoRef, number: number, method: 'merge' | 'squash' | 'rebase', deleteBranch: boolean): Promise<void> {
-    const args = ['pr', 'merge', String(number), '--repo', repoSelector(ref), `--${method}`];
-    if (deleteBranch) args.push('--delete-branch');
-    await this.run(args, { timeoutMs: 120000 });
+  async prMerge(ref: GitHubRepoRef, number: number, method: 'merge' | 'squash' | 'rebase', deleteBranch: boolean, auto = false): Promise<void> {
+    await this.run(prMergeArgs(repoSelector(ref), number, { method, deleteBranch, auto }), { timeoutMs: 120000 });
+  }
+
+  async prDisableAutoMerge(ref: GitHubRepoRef, number: number): Promise<void> {
+    await this.run(prMergeArgs(repoSelector(ref), number, 'disable-auto'), { timeoutMs: 120000 });
   }
 
   async prReady(ref: GitHubRepoRef, number: number, ready: boolean): Promise<void> {

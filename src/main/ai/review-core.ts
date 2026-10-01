@@ -5,6 +5,7 @@
  * tested and reasoned about in isolation.
  */
 import type { CommitFile, DiffHunk, ReviewCategory, ReviewFinding, ReviewSeverity, ReviewStrictness } from '@shared/types';
+import { secretFileReason } from '@shared/secrets';
 import { joinLines, splitLines } from '@shared/util';
 
 export const MAX_CHANGED_LINES_PER_FILE = 1500;
@@ -47,11 +48,14 @@ export function hashHunks(hunks: DiffHunk[]): string {
 
 /**
  * Returns the reason a file is left out of a review, or null when it should be reviewed.
- * `generatedPaths` are paths marked linguist-generated in .gitattributes.
+ * `generatedPaths` are paths marked linguist-generated in .gitattributes. Secret-shaped files
+ * (see `secretFileReason`) are always left out; `hunks` lets `.npmrc`/`.pypirc` pass when they hold no credentials.
  */
-export function skipReason(file: CommitFile, changedLines: number | null, generatedPaths: ReadonlySet<string> = new Set()): string | null {
+export function skipReason(file: CommitFile, changedLines: number | null, generatedPaths: ReadonlySet<string> = new Set(), hunks?: DiffHunk[]): string | null {
   const path = file.path;
   const base = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+  const secret = secretFileReason(path, hunks?.map((h) => h.lines.map((l) => l.text).join('\n')).join('\n'));
+  if (secret) return `${secret}, never sent to AI`;
   if (file.binary) return 'binary file';
   if (file.status === 'deleted') return 'deleted file';
   if (/\.(png|jpe?g|gif|webp|bmp|ico|svg|avif|tiff?|pdf|woff2?|ttf|eot|otf|zip|gz|tgz|jar|exe|dll|so|dylib|mp[34]|mov|wasm)$/i.test(base)) return 'binary or media file';

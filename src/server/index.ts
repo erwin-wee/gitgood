@@ -8,6 +8,7 @@ import { brotliCompress, brotliCompressSync, constants as zlibConstants, gzip, g
 import type { ApiMethodName } from '@shared/ipc';
 import type { GitErrorInfo, InboxItem, IpcResult } from '@shared/types';
 import { ConflictResolver } from '../main/ai/resolver';
+import { configureUsage } from '../main/ai/usage';
 import { ErrorExplainService } from '../main/ai/error-explain';
 import { ExplainService } from '../main/ai/explain';
 import { NlPaletteService } from '../main/ai/nlPalette';
@@ -193,6 +194,7 @@ async function main(): Promise<void> {
   const busy = new Set<string>();
 
   const repos = new RepositoryManager(store, git, bus.emit);
+  configureUsage(config.userData);
   const resolver = new ConflictResolver(store, tools, git);
   const review = new ReviewService(store, tools, git, gh, repos, config.userData);
   const splitter = new SplitterService(store, tools, git);

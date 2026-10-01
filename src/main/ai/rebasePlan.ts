@@ -10,6 +10,7 @@
  */
 import type { OperationOutcome } from '@shared/ipc';
 import type { RebaseApplyProgress, RebasePlan, RebasePreflight } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import { getCurrentBranchName, getDefaultBranch } from '../git/branches';
 import { compareRefs, getCommitFiles, getCommitPatch, isCommitPushed } from '../git/log';
 import { EMPTY_TREE_SHA, GitError, type GitClient } from '../git/git';
@@ -22,6 +23,7 @@ import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { budgetCommitPatches, capCommitsForPlanning, REBASE_MAX_PATCH_BYTES_PER_COMMIT, type OriginalCommitInfo, validateRebasePlan } from './rebase-plan-core';
 import { buildRebasePlanPrompt, REBASE_PLAN_SCHEMA, REBASE_PLAN_SYSTEM_PROMPT, type RebasePlanPromptCommit } from './prompts';
+import { cancelOwned, ownedController } from '../core/client-context';
 import { createBackend } from './provider';
 
 function newPlanId(): string {
@@ -35,8 +37,7 @@ export class RebasePlanService {
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    if (cancelOwned(this.controller)) this.controller = null;
   }
 
   /** True while a plan proposal is in flight; used by the update-install gate alongside the other AI services. */
@@ -176,8 +177,8 @@ export class RebasePlanService {
       patch: includePatch.has(c.sha) ? patchResults[i].patch : null,
     }));
 
-    const { backend, settings: aiSettings } = await createBackend(this.store, this.tools);
-    const controller = new AbortController();
+    const { backend, settings: aiSettings } = await createBackend(this.store, this.tools, 'rebase');
+    const controller = ownedController();
     this.controller = controller;
     try {
       const currentBranchLabel = currentBranch ?? 'HEAD';
@@ -185,7 +186,7 @@ export class RebasePlanService {
         system: REBASE_PLAN_SYSTEM_PROMPT,
         prompt: buildRebasePlanPrompt({ base: resolvedBase, branch: currentBranchLabel, commits: promptCommits, truncated }),
         schema: REBASE_PLAN_SCHEMA as unknown as Record<string, unknown>,
-        model: aiSettings.model,
+        model: modelFor(aiSettings, 'rebase'),
         effort: aiSettings.effort,
         signal: controller.signal,
       });

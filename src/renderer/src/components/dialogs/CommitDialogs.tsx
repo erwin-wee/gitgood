@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Commit, ErrorFix, GitErrorInfo } from '@shared/types';
 import * as actions from '../../state/actions';
-import { closeDialog, openDialog, useAppStore } from '../../state/store';
+import { closeDialog, openDialog, useAppStore, useAiEnabled } from '../../state/store';
 import { Button, Callout, Checkbox, Dialog, Spinner, TextField } from '../ui';
 import { DISCARD_CHANGES_BODY, DISCARD_CHANGES_TITLE } from '../../state/strings';
 
@@ -41,7 +41,7 @@ function ErrorFixRow({ fix, retry }: { fix: ErrorFix; retry?: () => void }): Rea
 function ErrorExplainSection({ info, retryable, retry }: { info: GitErrorInfo; retryable: boolean; retry?: () => void }): React.JSX.Element | null {
   const settings = useAppStore((s) => s.settings);
   const explain = useAppStore((s) => s.errorExplain);
-  const eligible = settings?.ai.provider !== 'disabled' && !DEDICATED_FLOW_CODES.has(info.code);
+  const eligible = useAiEnabled() && !DEDICATED_FLOW_CODES.has(info.code);
   const automatic = eligible && settings?.ai.explainErrorsAutomatically === true && info.code === 'unknown';
   const [expanded, setExpanded] = useState(automatic);
 

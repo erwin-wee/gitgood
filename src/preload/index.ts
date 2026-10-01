@@ -1,9 +1,11 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import { IPC_EVENT_CHANNEL, IPC_INVOKE_CHANNEL } from '../shared/ipc';
 
 const bridge = {
   platform: process.platform,
   invokeRaw: (method: string, ...args: unknown[]): Promise<unknown> => ipcRenderer.invoke(IPC_INVOKE_CHANNEL, method, ...args),
+  /** Absolute path of a dropped File (the renderer cannot read `file.path` any more); only the local desktop app has this. */
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   on: (event: string, listener: (payload: unknown) => void): (() => void) => {
     const handler = (_e: IpcRendererEvent, name: string, payload: unknown) => {
       if (name === event) listener(payload);

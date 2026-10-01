@@ -8,6 +8,7 @@
  */
 import type { ApiMethods } from '@shared/ipc';
 import type { GitErrorInfo, NlPlan, NlProgressEvent, NlRisk, NlRunResult, NlStep, OperationKind } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import { getBranches } from '../git/branches';
 import { GitError, toGitErrorInfo, type GitClient } from '../git/git';
 import { getRemotes, getStashes, getTags } from '../git/operations';
@@ -18,6 +19,7 @@ import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { evaluatePlan, type NlPolicyContext, type RawNlPlan, type RawNlStep } from './nlPolicy';
 import { buildNlPalettePrompt, NL_PALETTE_SCHEMA, NL_PALETTE_SYSTEM_PROMPT, type NlPalettePromptContext } from './prompts';
+import { cancelOwned, ownedController } from '../core/client-context';
 import { createBackend } from './provider';
 
 const RISKS: NlRisk[] = ['safe', 'changes-history', 'discards-work', 'touches-remote'];
@@ -171,8 +173,7 @@ export class NlPaletteService {
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    if (cancelOwned(this.controller)) this.controller = null;
   }
 
   isActive(): boolean {
@@ -191,8 +192,8 @@ export class NlPaletteService {
 
   async plan(repoPath: string, request: string, priorQuestion: string | null, answer: string | null): Promise<NlPlan> {
     return this.withBusy(repoPath, async () => {
-      const { backend, settings } = await createBackend(this.store, this.tools);
-      const controller = new AbortController();
+      const { backend, settings } = await createBackend(this.store, this.tools, 'nlPalette');
+      const controller = ownedController();
       this.controller = controller;
       try {
         const { policy, prompt } = await gatherContext(this.git, repoPath);
@@ -200,7 +201,7 @@ export class NlPaletteService {
           system: NL_PALETTE_SYSTEM_PROMPT,
           prompt: buildNlPalettePrompt({ ...prompt, request, priorQuestion, answer }),
           schema: NL_PALETTE_SCHEMA as unknown as Record<string, unknown>,
-          model: settings.model,
+          model: modelFor(settings, 'nlPalette'),
           effort: settings.effort,
           signal: controller.signal,
         });

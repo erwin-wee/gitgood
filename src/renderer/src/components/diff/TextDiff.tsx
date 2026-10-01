@@ -4,7 +4,7 @@ import { ZERO_SHA } from '@shared/types';
 import { intralineDiff, type CharRange } from '@shared/diff/intraline';
 import { reconstructOldLines } from '@shared/diff/old-lines';
 import { escapeHtml } from '@shared/util';
-import { highlightBlockLine } from '../../lib/highlight';
+import { highlightBlockLine, useLanguageLoaded } from '../../lib/highlight';
 import { useWindowedRows } from '../../lib/windowing';
 import { Icon, openContextMenu } from '../ui';
 
@@ -377,12 +377,14 @@ export function TextDiff({ diff, mode, wrap, syntax, intraline, selectable, sele
   // Lazy highlighting: per-side blocks of file lines, computed the first time a row in the block renders.
   const hlCache = useRef(new Map<string, string[] | null>());
   useMemo(() => hlCache.current.clear(), [syntax, newLines, oldLines, diff.language]);
+  const grammarReady = useLanguageLoaded(syntax ? diff.language : null);
   const highlighted = useCallback(
     (side: 'old' | 'new', lineNo: number): string | undefined => {
       const lines = side === 'new' ? newLines : oldLines;
       return syntax && lines ? highlightBlockLine(hlCache.current, side, lines, lineNo, diff.language) : undefined;
     },
-    [syntax, newLines, oldLines, diff.language],
+    // grammarReady: a freshly loaded grammar must give rows a new callback so they re-render highlighted.
+    [syntax, newLines, oldLines, diff.language, grammarReady],
   );
 
   const allKeys = useMemo(() => {

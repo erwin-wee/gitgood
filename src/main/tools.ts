@@ -2,9 +2,17 @@ import { access, constants, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { GitHubAccount, ToolInfo, ToolsState } from '@shared/types';
+import { MIN_TOOL_VERSIONS } from '@shared/util';
 import { exec } from './exec';
 import { log } from './logger';
 import type { Store } from './store';
+import { compareVersions } from './update/update-core';
+
+/** Marks `info` outdated (with the minimum) when its version is known and below `min`; never blocks. */
+export function flagOutdated(info: ToolInfo, min: string): ToolInfo {
+  if (!info.installed || !info.version) return info;
+  return compareVersions(info.version, min) < 0 ? { ...info, outdated: true, minVersion: min } : info;
+}
 
 const isWindows = process.platform === 'win32';
 
@@ -143,8 +151,8 @@ export class ToolLocator {
     this.located = (async () => {
       const settings = this.store.getSettings();
       const [git, gh, claudeCli, gpg, sshKeygen] = await Promise.all([
-        this.locate('git', settings.gitPath, ['--version'], (o) => /git version (\S+)/.exec(o)?.[1] ?? null),
-        this.locate('gh', settings.ghPath, ['--version'], (o) => /gh version (\S+)/.exec(o)?.[1] ?? null),
+        this.locate('git', settings.gitPath, ['--version'], (o) => /git version (\S+)/.exec(o)?.[1] ?? null).then((i) => flagOutdated(i, MIN_TOOL_VERSIONS.git)),
+        this.locate('gh', settings.ghPath, ['--version'], (o) => /gh version (\S+)/.exec(o)?.[1] ?? null).then((i) => flagOutdated(i, MIN_TOOL_VERSIONS.gh)),
         this.locate('claude', settings.ai.claudeCliPath, ['--version'], (o) => o.trim().split('\n')[0]?.trim() || null),
         this.locate('gpg', null, ['--version'], (o) => /gpg \(GnuPG\) (\S+)/.exec(o)?.[1] ?? null),
         this.locateSshKeygen(),

@@ -215,7 +215,7 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
         'app.showItemInFolder': confined((p) => host.showItemInFolder(p)),
         'app.moveToTrash': confined((p) => host.trashItem(p)),
       }
-    : { ...always, ...updateMethods, 'app.openInEditor': unsupported, 'app.openInShell': unsupported };
+    : { ...always, ...updateMethods, 'app.openInEditor': unsupported, 'app.openInShell': unsupported, 'app.openDiffTool': unsupported, 'app.openMergeTool': unsupported };
 
   const entry = appEntryUrl(serverUrl);
   ipcMain.handle(IPC_INVOKE_CHANNEL, async (event, method: string, ...args: unknown[]): Promise<IpcResult<unknown> | null> => {

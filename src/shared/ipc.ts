@@ -1,5 +1,7 @@
 import type {
   AddWorktreeOptions,
+  AiFeature,
+  AiUsageMonth,
   AiSettings,
   AppInfo,
   AppSettings,
@@ -167,6 +169,8 @@ export interface ApiMethods {
   'app.settings.get': () => Promise<AppSettings>;
   'app.settings.set': (patch: Partial<AppSettings>) => Promise<AppSettings>;
   'app.setApiKey': (key: string | null) => Promise<AiSettings>;
+  /** Stores (or with null removes) the OpenAI-compatible provider's API key, encrypted like the Anthropic key. */
+  'app.setOpenaiApiKey': (key: string | null) => Promise<AiSettings>;
   'app.openExternal': (url: string) => Promise<void>;
   'app.showItemInFolder': (path: string) => Promise<void>;
   'app.openPath': (path: string) => Promise<void>;
@@ -177,6 +181,10 @@ export interface ApiMethods {
   'app.shells': () => Promise<FoundShell[]>;
   'app.openInEditor': (repoPath: string, filePath: string | null) => Promise<void>;
   'app.openInShell': (repoPath: string) => Promise<void>;
+  /** Starts the configured `diff.tool` on one file (working tree vs HEAD, or a commit vs its parent) without waiting for it to exit. */
+  'app.openDiffTool': (repoPath: string, path: string, source: { kind: 'working' } | { kind: 'commit'; sha: string }) => Promise<void>;
+  /** Starts the configured `merge.tool` on a conflicted file; repo state is refreshed (`repo.changed`) when the tool exits. */
+  'app.openMergeTool': (repoPath: string, path: string) => Promise<void>;
   'app.clipboard.write': (text: string) => Promise<void>;
   'app.pathExists': (path: string) => Promise<boolean>;
   'app.isRepository': (path: string) => Promise<boolean>;
@@ -204,7 +212,8 @@ export interface ApiMethods {
   'gh.pr.checks': (repoPath: string, number: number) => Promise<CheckRun[]>;
   'gh.pr.checkout': (repoPath: string, number: number) => Promise<void>;
   'gh.pr.create': (repoPath: string, opts: CreatePullRequestOptions) => Promise<{ url: string | null }>;
-  'gh.pr.merge': (repoPath: string, number: number, method: 'merge' | 'squash' | 'rebase', deleteBranch: boolean) => Promise<void>;
+  'gh.pr.merge': (repoPath: string, number: number, method: 'merge' | 'squash' | 'rebase', deleteBranch: boolean, auto?: boolean) => Promise<void>;
+  'gh.pr.disableAutoMerge': (repoPath: string, number: number) => Promise<void>;
   'gh.pr.ready': (repoPath: string, number: number, ready: boolean) => Promise<void>;
   'gh.pr.close': (repoPath: string, number: number) => Promise<void>;
   'gh.pr.reopen': (repoPath: string, number: number) => Promise<void>;
@@ -243,6 +252,10 @@ export interface ApiMethods {
   'repos.create': (opts: NewRepositoryOptions) => Promise<RepositoryInfo>;
   'repos.clone': (opts: CloneOptions) => Promise<RepositoryInfo>;
   'repos.setAlias': (id: string, alias: string | null) => Promise<void>;
+  /** Machine-local "Disable AI for this repository" toggle; every `ai.*` call for the repository is then refused in main. */
+  'repos.setAiDisabled': (id: string, disabled: boolean) => Promise<void>;
+  /** Machine-local per-repository prefs (pin, custom group, commit sign-off); only the fields given are changed. */
+  'repos.setPrefs': (id: string, prefs: Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'>) => Promise<void>;
   'repos.refreshIndicators': () => Promise<RepositoryInfo[]>;
 
   /** Scans every watched folder; resolves with `alreadyRunning` when one is in flight. */
@@ -274,6 +287,9 @@ export interface ApiMethods {
   'repo.diff.working': (repoPath: string, path: string, opts: DiffOptions) => Promise<FileDiff>;
   'repo.diff.stash': (repoPath: string, stashRef: string, path: string, opts: DiffOptions) => Promise<FileDiff>;
   'repo.diff.range': (repoPath: string, base: string, head: string, path: string, opts: DiffOptions) => Promise<FileDiff>;
+  'repo.diff.rangeFiles': (repoPath: string, base: string, head: string) => Promise<CommitFile[]>;
+  /** The repository's `commit.template` as a prefill (comment lines dropped), or null when none is configured/readable. */
+  'repo.commitTemplate': (repoPath: string) => Promise<{ summary: string; description: string } | null>;
   'repo.stash.files': (repoPath: string, stashRef: string) => Promise<CommitFile[]>;
   'repo.stash.resolveRef': (repoPath: string, sha: string) => Promise<string | null>;
   'repo.compare': (repoPath: string, base: string, head: string) => Promise<{ ahead: Commit[]; behind: Commit[] }>;
@@ -386,9 +402,13 @@ export interface ApiMethods {
   /** Paths of manual resolutions recorded for the repository's current operation, offered as "Resolve remaining like …"; empty once the operation ends. */
   'ai.resolve.examples': (repoPath: string) => Promise<string[]>;
   'ai.resolve.clearExamples': (repoPath: string) => Promise<void>;
-  'ai.cancel': () => Promise<void>;
+  /** Cancels one AI feature's in-flight request. In server mode only a request started by the calling client is affected. */
+  'ai.cancel': (feature: AiFeature) => Promise<void>;
+  /** Token usage per feature for this month and last month, from the machine-local usage log. */
+  'ai.usage.get': () => Promise<AiUsageMonth[]>;
   'ai.test': () => Promise<{ ok: boolean; message: string }>;
-  'ai.commitMessage': (repoPath: string, files: string[]) => Promise<{ summary: string; description: string }>;
+  /** `skipped` lists selected files left out of the request because they look like secrets (`path: reason`). */
+  'ai.commitMessage': (repoPath: string, files: string[]) => Promise<{ summary: string; description: string; skipped: string[] }>;
   'ai.review.plan': (repoPath: string, target: ReviewTarget) => Promise<ReviewPlan>;
   'ai.review.start': (repoPath: string, target: ReviewTarget, opts?: ReviewStartOptions) => Promise<ReviewRun>;
   'ai.review.get': (repoPath: string, target: ReviewTarget) => Promise<ReviewRun | null>;

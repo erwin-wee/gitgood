@@ -82,6 +82,33 @@ function CheckFailedBanner(): React.JSX.Element | null {
   );
 }
 
+const TOOL_UPDATE_HELP: Record<'git' | 'gh', { label: string; url: string; hint: (platform: string) => string }> = {
+  git: { label: 'Git', url: 'https://git-scm.com/downloads', hint: (p) => (p === 'win32' ? 'winget upgrade --id Git.Git -e' : p === 'darwin' ? 'brew upgrade git' : 'update the git package with your package manager') },
+  gh: { label: 'GitHub CLI', url: 'https://cli.github.com', hint: (p) => (p === 'win32' ? 'winget upgrade --id GitHub.cli -e' : p === 'darwin' ? 'brew upgrade gh' : 'update gh as described on cli.github.com') },
+};
+
+/** Warns (never blocks) when git or gh is older than the supported minimum; dismissible for the session. */
+function useToolsOutdatedBanner(): React.JSX.Element | null {
+  const tools = useAppStore((s) => s.tools);
+  const [dismissed, setDismissed] = useState(false);
+  const outdated = (['git', 'gh'] as const).filter((t) => tools?.[t].outdated);
+  if (!tools || dismissed || !outdated.length) return null;
+  const platform = window.gitgoodBridge.platform;
+  return (
+    <div key="tools-outdated" className="banner">
+      <Icon name="alert" />
+      <span className="banner-text">
+        {outdated.map((t) => (
+          <span key={t} style={{ display: 'block' }}>
+            <strong>{TOOL_UPDATE_HELP[t].label} {tools[t].version} is older than the supported minimum {tools[t].minVersion}.</strong> Some features may fail. Update: <code className="mono">{TOOL_UPDATE_HELP[t].hint(platform)}</code> or download from <Button variant="link" onClick={() => void actions.openExternal(TOOL_UPDATE_HELP[t].url)}>{TOOL_UPDATE_HELP[t].url.replace('https://', '')}</Button>.
+          </span>
+        ))}
+      </span>
+      <Button size="sm" variant="ghost" iconOnly icon="x" aria-label="Dismiss tool version notice" onClick={() => setDismissed(true)} />
+    </div>
+  );
+}
+
 /** Event-socket state of a browser tab or remote-server session (see src/server/web-bridge.ts); null while healthy. */
 function useServerBanner(): React.JSX.Element | null {
   const [connected, setConnected] = useState(true);
@@ -149,7 +176,8 @@ export function Banners(): React.JSX.Element | null {
 
   const update = updateBanner(updateState);
   const serverBanner = useServerBanner();
-  if (!repo || !status) return update || serverBanner ? <div className="banner-stack">{serverBanner}{update}</div> : null;
+  const toolsBanner = useToolsOutdatedBanner();
+  if (!repo || !status) return update || serverBanner || toolsBanner ? <div className="banner-stack">{serverBanner}{toolsBanner}{update}</div> : null;
   const banners: React.ReactNode[] = [];
   const op = status.operation;
 
@@ -259,6 +287,7 @@ export function Banners(): React.JSX.Element | null {
   }
 
   if (update) banners.push(update);
+  if (toolsBanner) banners.push(toolsBanner);
   if (serverBanner) banners.unshift(serverBanner);
   return banners.length ? <div className="banner-stack">{banners}</div> : null;
 }

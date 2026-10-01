@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AiSettings, AiTriageProgressEvent, GitHubRepoRef, PrTriage, PullRequest } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import { GitError } from '../git/git';
 import type { GhClient } from '../gh/gh';
 import { log } from '../logger';
@@ -10,6 +11,7 @@ import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError, type AiBackend } from './backends';
 import { buildTriagePrompt, TRIAGE_SCHEMA, TRIAGE_SYSTEM_PROMPT, type TriagePromptPr } from './prompts';
+import { cancelOwned, ownedController } from '../core/client-context';
 import { createBackend } from './provider';
 import { stableHash } from './review-core';
 import { BATCH_SIZE, evictTriageCache, splitBatches, validateTriageBatch, type TriageBatchResult } from './triage-core';
@@ -29,8 +31,7 @@ export class TriageService {
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly gh: GhClient, private readonly repos: RepositoryManager, private readonly userDataDir: string) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    if (cancelOwned(this.controller)) this.controller = null;
   }
 
   /** True while a triage run is in flight; used by the update install gate to refuse installing mid-run. */
@@ -120,7 +121,7 @@ export class TriageService {
       system: TRIAGE_SYSTEM_PROMPT,
       prompt: buildTriagePrompt(promptPrs, login),
       schema: TRIAGE_SCHEMA as unknown as Record<string, unknown>,
-      model: settings.model,
+      model: modelFor(settings, 'triage'),
       effort: settings.effort === 'max' ? 'high' : settings.effort,
       signal,
     });
@@ -136,11 +137,11 @@ export class TriageService {
    */
   async run(repoPath: string, numbers: number[], report: (e: AiTriageProgressEvent) => void): Promise<Record<number, PrTriage>> {
     this.controller?.abort();
-    const controller = new AbortController();
+    const controller = ownedController();
     this.controller = controller;
     const signal = controller.signal;
     try {
-      const { backend, settings } = await createBackend(this.store, this.tools);
+      const { backend, settings } = await createBackend(this.store, this.tools, 'triage');
       const ref = await this.repos.detectGitHub(repoPath);
       if (!ref) throw new GitError({ message: 'This repository does not have a GitHub remote.', command: '', exitCode: null, stderr: '', stdout: '', code: 'remote-not-found' });
 
@@ -184,7 +185,7 @@ export class TriageService {
         await this.saveCache(repoPath, cache);
         report({ repoPath, done: Math.min(done, total), total });
       }
-      log.info(`AI triage for ${repoPath}: ${wanted.length} pull request(s) requested via ${backend.name}/${settings.model}`);
+      log.info(`AI triage for ${repoPath}: ${wanted.length} pull request(s) requested via ${backend.name}/${modelFor(settings, 'triage')}`);
       return cache;
     } finally {
       if (this.controller === controller) this.controller = null;

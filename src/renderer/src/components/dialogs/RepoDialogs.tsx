@@ -26,6 +26,11 @@ export function CloneDialog({ initialUrl }: { initialUrl?: string }): React.JSX.
   const [selected, setSelected] = useState<GitHubRepoSummary | null>(null);
   const [cloning, setCloning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [depth, setDepth] = useState('');
+  const [singleBranch, setSingleBranch] = useState(false);
+  const [blobless, setBlobless] = useState(false);
+  const [sparse, setSparse] = useState('');
+  const [submodules, setSubmodules] = useState(true);
   const progress = useAppStore((s) => Object.values(s.progress).find((p) => p.kind === 'clone') ?? null);
 
   const loadRepos = async () => {
@@ -70,7 +75,8 @@ export function CloneDialog({ initialUrl }: { initialUrl?: string }): React.JSX.
     setCloning(true);
     setError(null);
     try {
-      const repo = await invoke('repos.clone', { url: effectiveUrl, directory: targetDir, branch: null });
+      const depthValue = depth.trim() ? Number(depth) : null;
+      const repo = await invoke('repos.clone', { url: effectiveUrl, directory: targetDir, branch: null, depth: depthValue, singleBranch, blobless, sparse: sparse.split(/[\s,]+/).filter(Boolean), submodules });
       closeDialog();
       await actions.openRepository(repo);
     } catch (err) {
@@ -147,6 +153,16 @@ export function CloneDialog({ initialUrl }: { initialUrl?: string }): React.JSX.
         <TextField label="Repository URL or GitHub username and repository" placeholder="https://github.com/owner/repo.git or owner/repo" value={url} onChange={(e) => setUrl(e.target.value)} autoFocus spellCheck={false} />
       )}
       <TextField label="Local path" value={targetDir} onChange={(e) => { setDirectory(e.target.value); setDirTouched(true); }} trailing={<Button onClick={() => void chooseDir()}>Choose…</Button>} spellCheck={false} />
+      <details style={{ marginBottom: 12 }}>
+        <summary style={{ cursor: 'pointer' }}>Advanced options</summary>
+        <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+          <TextField label="Shallow clone depth" hint="Only fetch this many commits of history. Leave empty for the full history." type="number" min={1} value={depth} onChange={(e) => setDepth(e.target.value)} placeholder="Full history" />
+          <Checkbox checked={singleBranch || depth.trim() !== ''} onChange={setSingleBranch} disabled={depth.trim() !== ''} label="Single branch only (a shallow clone fetches one branch)" />
+          <Checkbox checked={blobless} onChange={setBlobless} label="Blobless partial clone (--filter=blob:none): download file contents on demand" />
+          <TextField label="Sparse checkout directories" hint="Space or comma separated, relative to the repository root (cone mode, needs Git 2.35+). Leave empty to check out everything." value={sparse} onChange={(e) => setSparse(e.target.value)} placeholder="src docs/guides" spellCheck={false} />
+          <Checkbox checked={submodules} onChange={setSubmodules} label="Include submodules" />
+        </div>
+      </details>
       {error ? <Callout tone="danger">{error}</Callout> : null}
     </Dialog>
   );
@@ -250,8 +266,8 @@ export function NewRepoDialog(): React.JSX.Element {
 // Add existing repository
 // ---------------------------------------------------------------------------
 
-export function AddRepoDialog(): React.JSX.Element {
-  const [path, setPath] = useState('');
+export function AddRepoDialog({ initialPath }: { initialPath?: string }): React.JSX.Element {
+  const [path, setPath] = useState(initialPath ?? '');
   const [isRepo, setIsRepo] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -425,12 +441,15 @@ export function PublishDialog(): React.JSX.Element {
 
 export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab }): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
+  const allRepos = useAppStore((s) => s.repos);
   const remotes = useAppStore((s) => s.remotes);
   const [tab, setTab] = useState<RepoSettingsTab>(initialTab ?? 'remote');
   const origin = remotes.find((r) => r.name === 'origin');
   const [remoteUrl, setRemoteUrl] = useState(origin?.fetchUrl ?? '');
   const [ignore, setIgnore] = useState<string | null>(null);
   const [alias, setAlias] = useState(repo?.alias ?? '');
+  const [group, setGroup] = useState(repo?.group ?? '');
+  const existingGroups = [...new Set(allRepos.flatMap((r) => (r.group ? [r.group] : [])))].sort(compareStrings);
   const [identity, setIdentity] = useState<{ useLocal: boolean; name: string; email: string; globalName: string; globalEmail: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -456,6 +475,7 @@ export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab 
         else await invoke('repo.config.unsetLocalIdentity', repo.path);
       }
       await invoke('repos.setAlias', repo.id, alias.trim() || null);
+      if (group.trim() !== (repo.group ?? '')) await invoke('repos.setPrefs', repo.id, { group: group.trim() || null });
       closeDialog();
       await actions.refreshAll();
     } catch (err) {
@@ -481,7 +501,7 @@ export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab 
       <div className="dialog-tabs" style={{ margin: '-16px -16px 16px', padding: '0 16px' }}>
         {(['remote', 'ignored', 'identity', 'alias'] as RepoSettingsTab[]).map((t) => (
           <button key={t} type="button" className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t === 'remote' ? 'Remote' : t === 'ignored' ? 'Ignored files' : t === 'identity' ? 'Git config' : 'Name'}
+            {t === 'remote' ? 'Remote' : t === 'ignored' ? 'Ignored files' : t === 'identity' ? 'Git config' : 'Name & group'}
           </button>
         ))}
       </div>
@@ -533,7 +553,17 @@ export function RepoSettingsDialog({ tab: initialTab }: { tab?: RepoSettingsTab 
           ) : null}
         </>
       ) : null}
-      {tab === 'alias' ? <TextField label="Repository alias" hint="Shown in the repository list instead of the folder name." value={alias} onChange={(e) => setAlias(e.target.value)} placeholder={repo?.name} /> : null}
+      {tab === 'alias' ? (
+        <>
+          <TextField label="Repository alias" hint="Shown in the repository list instead of the folder name." value={alias} onChange={(e) => setAlias(e.target.value)} placeholder={repo?.name} />
+          <TextField label="Group" hint="Groups appear in the repository list before the owner groups, on this computer only. Leave empty for no group." value={group} onChange={(e) => setGroup(e.target.value)} placeholder="e.g. Work, Clients, Experiments" list="repo-groups" maxLength={60} />
+          <datalist id="repo-groups">
+            {existingGroups.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
+        </>
+      ) : null}
       {error ? <Callout tone="danger">{error}</Callout> : null}
     </Dialog>
   );

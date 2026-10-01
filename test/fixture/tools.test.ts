@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/shared/types';
-import { ToolLocator } from '../../src/main/tools';
+import { flagOutdated, ToolLocator } from '../../src/main/tools';
 import type { Store } from '../../src/main/store';
 
 function hasOnPath(name: string, args: string[]): boolean {
@@ -52,5 +52,26 @@ describe.skipIf(!hasOnPath('git', ['--version']))('ToolLocator: pre-scan state',
     expect(locator.current().git.installed).toBe(false);
     await locator.ensureLocated();
     expect(locator.current().git.installed).toBe(true);
+  });
+});
+
+describe('flagOutdated', () => {
+  const info = (version: string | null, installed = true) => ({ installed, version, path: '/usr/bin/x', error: null });
+
+  it('flags a version below the minimum, comparing numerically (2.9 < 2.30)', () => {
+    expect(flagOutdated(info('2.29.9'), '2.30.0')).toMatchObject({ outdated: true, minVersion: '2.30.0' });
+    expect(flagOutdated(info('2.9.5'), '2.30.0').outdated).toBe(true);
+  });
+
+  it('accepts the minimum itself, newer versions, and vendor-suffixed git versions', () => {
+    expect(flagOutdated(info('2.30.0'), '2.30.0').outdated).toBeUndefined();
+    expect(flagOutdated(info('2.100.0'), '2.30.0').outdated).toBeUndefined();
+    expect(flagOutdated(info('2.45.1.windows.1'), '2.30.0').outdated).toBeUndefined();
+    expect(flagOutdated(info('2.39.3'), '2.30.0').outdated).toBeUndefined();
+  });
+
+  it('does not flag a tool that is missing or has an unparseable version', () => {
+    expect(flagOutdated(info(null), '2.30.0').outdated).toBeUndefined();
+    expect(flagOutdated(info('1.0.0', false), '2.30.0').outdated).toBeUndefined();
   });
 });

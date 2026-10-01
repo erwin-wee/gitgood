@@ -1,9 +1,10 @@
+import { aiProviderLabel } from '@shared/ai-model';
 import React, { useEffect, useState } from 'react';
 import type { ReleaseNotes, ReleaseNotesUnreferencedEntry, ReleaseRangeResult } from '@shared/types';
 import { appendDraftFooter, RELEASE_NOTES_FOOTER, suggestNextPatchVersion } from '@shared/util';
 import { errorInfo, errorMessage, invoke } from '../../api';
 import * as actions from '../../state/actions';
-import { closeDialog, useAppStore } from '../../state/store';
+import { closeDialog, useAppStore, useAiEnabled } from '../../state/store';
 import { Button, Callout, Checkbox, Dialog, Spinner, TextField } from '../ui';
 import { NOTICE_KEY } from './ReviewDialogs';
 
@@ -60,7 +61,7 @@ export function ReleaseNotesDialog({ fromTag }: { fromTag: string | null }): Rea
   const settings = useAppStore((s) => s.settings);
   const tools = useAppStore((s) => s.tools);
   const progress = useAppStore((s) => s.ai[PROGRESS_PATH]);
-  const aiEnabled = settings?.ai.provider !== 'disabled';
+  const aiEnabled = useAiEnabled();
   const signedIn = !!tools?.ghAccount;
 
   const [to, setTo] = useState('HEAD');
@@ -230,7 +231,7 @@ export function ReleaseNotesDialog({ fromTag }: { fromTag: string | null }): Rea
       width="xwide"
       footer={
         <>
-          {generating ? <Button onClick={() => void invoke('ai.cancel')}>Cancel</Button> : <Button onClick={closeDialog}>Close</Button>}
+          {generating ? <Button onClick={() => void invoke('ai.cancel', 'releaseNotes')}>Cancel</Button> : <Button onClick={closeDialog}>Close</Button>}
           <Button onClick={exportList} disabled={!range || rangeLoading}>
             Export commit list
           </Button>
@@ -274,7 +275,7 @@ export function ReleaseNotesDialog({ fromTag }: { fromTag: string | null }): Rea
       />
       {aiEnabled && !notice ? (
         <Callout tone="info">
-          Generating sends the commit subjects, messages and {includePrs ? 'pull request titles' : 'a diff summary'} in this range to {settings?.ai.provider === 'claude-cli' ? 'Claude Code' : 'the Anthropic API'}. Turn off "Include pull request titles" to
+          Generating sends the commit subjects, messages and {includePrs ? 'pull request titles' : 'a diff summary'} in this range to {aiProviderLabel(settings?.ai)}. Turn off "Include pull request titles" to
           keep those out.
         </Callout>
       ) : null}
