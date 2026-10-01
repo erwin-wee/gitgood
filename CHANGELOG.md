@@ -54,6 +54,17 @@ A security, privacy and robustness pass over the whole app, plus the features th
 
 ### Fixed
 
+- Undo groups exactly one rebase, including GitGood's pull-with-rebase command, and restores the pre-operation commit.
+- Release publishing uploads files inside downloaded version directories, including filenames containing spaces, and refuses an empty asset set.
+- AI secret-file exclusion decodes Git-quoted paths and checks both sides of a rename.
+- Concurrent AI requests retain per-client cancellation and remain visible to the update gate until every job settles.
+- Linked worktrees inherit their main repository's AI opt-out and selected GitHub account.
+- Agent templates are validated against the selected shell; escaped quotes, unbalanced quotes and command-substitution placeholders are rejected before execution.
+- Push Stack resolves a publishing remote rather than pushing to `.`, and preserves existing local parent-tracking relationships.
+- Update installation checks every open repository, not only the last-opened window.
+- Resetting a keyboard shortcut asks before unbinding a conflicting action.
+- Compare preserves rename metadata and displays only the actual changed lines.
+
 - The diff line-number gutter now meets contrast guidelines.
 - Several AI services shared one cancel controller, so cancelling one (or, in server mode, another client's job) could abort an unrelated request; each now cancels only its own.
 - Git commands stayed blocked for several seconds after launch on machines where `claude --version` or `gh --version` is slow.
