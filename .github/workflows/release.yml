@@ -103,4 +103,10 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" --notes ""
           fi
-          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          # download-artifact preserves the version directory beneath dist/.
+          mapfile -d '' -t assets < <(find dist -type f -print0)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No release assets were downloaded."
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
