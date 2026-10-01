@@ -15,7 +15,7 @@ src/
                   that URL may call IPC (ipc.ts, client.ts) or be navigated to (window.ts)
     argv.ts       pure `gitgood <path>` parsing (skips flags, the dev app path, protocol URLs)
     core/         transport-independent request layer shared by Electron and the server
-                  (handlers.ts: every API method; host.ts: native capabilities behind an interface;
+                  (handlers/: every API method, one module per domain over a shared context; host.ts: native capabilities behind an interface;
                   bus.ts: event emitter; client-context.ts: the calling client and per-client job
                   ownership; event-routing.ts: which window receives which event)
     host/         Electron implementations of the host and store-platform interfaces
