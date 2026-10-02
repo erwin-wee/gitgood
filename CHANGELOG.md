@@ -2,7 +2,12 @@
 
 All notable changes to GitGood. Versions follow [semver](https://semver.org); release notes for each version are also on the [Releases page](https://github.com/erwin-wee/gitgood/releases).
 
-## 0.4.0 — 2026-10-02
+## 0.4.1 — 2026-10-02
+
+- Fixed macOS release packaging when signing secrets are not configured: an empty `CSC_LINK` is now removed before running electron-builder.
+- Includes all changes below from 0.4.0, whose release build failed and was not published.
+
+## 0.4.0 — 2026-10-02 (not published)
 
 A security, privacy and robustness pass over the whole app, plus the features that came out of it.
 
