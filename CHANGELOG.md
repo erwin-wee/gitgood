@@ -2,7 +2,7 @@
 
 All notable changes to GitGood. Versions follow [semver](https://semver.org); release notes for each version are also on the [Releases page](https://github.com/erwin-wee/gitgood/releases).
 
-## Unreleased
+## 0.4.0 — 2026-10-02
 
 A security, privacy and robustness pass over the whole app, plus the features that came out of it.
 
@@ -15,7 +15,7 @@ A security, privacy and robustness pass over the whole app, plus the features th
 - **Settings sync** uses secret gists only: it refuses to upload to (or adopt) a public gist, re-checks visibility before every upload, and keeps `agentCustomCommand` machine-local. A settings file that changes the OpenAI-compatible base URL deletes the stored API key so it can't be redirected.
 - **Prompt-injection and confused-deputy hardening.** The repository check-command trust prompt binds to the exact command shown; the `gitgood://review/rerun` link needs a per-run one-time token, otherwise it asks for confirmation before anything is sent to an AI provider; custom agent commands must quote every `{file}`; the natural-language palette allows only an explicit option list per inspect command (and disables external diff and textconv drivers); branch, tag and remote names starting with `-` are rejected.
 - **Electron.** IPC is accepted only from the app's own main frame, and navigation is limited to the exact entry document.
-- **Release pipeline.** GitHub Actions are pinned by commit SHA, workflows run read-only with credentials not persisted, builds use `--publish never` and a separate publish job holds `contents: write`; the Linux installer fails closed when it cannot verify the download's SHA-512 (`--insecure-skip-verify` overrides); `release:prepare` refuses to continue when the CI check can't be confirmed (`--skip-ci-check` overrides). Code signing and notarization are wired to repository secrets and stay inactive until configured. Dependabot watches npm and GitHub Actions. See [SECURITY.md](SECURITY.md).
+- **Release pipeline.** GitHub Actions are pinned by commit SHA, workflows run read-only with credentials not persisted, builds use `--publish never` and a separate publish job holds `contents: write`; the Linux installer fails closed when it cannot verify the download's SHA-512 (`--insecure-skip-verify` overrides); `release:tag` refuses to continue when the CI check can't be confirmed (`--skip-ci-check` overrides). Code signing and notarization are wired to repository secrets and stay inactive until configured. Dependabot watches npm and GitHub Actions. See [SECURITY.md](SECURITY.md).
 
 ### Added
 
