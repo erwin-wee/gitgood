@@ -52,7 +52,7 @@ Installed copies check the GitHub releases feed (via `electron-updater`) on laun
 
 ## Signing
 
-`release.yml` passes these repository secrets to the build step, and electron-builder signs and notarizes only when they are set; with none set the build is unsigned, exactly as before:
+`release.yml` passes these repository secrets to the build step, and electron-builder signs and notarizes only when they are set; with none set the build is unsigned. The build unsets an empty `CSC_LINK` because electron-builder on macOS treats it as a certificate path rather than an absent secret:
 
 | Secret | Used for |
 | --- | --- |
