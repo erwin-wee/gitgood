@@ -1,9 +1,10 @@
+import { aiProviderLabel } from '@shared/ai-model';
 import React, { useEffect, useRef, useState } from 'react';
 import type { CheckRun, PrDraft, PullRequest } from '@shared/types';
 import { appendDraftFooter, PR_DRAFT_FOOTER } from '@shared/util';
 import { errorInfo, errorMessage, invoke } from '../../api';
 import * as actions from '../../state/actions';
-import { closeDialog, useAppStore } from '../../state/store';
+import { closeDialog, useAppStore, useAiEnabled } from '../../state/store';
 import { Badge, Button, Callout, Checkbox, Dialog, Icon, RelativeTime, Spinner, TextField } from '../ui';
 import { NOTICE_KEY } from './ReviewDialogs';
 
@@ -20,11 +21,11 @@ export function SignInDialog(): React.JSX.Element {
   const login = useAppStore((s) => s.login);
   const tools = useAppStore((s) => s.tools);
   const account = tools?.ghAccount ?? null;
-  const ghMissing = tools ? !tools.gh.installed : false;
+  const ghMissing = tools ? !tools.gh.installed && !tools.gh.pending : false;
+  // Opened while already signed in = "Add another account" (or a scope refresh): never auto-close then.
+  const openedSignedIn = useRef(!!account);
   useEffect(() => {
-    // Auto-close once signed in — but not while a scope refresh (grantNotificationsScope) is
-    // deliberately reusing this dialog for an already-signed-in account.
-    if (account && !login.inProgress) closeDialog();
+    if (account && !login.inProgress && !openedSignedIn.current) closeDialog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
   return (
@@ -114,14 +115,16 @@ export function ForcePushDialog(): React.JSX.Element {
 export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
   const settings = useAppStore((s) => s.settings);
-  const aiEnabled = settings?.ai.provider !== 'disabled';
+  const aiEnabled = useAiEnabled();
   const status = useAppStore((s) => s.status);
   const branches = useAppStore((s) => s.branches);
   const defaultBranch = useAppStore((s) => s.defaultBranch);
   const commits = useAppStore((s) => s.history.commits);
   const draftProgress = useAppStore((s) => s.ai['<pull request>']);
   const head = status?.branch.name ?? '';
-  const [base, setBase] = useState(defaultBranch ?? 'main');
+  const stackParent = useAppStore((s) => s.stack.parents.at(-1));
+  // A stacked branch's PR targets its parent branch, but only once that branch exists on the remote.
+  const [base, setBase] = useState(() => (stackParent && branches.some((b) => b.kind === 'remote' && b.name === `origin/${stackParent}`) ? stackParent : (defaultBranch ?? 'main')));
   const [title, setTitle] = useState(() => commits[0]?.summary ?? head.replace(/[-_/]+/g, ' '));
   const [body, setBody] = useState('');
   const [draft, setDraft] = useState(false);
@@ -190,6 +193,7 @@ export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }):
     }
     setAiOrigin(true);
     setRestored(d.restored);
+    if (d.skipped.length) actions.showToast({ kind: 'info', title: 'Left out of the AI request', message: d.skipped.join('\n') }, 8000);
   };
 
   const runDraft = async () => {
@@ -255,7 +259,7 @@ export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }):
               <Button variant="ghost" icon="sparkle" className="sparkle" title="Review this branch against the base branch with AI before opening the pull request" onClick={() => actions.reviewBranch(base)}>Review branch with AI</Button>
             </span>
           ) : null}
-          {drafting ? <Button onClick={() => void invoke('ai.cancel')}>Cancel draft</Button> : <Button onClick={closeDialog}>Cancel</Button>}
+          {drafting ? <Button onClick={() => void invoke('ai.cancel', 'prDraft')}>Cancel draft</Button> : <Button onClick={closeDialog}>Cancel</Button>}
           <Button icon="external" onClick={() => void create(true)} disabled={fieldsLocked}>Create on GitHub.com</Button>
           <Button variant="primary" onClick={() => void create(false)} disabled={!title.trim() || fieldsLocked} loading={busy}>{draft ? 'Create draft pull request' : 'Create pull request'}</Button>
         </>
@@ -288,7 +292,7 @@ export function CreatePullRequestDialog({ autoDraft }: { autoDraft?: boolean }):
       </div>
       {aiEnabled && !noticeSeen ? (
         <Callout tone="info">
-          Drafting sends the commit messages and diff of this branch to {settings?.ai.provider === 'claude-cli' ? 'Claude Code' : 'the Anthropic API'}. Do not draft from changes you are not allowed to share with that service.
+          Drafting sends the commit messages and diff of this branch to {aiProviderLabel(settings?.ai)}. Do not draft from changes you are not allowed to share with that service.
           <div style={{ marginTop: 6 }}>
             <Button
               size="sm"
@@ -347,7 +351,7 @@ function bucketIcon(bucket: CheckRun['bucket']): { icon: 'check-circle' | 'x-cir
 
 export function PullRequestDetailsDialog({ pr: initial }: { pr: PullRequest }): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
-  const aiEnabled = useAppStore((s) => s.settings?.ai.provider !== 'disabled');
+  const aiEnabled = useAiEnabled();
   const [pr, setPr] = useState(initial);
   const [checks, setChecks] = useState<CheckRun[] | null>(null);
   const [method, setMethod] = useState<'merge' | 'squash' | 'rebase'>('merge');
@@ -416,6 +420,11 @@ export function PullRequestDetailsDialog({ pr: initial }: { pr: PullRequest }): 
               <Button variant="primary" loading={busy === 'merge'} disabled={pr.isDraft || pr.mergeable === 'CONFLICTING'} onClick={() => void run('merge', () => invoke('gh.pr.merge', repo.path, pr.number, method, deleteBranch))} title={pr.isDraft ? 'Mark the pull request as ready first' : pr.mergeable === 'CONFLICTING' ? 'Resolve conflicts first' : ''}>
                 Merge pull request
               </Button>
+              {pr.autoMerge ? (
+                <Button loading={busy === 'auto-merge'} onClick={() => void run('auto-merge', () => invoke('gh.pr.disableAutoMerge', repo.path, pr.number))} title="Stop GitHub from merging this pull request automatically">Disable auto-merge</Button>
+              ) : (
+                <Button loading={busy === 'auto-merge'} disabled={pr.isDraft || pr.mergeable === 'CONFLICTING'} onClick={() => void run('auto-merge', () => invoke('gh.pr.merge', repo.path, pr.number, method, deleteBranch, true))} title="GitHub merges this pull request with the selected method once required checks and reviews pass. On branches that use a merge queue, it is added to the queue instead. Needs auto-merge enabled in the repository settings.">Enable auto-merge</Button>
+              )}
             </>
           ) : null}
         </>
@@ -433,6 +442,7 @@ export function PullRequestDetailsDialog({ pr: initial }: { pr: PullRequest }): 
         ) : null}
         {pr.reviewDecision ? <Badge tone={pr.reviewDecision === 'APPROVED' ? 'success' : pr.reviewDecision === 'CHANGES_REQUESTED' ? 'danger' : 'attention'}>{pr.reviewDecision.toLowerCase().replace(/_/g, ' ')}</Badge> : null}
         {pr.mergeable === 'CONFLICTING' ? <Badge tone="danger">conflicts</Badge> : null}
+        {pr.autoMerge ? <Badge tone="accent" title={pr.autoMerge.enabledBy ? `Auto-merge enabled by ${pr.autoMerge.enabledBy}` : undefined}>auto-merge on{pr.autoMerge.method ? ` (${pr.autoMerge.method})` : ''}</Badge> : null}
         {pr.labels.map((l) => (
           <Badge key={l} outline>{l}</Badge>
         ))}

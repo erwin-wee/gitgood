@@ -101,7 +101,7 @@ table.diff .num {
   min-width: 50px;
   text-align: right;
   padding: 0 8px 0 4px;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
   user-select: none;
   background: var(--bg-subtle);
   white-space: nowrap;
@@ -119,7 +119,7 @@ table.diff .sel {
   background: var(--bg-subtle);
 }
 table.diff tr:hover .sel {
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
 }
 table.diff .sel.on {
   color: var(--accent);
@@ -361,7 +361,7 @@ table.diff tr.expander button:hover {
   min-width: 50px;
   text-align: right;
   padding: 0 8px 0 4px;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
   user-select: none;
   background: var(--bg-subtle);
 }
@@ -585,7 +585,7 @@ table.diff tr.flash-highlight td {
   }
   table.diff tr:hover .sel,
   table.diff .sel {
-    color: var(--fg-subtle);
+    color: var(--fg-muted);
   }
   table.diff tr.hunk .hunk-actions button {
     min-height: 40px;

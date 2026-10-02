@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { watchedFolderLabel, type AppSettings, type FoundEditor, type FoundShell, type RepositoryScanProgress, type SigningConfig, type SigningConfigInfo, type SigningKey, type WatchedFolderProblem, type WatchedFolderStatus } from '@shared/types';
-import { errorMessage, invoke, isMac, modKey, on } from '../../api';
+import { watchedFolderLabel, type AiFeature, type AiUsageMonth, type AppSettings, type FoundEditor, type FoundShell, type RepositoryScanProgress, type SigningConfig, type SigningConfigInfo, type SigningKey, type WatchedFolderProblem, type WatchedFolderStatus } from '@shared/types';
+import { errorMessage, invoke, isMac, on, platform } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, store, useAppStore, type SettingsTab } from '../../state/store';
-import { AGENT_PRESETS, agentTemplate, validateAgentTemplate } from '@shared/agent-presets';
+import { modelFor } from '@shared/ai-model';
+import { acceleratorFromEvent, findConflict, formatAccelerator, mergeShortcuts, setShortcut, SHORTCUT_CATEGORIES, SHORTCUTS, type ShortcutConflict, type ShortcutOverrides } from '@shared/shortcuts';
+import { AGENT_PRESETS, agentTemplate, quotingFor, validateAgentTemplate } from '@shared/agent-presets';
 import { Avatar, Button, Callout, Checkbox, Dialog, FilterInput, Icon, Spinner, TextField, type IconName } from '../ui';
 import { LinkifiedText } from './IssueDialogs';
 import { SettingsSyncCard } from './SettingsSyncDialogs';
@@ -58,21 +60,37 @@ export function SettingsDialog({ tab: initialTab }: { tab?: SettingsTab }): Reac
 function AccountsTab(): React.JSX.Element {
   const tools = useAppStore((s) => s.tools);
   const account = tools?.ghAccount ?? null;
-  const [busy, setBusy] = useState(false);
+  const accounts = tools?.ghAccounts ?? [];
+  const [busy, setBusy] = useState<string | null>(null);
+  const run = async (key: string, fn: () => Promise<void>) => {
+    setBusy(key);
+    await fn();
+    setBusy(null);
+  };
+  const ghMissing = !!tools && !tools.gh.installed && !tools.gh.pending;
   return (
     <>
-      <h3>GitHub.com</h3>
+      <h3>GitHub accounts</h3>
       {account ? (
         <>
-          <div className="account-card">
-            <Avatar email={`${account.login}@users.noreply.github.com`} name={account.name ?? account.login} size={40} />
-            <span className="who">
-              <strong>{account.name ?? account.login}</strong>
-              <span className="muted">@{account.login} · {account.host}</span>
-            </span>
-            <Button loading={busy} onClick={async () => { setBusy(true); await actions.signOut(account.host); setBusy(false); }}>Sign out</Button>
-          </div>
-          <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>Token scopes: {account.scopes.join(', ') || 'unknown'} · Git protocol: {account.protocol ?? 'https'}</p>
+          {accounts.map((a) => {
+            const key = `${a.host}/${a.login}`;
+            const profile = a.host === account.host && a.login === account.login ? account : null;
+            return (
+              <div key={key} className="account-card" style={{ marginBottom: 8 }}>
+                <Avatar email={`${a.login}@users.noreply.github.com`} name={profile?.name ?? a.login} size={40} />
+                <span className="who">
+                  <strong>{profile?.name ?? a.login}</strong>
+                  <span className="muted">@{a.login} · {a.host}{a.active ? ' · active' : ''}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>Scopes: {a.scopes.join(', ') || 'unknown'} · Git protocol: {a.protocol ?? 'https'}</span>
+                </span>
+                {!a.active ? <Button loading={busy === `switch:${key}`} onClick={() => void run(`switch:${key}`, () => actions.switchAccount(a.host, a.login))} title="Use this account by default. Repositories with their own account are unaffected.">Make active</Button> : null}
+                <Button loading={busy === `out:${key}`} onClick={() => void run(`out:${key}`, () => actions.signOut(a.host, a.login))}>Sign out</Button>
+              </div>
+            );
+          })}
+          <Button icon="github" onClick={() => openDialog({ kind: 'sign-in' })} disabled={ghMissing}>Add another account</Button>
+          <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>The active account is used for every repository unless you choose one for it in Repository settings → GitHub account.</p>
           {tools && !tools.credentialHelperConfigured ? (
             <Callout tone="warning">
               Git is not configured to use the GitHub CLI for authentication, so pushes to private repositories may fail.{' '}
@@ -85,8 +103,9 @@ function AccountsTab(): React.JSX.Element {
       ) : (
         <>
           <p className="muted">Sign in to clone your repositories, open pull requests and push over HTTPS without managing tokens.</p>
-          <Button variant="primary" icon="github" onClick={() => openDialog({ kind: 'sign-in' })} disabled={tools ? !tools.gh.installed : false}>Sign in to GitHub.com</Button>
-          {tools && !tools.gh.installed ? <Callout tone="warning">Install the GitHub CLI first (see the Advanced tab).</Callout> : null}
+          <Button variant="primary" icon="github" onClick={() => openDialog({ kind: 'sign-in' })} disabled={ghMissing}>Sign in to GitHub.com</Button>
+          {tools?.gh.pending ? <p className="muted"><Spinner /> Checking for the GitHub CLI…</p> : null}
+          {ghMissing ? <Callout tone="warning">Install the GitHub CLI first (see the Advanced tab).</Callout> : null}
           {tools?.ghAuthError ? <Callout tone="danger">{tools.ghAuthError}</Callout> : null}
         </>
       )}
@@ -217,6 +236,7 @@ function GitTab({ settings, update }: { settings: AppSettings; update: (p: Parti
       </div>
       <h4>History</h4>
       <Checkbox checked={settings.historyVerifySignatures} onChange={(v) => update({ historyVerifySignatures: v })} label="Verify commit signatures in History (shown as badges; slower on large histories)" />
+      <Checkbox checked={settings.historyGraph} onChange={(v) => update({ historyGraph: v })} label="Show the commit graph in History (branch lanes; hidden while searching or filtering)" />
       <SigningSection />
     </>
   );
@@ -666,8 +686,9 @@ function PostResolveCheckSettings({ ai, updateAi }: { ai: AppSettings['ai']; upd
                 variant="link"
                 onClick={async () => {
                   if (!repo) return;
-                  await invoke('repo.trustConfig', repo.path, true);
-                  setRepoConfig({ ...repoConfig, trustState: 'trusted' });
+                  const result = await invoke('repo.trustConfig', repo.path, true, repoConfig.command);
+                  // Refused: the file changed since it was displayed. Show the new command and let the user decide again.
+                  setRepoConfig(result.ok ? { ...repoConfig, trustState: 'trusted' } : await invoke('repo.checkConfig', repo.path));
                 }}
               >
                 Trust it now
@@ -682,18 +703,86 @@ function PostResolveCheckSettings({ ai, updateAi }: { ai: AppSettings['ai']; upd
   );
 }
 
+const AI_FEATURE_LABELS: Record<AiFeature, string> = {
+  resolver: 'Conflict resolution',
+  commitMessage: 'Commit messages',
+  review: 'Code review',
+  split: 'Commit splitting',
+  triage: 'Pull request triage',
+  prDraft: 'Pull request drafts',
+  rebase: 'Rebase plans',
+  releaseNotes: 'Release notes',
+  explain: 'Diff explanations',
+  errorExplain: 'Error explanations',
+  nlPalette: 'Command palette',
+};
+
+/** This month's and last month's AI usage per feature, from the machine-local usage log. Cost is shown only when the backend reports it. */
+function AiUsageSection(): React.JSX.Element {
+  const [months, setMonths] = useState<AiUsageMonth[] | null>(null);
+  useEffect(() => {
+    void invoke('ai.usage.get').then(setMonths).catch(() => setMonths([]));
+  }, []);
+  const n = (v: number) => v.toLocaleString();
+  return (
+    <>
+      <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Usage</h4>
+      {(months ?? []).map((m, i) => {
+        const rows = (Object.entries(m.features) as [AiFeature, NonNullable<AiUsageMonth['features'][AiFeature]>][]).sort((a, b) => b[1].requests - a[1].requests);
+        return (
+          <div key={m.month} style={{ marginBottom: 10 }}>
+            <strong style={{ fontSize: 12 }}>{i === 0 ? 'This month' : 'Last month'} ({m.month})</strong>
+            {rows.length ? (
+              <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr className="muted" style={{ textAlign: 'right' }}>
+                    <th style={{ textAlign: 'left', fontWeight: 'normal' }}>Feature</th>
+                    <th style={{ fontWeight: 'normal' }}>Requests</th>
+                    <th style={{ fontWeight: 'normal' }}>Input</th>
+                    <th style={{ fontWeight: 'normal' }}>Output</th>
+                    <th style={{ fontWeight: 'normal' }}>Cache reads</th>
+                    <th style={{ fontWeight: 'normal' }}>Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(([feature, t]) => (
+                    <tr key={feature} style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'left' }}>{AI_FEATURE_LABELS[feature] ?? feature}</td>
+                      <td>{n(t.requests)}</td>
+                      <td>{n(t.inputTokens)}</td>
+                      <td>{n(t.outputTokens)}</td>
+                      <td>{n(t.cacheReadTokens)}</td>
+                      <td>{t.costUsd === null ? '—' : `$${t.costUsd.toFixed(2)}`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="muted" style={{ fontSize: 12, margin: '2px 0 0' }}>No AI requests.</p>
+            )}
+          </div>
+        );
+      })}
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Token counts are what the provider reports; cost appears only when the backend reports it (Claude Code does, the API does not). Kept on this machine only; not exported or synced.</p>
+    </>
+  );
+}
+
 function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }): React.JSX.Element {
   const tools = useAppStore((s) => s.tools);
   const errorFeedback = useAppStore((s) => s.aiErrorFeedback);
   const [key, setKey] = useState('');
   const [savingKey, setSavingKey] = useState(false);
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [savingOpenaiKey, setSavingOpenaiKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [customModel, setCustomModel] = useState(!MODELS.some((m) => m.id === settings.ai.model));
   const [agentDraft, setAgentDraft] = useState(settings.ai.agentCustomCommand);
   const ai = settings.ai;
   const updateAi = (patch: Partial<AppSettings['ai']>) => update({ ai: { ...ai, ...patch } });
-  const agentDraftError = ai.agentCommand === 'custom' ? validateAgentTemplate(agentDraft) : null;
+  const agentQuoting = quotingFor(settings.shell, platform);
+  const agentDraftError = ai.agentCommand === 'custom' ? validateAgentTemplate(agentDraft, agentQuoting) : null;
   const saveKey = async () => {
     setSavingKey(true);
     try {
@@ -706,15 +795,29 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
       setSavingKey(false);
     }
   };
+  const saveOpenaiKey = async () => {
+    setSavingOpenaiKey(true);
+    try {
+      const next = await invoke('app.setOpenaiApiKey', openaiKey.trim() || null);
+      store.set((s) => (s.settings ? { settings: { ...s.settings, ai: next } } : {}));
+      setOpenaiKey('');
+    } catch (err) {
+      actions.showError('Could not save API key', err);
+    } finally {
+      setSavingOpenaiKey(false);
+    }
+  };
   return (
     <>
       <h3>AI conflict resolution</h3>
       <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>One click asks Claude to reconcile both sides of every conflict block in a file. Only the conflicted regions, some surrounding context and the commit subjects on each side are sent. Results are written to the file and can be undone.</p>
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Files that look like secrets (.env, private keys, certificates, .netrc, credentials*.json, …) are never sent to any provider, and known token patterns are masked in the text the read-only features send. Individual repositories can opt out from the repository list menu, or with <span className="mono">{'{ "ai": false }'}</span> in <span className="mono">.gitgood/config.json</span>.</p>
       <div className="settings-row">
         <label htmlFor="settings-ai-provider">Provider</label>
         <select id="settings-ai-provider" value={ai.provider} onChange={(e) => updateAi({ provider: e.target.value as AppSettings['ai']['provider'] })}>
           <option value="anthropic">Anthropic API (API key)</option>
           <option value="claude-cli">Claude Code CLI (uses your existing login)</option>
+          <option value="openai-compatible">OpenAI-compatible server (OpenAI, Ollama, LM Studio, …)</option>
           <option value="disabled">Disabled</option>
         </select>
       </div>
@@ -730,6 +833,19 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
           </p>
         </>
       ) : null}
+      {ai.provider === 'openai-compatible' ? (
+        <>
+          <TextField label="Base URL" hint="Include the version path, e.g. https://api.openai.com/v1 or http://localhost:11434/v1. GitGood calls POST {base URL}/chat/completions." value={ai.openaiBaseUrl} placeholder="https://api.openai.com/v1" spellCheck={false} onChange={(e) => updateAi({ openaiBaseUrl: e.target.value.trim() })} />
+          <div className="settings-row">
+            <label>API key</label>
+            <input type="password" placeholder={ai.hasOpenaiApiKey ? '•••••••••••• (stored securely)' : 'Optional for local servers'} value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} spellCheck={false} autoComplete="off" />
+            <Button onClick={() => void saveOpenaiKey()} loading={savingOpenaiKey} disabled={!openaiKey.trim() && !ai.hasOpenaiApiKey}>{openaiKey.trim() ? 'Save' : ai.hasOpenaiApiKey ? 'Remove' : 'Save'}</Button>
+          </div>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Stored encrypted with the operating system's credential store like the Anthropic key, sent only to the base URL above, and never exported or synced. Changing the base URL through a settings import removes the stored key. Requests ask for strict JSON-schema output and fall back to plain JSON mode when the server does not support it.
+          </p>
+        </>
+      ) : null}
       {ai.provider === 'claude-cli' ? (
         <Callout tone={tools?.claudeCli.installed ? 'success' : 'warning'}>
           {tools?.claudeCli.installed ? `Claude Code ${tools.claudeCli.version ?? ''} found at ${tools.claudeCli.path}. Requests use its sign-in and plan.` : 'Claude Code CLI was not found on this machine. Install it (npm install -g @anthropic-ai/claude-code) and sign in, or set its path under Advanced.'}
@@ -739,7 +855,9 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
         <>
           <div className="settings-row">
             <label htmlFor="settings-ai-model">Model</label>
-            {customModel ? (
+            {ai.provider === 'openai-compatible' ? (
+              <input id="settings-ai-model" value={ai.openaiModel} placeholder="e.g. gpt-4o or llama3.1" onChange={(e) => updateAi({ openaiModel: e.target.value.trim() })} spellCheck={false} />
+            ) : customModel ? (
               <input id="settings-ai-model" value={ai.model} onChange={(e) => updateAi({ model: e.target.value })} spellCheck={false} />
             ) : (
               <select id="settings-ai-model" value={ai.model} onChange={(e) => updateAi({ model: e.target.value })}>
@@ -760,6 +878,25 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
               <option value="max">Max (most thorough)</option>
             </select>
           </div>
+          <details style={{ margin: '8px 0' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12 }}>Model per feature{Object.values(ai.featureModels ?? {}).some(Boolean) ? ' (customised)' : ''}</summary>
+            <p className="muted" style={{ fontSize: 12 }}>Leave a field empty to use the model above. A cheaper model for commit messages and triage, a stronger one for review, for example.</p>
+            {(Object.keys(AI_FEATURE_LABELS) as AiFeature[]).map((f) => (
+              <div className="settings-row" key={f}>
+                <label htmlFor={`settings-ai-model-${f}`}>{AI_FEATURE_LABELS[f]}</label>
+                <input
+                  id={`settings-ai-model-${f}`}
+                  value={ai.featureModels?.[f] ?? ''}
+                  placeholder={modelFor({ ...ai, featureModels: {} }, f)}
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const { [f]: _removed, ...rest } = ai.featureModels ?? {};
+                    updateAi({ featureModels: e.target.value.trim() ? { ...rest, [f]: e.target.value.trim() } : rest });
+                  }}
+                />
+              </div>
+            ))}
+          </details>
           <Checkbox checked={ai.autoStageAfterResolve} onChange={(v) => updateAi({ autoStageAfterResolve: v })} label="Mark files as resolved automatically after a successful AI resolution" />
           <PostResolveCheckSettings ai={ai} updateAi={updateAi} />
           <h4 style={{ margin: '16px 0 6px', fontSize: 12, textTransform: 'uppercase', color: 'var(--fg-muted)' }}>Pull request review</h4>
@@ -810,7 +947,7 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
               onChange={(e) => {
                 const v = e.target.value;
                 setAgentDraft(v);
-                if (!validateAgentTemplate(v)) updateAi({ agentCustomCommand: v });
+                if (!validateAgentTemplate(v, agentQuoting)) updateAi({ agentCustomCommand: v });
               }}
             />
           ) : null}
@@ -831,6 +968,7 @@ function AiTab({ settings, update }: { settings: AppSettings; update: (p: Partia
             {testResult ? <span style={{ color: testResult.ok ? 'var(--success)' : 'var(--danger)', fontSize: 12 }}>{testResult.message}</span> : null}
           </div>
           {ai.provider === 'anthropic' && /claude-(opus-5|fable)/.test(ai.model) ? <p className="muted" style={{ fontSize: 12 }}>Server-side refusal fallback is enabled: if a safety classifier declines a request, the API retries it on a fallback model automatically.</p> : null}
+          <AiUsageSection />
         </>
       ) : null}
     </>
@@ -843,7 +981,7 @@ function AdvancedTab({ settings, update }: { settings: AppSettings; update: (p: 
   useEffect(() => {
     void invoke('app.info').then(setInfo);
   }, []);
-  const row = (label: string, tool: { installed: boolean; version: string | null; path: string | null; error: string | null } | undefined, key: 'gitPath' | 'ghPath' | 'claudeCliPath', install: string) => (
+  const row = (label: string, tool: { installed: boolean; version: string | null; path: string | null; error: string | null; pending?: boolean } | undefined, key: 'gitPath' | 'ghPath' | 'claudeCliPath', install: string) => (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Icon name={tool?.installed ? 'check-circle' : 'x-circle'} className="" />
@@ -855,7 +993,7 @@ function AdvancedTab({ settings, update }: { settings: AppSettings; update: (p: 
         <input placeholder={tool?.path ?? 'auto-detected'} value={(key === 'claudeCliPath' ? settings.ai.claudeCliPath : settings[key]) ?? ''} onChange={(e) => (key === 'claudeCliPath' ? update({ ai: { ...settings.ai, claudeCliPath: e.target.value || null } }) : update({ [key]: e.target.value || null }))} spellCheck={false} />
         <Button size="sm" onClick={() => void invoke('app.chooseFile', { title: `Locate ${label}` }).then((p) => p && (key === 'claudeCliPath' ? update({ ai: { ...settings.ai, claudeCliPath: p } }) : update({ [key]: p })))}>Browse…</Button>
       </div>
-      {!tool?.installed ? <span className="muted" style={{ fontSize: 12 }}>Install: <span className="mono">{install}</span></span> : null}
+      {!tool?.installed && !tool?.pending ? <span className="muted" style={{ fontSize: 12 }}>Install: <span className="mono">{install}</span></span> : null}
     </div>
   );
   return (
@@ -878,7 +1016,7 @@ function AdvancedTab({ settings, update }: { settings: AppSettings; update: (p: 
       </div>
       <Button size="sm" icon="sync" onClick={() => void actions.refreshTools()}>Re-detect tools</Button>
       <h4>Portable settings</h4>
-      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Carry your preferences, repository list and integration choices to another machine, as a file or through a secret GitHub gist. Never includes your API key, saved credentials, tool paths or window position.</p>
+      <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>Carry your preferences, repository list and integration choices to another machine, as a file or through a secret GitHub gist. Never includes your API key, saved credentials, custom agent command, tool paths or window position.</p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <Button size="sm" icon="upload" onClick={() => openDialog({ kind: 'export-settings' })}>Export…</Button>
         <Button size="sm" icon="download" onClick={() => openDialog({ kind: 'import-settings' })}>Import…</Button>
@@ -908,7 +1046,7 @@ function AdvancedTab({ settings, update }: { settings: AppSettings; update: (p: 
           <Button variant="link" onClick={() => void invoke('app.showItemInFolder', info.logPath)}>Show log file</Button> · <Button variant="link" onClick={() => void invoke('app.openPath', info.userDataPath)}>Open data folder</Button>
         </p>
       ) : null}
-      <p className="muted" style={{ fontSize: 12 }}>Keyboard shortcuts: {modKey}+/ </p>
+      <p className="muted" style={{ fontSize: 12 }}>Keyboard shortcuts: {formatAccelerator(mergeShortcuts(settings.shortcuts)['keyboard-shortcuts'] ?? '', isMac) || 'unassigned'}</p>
     </>
   );
 }
@@ -985,53 +1123,96 @@ export function UpdateNotesDialog({ version, notes, url }: { version: string; no
 }
 
 export function ShortcutsDialog(): React.JSX.Element {
-  const m = modKey;
-  const categories = ['Navigation', 'Editing', 'AI', 'Git ops', 'View'] as const;
-  type ShortcutCategory = (typeof categories)[number];
-  const rows: { category: ShortcutCategory; label: string; keys: string }[] = [
-    { category: 'Git ops', label: 'New repository', keys: `${m}+N` },
-    { category: 'Git ops', label: 'Add local repository', keys: `${m}+O` },
-    { category: 'Git ops', label: 'Clone repository', keys: `${m}+Shift+O` },
-    { category: 'View', label: 'Options', keys: `${m}+,` },
-    { category: 'AI', label: 'Ask GitGood (command palette)', keys: `${m}+K` },
-    { category: 'Navigation', label: 'Show Changes', keys: `${m}+1` },
-    { category: 'Navigation', label: 'Show History', keys: `${m}+2` },
-    { category: 'Navigation', label: 'Show Stashes', keys: `${m}+Shift+S` },
-    { category: 'Navigation', label: 'Repository health', keys: `${m}+Shift+K` },
-    { category: 'Navigation', label: 'Repository list', keys: `${m}+T` },
-    { category: 'Navigation', label: 'Branch list', keys: `${m}+B` },
-    { category: 'Navigation', label: 'Notifications inbox', keys: `${m}+Shift+J` },
-    { category: 'Navigation', label: 'Go to commit summary', keys: `${m}+G` },
-    { category: 'Editing', label: 'Commit', keys: `${m}+Enter` },
-    { category: 'View', label: 'Toggle split diff', keys: `${m}+Shift+D` },
-    { category: 'View', label: 'Toggle blame', keys: 'Alt+B' },
-    { category: 'Git ops', label: 'Push', keys: `${m}+P` },
-    { category: 'Git ops', label: 'Pull', keys: `${m}+Shift+P` },
-    { category: 'Git ops', label: 'Fetch', keys: `${m}+Shift+T` },
-    { category: 'Git ops', label: 'New branch', keys: `${m}+Shift+N` },
-    { category: 'Git ops', label: 'Merge into current branch', keys: `${m}+Shift+M` },
-    { category: 'Git ops', label: 'Rebase current branch', keys: `${m}+Shift+E` },
-    { category: 'Git ops', label: 'Update from default branch', keys: `${m}+Shift+U` },
-    { category: 'Git ops', label: 'Create pull request', keys: `${m}+R` },
-    { category: 'AI', label: 'Review pull request with AI', keys: `${m}+Shift+R` },
-    { category: 'Git ops', label: 'View on GitHub', keys: `${m}+Shift+G` },
-    { category: 'Navigation', label: 'Open in terminal', keys: 'Ctrl+`' },
-    { category: 'Navigation', label: 'Show in folder', keys: `${m}+Shift+F` },
-    { category: 'Navigation', label: 'Open in external editor', keys: `${m}+Shift+A` },
-    { category: 'Editing', label: 'Discard all changes', keys: `${m}+Shift+Backspace` },
-    { category: 'View', label: 'Zoom in / out / reset', keys: `${m}+= / ${m}+- / ${m}+0` },
-  ];
+  const overrides = useAppStore((s) => s.settings?.shortcuts) ?? {};
+  const shortcuts = mergeShortcuts(overrides);
   const [query, setQuery] = useState('');
+  const [recording, setRecording] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ id: string; accelerator: string; conflict: ShortcutConflict } | null>(null);
+  const labelOf = (id: string): string => SHORTCUTS.find((d) => d.id === id)?.label ?? id;
+  const save = (next: ShortcutOverrides): void => void actions.updateSettings({ shortcuts: next });
+  const bind = (id: string, accelerator: string): void => {
+    const conflict = findConflict(shortcuts, id, accelerator, isMac);
+    if (conflict?.id === null) {
+      setNote(`${formatAccelerator(accelerator, isMac)} is reserved for "${conflict.label}". Choose another combination.`);
+      return;
+    }
+    setRecording(null);
+    setNote(null);
+    if (conflict) setPending({ id, accelerator, conflict });
+    else {
+      setPending(null);
+      save(setShortcut(overrides, id, accelerator));
+    }
+  };
+
+  useEffect(() => {
+    if (pending) document.getElementById('shortcut-conflict-confirm')?.focus();
+  }, [pending]);
+
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        setRecording(null);
+        setNote(null);
+        return;
+      }
+      const accelerator = acceleratorFromEvent(e, isMac);
+      if (!accelerator) {
+        setNote('That key cannot be bound on its own: combine it with Ctrl/Cmd or Alt, or use a function key.');
+        return;
+      }
+      bind(recording, accelerator);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
+
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const filteredRows = rows.filter(({ category, label, keys }) => {
-    const haystack = `${category} ${label} ${keys}`.toLowerCase();
+  const rows = SHORTCUTS.filter(({ id, category, label }) => {
+    const haystack = `${category} ${label} ${shortcuts[id] ? formatAccelerator(shortcuts[id], isMac) : ''}`.toLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
+  const customised = Object.keys(overrides).length > 0;
   return (
-    <Dialog title="Keyboard shortcuts" icon="info" onClose={closeDialog} footer={<Button variant="primary" onClick={closeDialog}>Close</Button>}>
+    <Dialog
+      title="Keyboard shortcuts"
+      icon="info"
+      onClose={closeDialog}
+      footer={
+        <>
+          <Button disabled={!customised} onClick={() => save({})}>Reset all to defaults</Button>
+          <Button variant="primary" onClick={closeDialog}>Close</Button>
+        </>
+      }
+    >
       <FilterInput value={query} onChange={setQuery} placeholder="Filter shortcuts" label="Filter keyboard shortcuts" autoFocus />
-      {categories.map((category) => {
-        const categoryRows = filteredRows.filter((row) => row.category === category);
+      {pending ? (
+        <Callout tone="warning">
+          <p style={{ margin: '0 0 6px' }}>
+            <kbd>{formatAccelerator(pending.accelerator, isMac)}</kbd> is already used by "{pending.conflict.label}". Use it for "{labelOf(pending.id)}" and unbind "{pending.conflict.label}"?
+          </p>
+          <Button
+            id="shortcut-conflict-confirm"
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              save(setShortcut(setShortcut(overrides, pending.conflict.id!, null), pending.id, pending.accelerator));
+              setPending(null);
+            }}
+          >
+            Unbind "{pending.conflict.label}" and use it here
+          </Button>{' '}
+          <Button size="sm" onClick={() => setPending(null)}>Cancel</Button>
+        </Callout>
+      ) : null}
+      {note ? <Callout tone="warning">{note}</Callout> : null}
+      {SHORTCUT_CATEGORIES.map((category) => {
+        const categoryRows = rows.filter((row) => row.category === category);
         if (categoryRows.length === 0) return null;
         const headingId = `shortcut-category-${category.toLowerCase().replace(/ /g, '-')}`;
         return (
@@ -1039,16 +1220,14 @@ export function ShortcutsDialog(): React.JSX.Element {
             <h3 id={headingId} style={{ margin: '14px 0 4px', fontSize: 12 }}>{category}</h3>
             <table className="shortcut-table">
               <tbody>
-                {categoryRows.map(({ label, keys }) => (
-                  <tr key={label}>
+                {categoryRows.map(({ id, label }) => (
+                  <tr key={id}>
                     <td>{label}</td>
                     <td>
-                      {keys.split(' / ').map((k, i) => (
-                        <span key={i}>
-                          {i > 0 ? ' / ' : ''}
-                          <kbd>{k}</kbd>
-                        </span>
-                      ))}
+                      {recording === id ? <em>Press the new keys… (Esc cancels)</em> : shortcuts[id] ? <kbd>{formatAccelerator(shortcuts[id], isMac)}</kbd> : <span className="muted">Unassigned</span>}{' '}
+                      <Button size="sm" variant="ghost" aria-label={`Change shortcut for ${label}`} onClick={() => { setPending(null); setNote(null); setRecording(recording === id ? null : id); }}>{recording === id ? 'Cancel' : 'Change'}</Button>
+                      {shortcuts[id] ? <Button size="sm" variant="ghost" aria-label={`Unbind shortcut for ${label}`} onClick={() => save(setShortcut(overrides, id, null))}>Unbind</Button> : null}
+                      {Object.hasOwn(overrides, id) ? <Button size="sm" variant="ghost" aria-label={`Reset shortcut for ${label}`} onClick={() => bind(id, SHORTCUTS.find((d) => d.id === id)!.accelerator)}>Reset</Button> : null}
                     </td>
                   </tr>
                 ))}
@@ -1057,7 +1236,7 @@ export function ShortcutsDialog(): React.JSX.Element {
           </section>
         );
       })}
-      {filteredRows.length === 0 ? <p className="muted" style={{ marginTop: 12 }}>No matching shortcuts.</p> : null}
+      {rows.length === 0 ? <p className="muted" style={{ marginTop: 12 }}>No matching shortcuts.</p> : null}
     </Dialog>
   );
 }

@@ -94,7 +94,7 @@ async function withUpdaterProvider<P extends FakeProvider>(
     const updater = new Updater(store, provider, (s) => changes.push(s), {
       getVersion: () => '1.0.0',
       manualUrl: 'https://github.com/erwin-wee/gitgood/releases',
-      disabledEnv: { isPackaged: true, platform: 'linux', portableExecutableDir: undefined, appImagePath: undefined, appImageWritable: false, ...disabledEnvOverrides },
+      disabledEnv: { isPackaged: true, platform: 'linux', portableExecutableDir: undefined, appImagePath: '/home/user/GitGood.AppImage', appImageWritable: true, ...disabledEnvOverrides },
       isPerMachineInstall,
       now: clock.now,
       setTimer: clock.setTimer,

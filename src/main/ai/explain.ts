@@ -7,6 +7,8 @@
  */
 import type { DiffOptions } from '@shared/ipc';
 import type { CommitFile, ExplainFollowUp, ExplainSource, ExplainTarget, Explanation, WorkingFile } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
+import { secretFileReason } from '@shared/secrets';
 import { EXPLAIN_FOLLOWUP_LIMIT } from '@shared/types';
 import { parseUnifiedDiff } from '@shared/diff/parse';
 import { getCommitFileDiff, getStashFileDiff, getWorkingDiff } from '../git/diff';
@@ -17,6 +19,7 @@ import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { buildExplainFollowUpPrompt, buildExplainPrompt, EXPLAIN_FOLLOWUP_SCHEMA, EXPLAIN_FOLLOWUP_SYSTEM_PROMPT, EXPLAIN_SCHEMA, EXPLAIN_SYSTEM_PROMPT, type ExplainFilePromptInput } from './prompts';
 import { buildRangeContext, explainCacheKey, indexNewSideLines, isVolatileExplainTarget, markSelectedRange, splitPatchByFile, validateExplanation, validateFollowUpAnswer } from './explain-core';
@@ -42,19 +45,18 @@ interface PromptResult {
 }
 
 export class ExplainService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
   private cache = new Map<string, Map<string, CacheEntry>>();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while an explanation or follow-up is in flight; used by the update install gate alongside the resolver/review services. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   private cacheFor(repoPath: string): Map<string, CacheEntry> {
@@ -79,9 +81,8 @@ export class ExplainService {
     const volatile = isVolatileExplainTarget(target);
     if (cached && !volatile) return cached.explanation;
 
-    const { backend, settings } = await createBackend(this.store, this.tools);
-    const controller = new AbortController();
-    this.controller = controller;
+    const { backend, settings } = await createBackend(this.store, this.tools, 'explain');
+    const controller = this.jobs.start();
     try {
       const built = await this.buildPrompt(repoPath, target);
       // The prompt embeds the file's content, so an unchanged working tree
@@ -92,7 +93,7 @@ export class ExplainService {
         system: EXPLAIN_SYSTEM_PROMPT,
         prompt: built.prompt,
         schema: EXPLAIN_SCHEMA as unknown as Record<string, unknown>,
-        model: settings.model,
+        model: modelFor(settings, 'explain'),
         effort: settings.effort,
         signal: controller.signal,
       });
@@ -102,7 +103,7 @@ export class ExplainService {
       log.info(`AI explain (${target.kind}) via ${backend.name}/${explanation.model}: ${droppedReferences} reference(s) dropped${built.truncated ? ', input truncated' : ''}`);
       return explanation;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 
@@ -120,15 +121,14 @@ export class ExplainService {
       if (!entry) throw new AiError('Could not rebuild the original explanation context. Explain the target again.', 'other');
     }
 
-    const { backend, settings } = await createBackend(this.store, this.tools);
-    const controller = new AbortController();
-    this.controller = controller;
+    const { backend, settings } = await createBackend(this.store, this.tools, 'explain');
+    const controller = this.jobs.start();
     try {
       const response = await backend.complete({
         system: EXPLAIN_FOLLOWUP_SYSTEM_PROMPT,
         prompt: buildExplainFollowUpPrompt(entry.basePrompt, history, trimmedQuestion),
         schema: EXPLAIN_FOLLOWUP_SCHEMA as unknown as Record<string, unknown>,
-        model: settings.model,
+        model: modelFor(settings, 'explain'),
         effort: settings.effort === 'max' ? 'high' : settings.effort,
         signal: controller.signal,
       });
@@ -136,7 +136,7 @@ export class ExplainService {
       if (!answer) throw new AiError('The model returned an empty answer.', 'invalid-output');
       return answer;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 
@@ -162,6 +162,12 @@ export class ExplainService {
     const fileInputs: ExplainFilePromptInput[] = [];
     for (const file of files) {
       const recentHistory = await getRecentFileHistory(this.git, repoPath, sha, file.path);
+      const secret = secretFileReason(file.path);
+      if (secret) {
+        knownPaths.set(file.path, new Set());
+        fileInputs.push({ path: file.path, oldPath: file.oldPath, status: file.status, annotatedDiff: `(not sent: ${secret})`, recentHistory: [] });
+        continue;
+      }
       if (omittedSet.has(file.path)) {
         knownPaths.set(file.path, new Set());
         fileInputs.push({ path: file.path, oldPath: file.oldPath, status: file.status, annotatedDiff: '(omitted: input size limit reached)', recentHistory });
@@ -190,6 +196,8 @@ export class ExplainService {
   }
 
   private async resolveFileDiff(repoPath: string, source: ExplainSource, path: string) {
+    const secret = secretFileReason(path);
+    if (secret) throw new AiError(`${path} looks like a secrets file (${secret}), so it is never sent to AI.`, 'other');
     if (source.kind === 'commit') {
       const commit = await getCommit(this.git, repoPath, source.sha);
       const files = await getCommitFiles(this.git, repoPath, source.sha, commit.parents);

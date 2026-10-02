@@ -1,5 +1,6 @@
 import type { Commit, CommitFile, CommitSignature, FileStatusKind, HistoryPage, HistoryQuery, ReleaseCommit, SignatureStatus } from '@shared/types';
 import { friendlyRegexError, isEmptyHistoryQuery, parseCoAuthors } from '@shared/util';
+import { secretFileReason } from '@shared/secrets';
 import type { HistoryOptions } from '@shared/ipc';
 import { extractSquashPrNumber, MAX_RANGE_COMMITS } from '../ai/release-notes-core';
 import { EMPTY_TREE_SHA, GitError, type GitClient } from './git';
@@ -108,7 +109,7 @@ export async function getHistory(git: GitClient, repoPath: string, opts: History
   const follow = !!opts.follow && !!opts.path;
   const withSignature = !!opts.verifySignatures;
   const format = withSignature ? FORMAT_WITH_SIGNATURE : FORMAT;
-  const base = ['log', `--format=${format}`, `--max-count=${limit + 1}`, `--skip=${opts.skip}`, ...(follow ? ['--follow', '-M'] : [])];
+  const base = ['log', `--format=${format}`, `--max-count=${limit + 1}`, `--skip=${opts.skip}`, ...(follow ? ['--follow', '-M'] : []), ...(opts.graph ? ['--date-order'] : [])];
   const query = opts.query ?? null;
   const hasQuery = !!query && !isEmptyHistoryQuery(query);
   const refArgs = query?.allRefs ? ['--all'] : [opts.ref ?? 'HEAD'];
@@ -372,6 +373,10 @@ export async function getCommitPatch(git: GitClient, repoPath: string, sha: stri
     files.map(async (file) => {
       if (file.binary) {
         const text = `diff --git a/${file.path} b/${file.path}\nBinary files differ (not shown)\n`;
+        return { path: file.path, text, bytes: 0 };
+      }
+      if (secretFileReason(file.path)) {
+        const text = `diff --git a/${file.path} b/${file.path}\n(secrets file, not shown)\n`;
         return { path: file.path, text, bytes: 0 };
       }
       const paths = file.oldPath ? [file.oldPath, file.path] : [file.path];

@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import type { UpdateState } from '@shared/types';
+import type { BisectState, UpdateState } from '@shared/types';
 import { formatRelativeTime } from '@shared/util';
 import * as actions from '../state/actions';
 import { openDialog, store, useAppStore } from '../state/store';
+import { invoke, on } from '../api';
+import { markBisect, openBisectResult, resetBisect } from '../state/reflog';
 import { Button, Icon, Spinner } from './ui';
 
 function lfsInstallHint(platform: string): string {
@@ -57,6 +59,65 @@ function updateBanner(updateState: UpdateState): React.JSX.Element | null {
   return null;
 }
 
+const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/** Progress of a running `git bisect`: mark the checked-out commit good/bad/skip, or reset; shows the first bad commit once git has found it. */
+function BisectBanner(): React.JSX.Element {
+  const repo = useAppStore((s) => s.currentRepo);
+  const status = useAppStore((s) => s.status);
+  const busy = useAppStore((s) => s.operation !== null);
+  const [state, setState] = useState<BisectState | null>(null);
+  useEffect(() => {
+    if (!repo) return;
+    let current = true;
+    invoke('repo.bisect', repo.path).then((s) => current && setState(s), () => undefined);
+    return () => {
+      current = false;
+    };
+  }, [repo, status]);
+
+  const reset = <Button size="sm" disabled={busy} onClick={() => void resetBisect()}>Reset</Button>;
+  if (state?.firstBad) {
+    return (
+      <div className="banner success">
+        <Icon name="check-circle" />
+        <span className="banner-text">
+          <strong>First bad commit found</strong>
+          <span className="mono">{state.firstBad.sha.slice(0, 7)}</span> {state.firstBad.summary}
+        </span>
+        <span className="banner-actions">
+          <Button size="sm" variant="primary" onClick={() => openBisectResult(state.firstBad!.sha)}>Open commit</Button>
+          {reset}
+        </span>
+      </div>
+    );
+  }
+  const ready = !!state && state.bad !== null && state.good.length > 0;
+  return (
+    <div className="banner info">
+      <Icon name="history" />
+      <span className="banner-text">
+        <strong>Bisecting</strong>
+        {ready && state.remaining !== null && state.steps !== null
+          ? `${plural(state.remaining, 'revision')} left (about ${plural(state.steps, 'step')}). Test ${state.head?.sha.slice(0, 7) ?? 'the checked-out commit'}${state.head ? ` “${state.head.summary}”` : ''}, then mark it.`
+          : state
+            ? `Mark a ${state.bad === null ? 'bad' : 'good'} commit (right-click it in History) to continue.`
+            : 'Loading…'}
+      </span>
+      <span className="banner-actions">
+        {ready ? (
+          <>
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => void markBisect('good', null)}>Good</Button>
+            <Button size="sm" variant="danger" disabled={busy} onClick={() => void markBisect('bad', null)}>Bad</Button>
+            <Button size="sm" disabled={busy} onClick={() => void markBisect('skip', null)}>Skip</Button>
+          </>
+        ) : null}
+        {reset}
+      </span>
+    </div>
+  );
+}
+
 /** Post-resolution check failure banner: shows the command and a "Show output" toggle, plus a single "Ask AI to fix" retry (hidden after it has already been used once for this file). */
 function CheckFailedBanner(): React.JSX.Element | null {
   const banner = useAppStore((s) => s.checkBanner);
@@ -79,6 +140,63 @@ function CheckFailedBanner(): React.JSX.Element | null {
       </span>
     </div>
   );
+}
+
+const TOOL_UPDATE_HELP: Record<'git' | 'gh', { label: string; url: string; hint: (platform: string) => string }> = {
+  git: { label: 'Git', url: 'https://git-scm.com/downloads', hint: (p) => (p === 'win32' ? 'winget upgrade --id Git.Git -e' : p === 'darwin' ? 'brew upgrade git' : 'update the git package with your package manager') },
+  gh: { label: 'GitHub CLI', url: 'https://cli.github.com', hint: (p) => (p === 'win32' ? 'winget upgrade --id GitHub.cli -e' : p === 'darwin' ? 'brew upgrade gh' : 'update gh as described on cli.github.com') },
+};
+
+/** Warns (never blocks) when git or gh is older than the supported minimum; dismissible for the session. */
+function useToolsOutdatedBanner(): React.JSX.Element | null {
+  const tools = useAppStore((s) => s.tools);
+  const [dismissed, setDismissed] = useState(false);
+  const outdated = (['git', 'gh'] as const).filter((t) => tools?.[t].outdated);
+  if (!tools || dismissed || !outdated.length) return null;
+  const platform = window.gitgoodBridge.platform;
+  return (
+    <div key="tools-outdated" className="banner">
+      <Icon name="alert" />
+      <span className="banner-text">
+        {outdated.map((t) => (
+          <span key={t} style={{ display: 'block' }}>
+            <strong>{TOOL_UPDATE_HELP[t].label} {tools[t].version} is older than the supported minimum {tools[t].minVersion}.</strong> Some features may fail. Update: <code className="mono">{TOOL_UPDATE_HELP[t].hint(platform)}</code> or download from <Button variant="link" onClick={() => void actions.openExternal(TOOL_UPDATE_HELP[t].url)}>{TOOL_UPDATE_HELP[t].url.replace('https://', '')}</Button>.
+          </span>
+        ))}
+      </span>
+      <Button size="sm" variant="ghost" iconOnly icon="x" aria-label="Dismiss tool version notice" onClick={() => setDismissed(true)} />
+    </div>
+  );
+}
+
+/** Event-socket state of a browser tab or remote-server session (see src/server/web-bridge.ts); null while healthy. */
+function useServerBanner(): React.JSX.Element | null {
+  const [connected, setConnected] = useState(true);
+  const [updatedTo, setUpdatedTo] = useState<string | null>(null);
+  useEffect(() => {
+    const offs = [on('server.connection', (p) => setConnected(p.connected)), on('server.updated', (p) => setUpdatedTo(p.version))];
+    return () => offs.forEach((off) => off());
+  }, []);
+  if (!connected) {
+    return (
+      <div key="server-connection" className="banner danger" role="status">
+        <Spinner />
+        <span className="banner-text"><strong>Reconnecting to server…</strong> Changes made elsewhere will appear once the connection is back.</span>
+      </div>
+    );
+  }
+  if (updatedTo) {
+    return (
+      <div key="server-updated" className="banner info" role="status">
+        <Icon name="download" />
+        <span className="banner-text"><strong>GitGood server was updated to {updatedTo}.</strong> Reload to use the new version.</span>
+        <span className="banner-actions">
+          <Button size="sm" variant="primary" onClick={() => window.location.reload()}>Reload</Button>
+        </span>
+      </div>
+    );
+  }
+  return null;
 }
 
 export function Banners(): React.JSX.Element | null {
@@ -117,7 +235,9 @@ export function Banners(): React.JSX.Element | null {
   }, [dismissedLfsRepo, repo?.path, showLfsBanner]);
 
   const update = updateBanner(updateState);
-  if (!repo || !status) return update ? <div className="banner-stack">{update}</div> : null;
+  const serverBanner = useServerBanner();
+  const toolsBanner = useToolsOutdatedBanner();
+  if (!repo || !status) return update || serverBanner || toolsBanner ? <div className="banner-stack">{serverBanner}{toolsBanner}{update}</div> : null;
   const banners: React.ReactNode[] = [];
   const op = status.operation;
 
@@ -143,6 +263,7 @@ export function Banners(): React.JSX.Element | null {
     );
   }
 
+  if (op.kind === 'bisect') banners.push(<BisectBanner key="bisect" />);
   if (checkBanner) banners.push(<CheckFailedBanner key="check-failed" />);
 
   if (merge && dismissedMerge !== merge.at) {
@@ -227,5 +348,7 @@ export function Banners(): React.JSX.Element | null {
   }
 
   if (update) banners.push(update);
+  if (toolsBanner) banners.push(toolsBanner);
+  if (serverBanner) banners.unshift(serverBanner);
   return banners.length ? <div className="banner-stack">{banners}</div> : null;
 }

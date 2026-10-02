@@ -60,13 +60,14 @@ export function rerunUseful(target: ReviewRun['target']): boolean {
   return target.kind === 'worktree';
 }
 
-export function rerunUrl(repoPath: string): string {
-  return `gitgood://review/rerun?repo=${encodeURIComponent(repoPath)}`;
+/** `token` is the per-run secret GitGood minted for this export (see ReviewService.rerunToken); without it a deep link only asks the user to confirm. */
+export function rerunUrl(repoPath: string, token: string): string {
+  return `gitgood://review/rerun?repo=${encodeURIComponent(repoPath)}&token=${encodeURIComponent(token)}`;
 }
 
 /** The shell command an agent runs to ask GitGood for a re-review on this platform. */
-export function rerunCommand(repoPath: string, platform: ExportPlatform): string {
-  const url = rerunUrl(repoPath);
+export function rerunCommand(repoPath: string, platform: ExportPlatform, token: string): string {
+  const url = rerunUrl(repoPath, token);
   if (platform === 'win32') return `Start-Process "${url}"`;
   if (platform === 'darwin') return `open '${url}'`;
   return `xdg-open '${url}'`;
@@ -80,7 +81,7 @@ export function sortFindings(findings: ReviewFinding[]): ReviewFinding[] {
   return [...findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line);
 }
 
-export function buildExportJson(run: ReviewRun, previousRunId: string | null, platform: ExportPlatform): ReviewExport {
+export function buildExportJson(run: ReviewRun, previousRunId: string | null, platform: ExportPlatform, rerunToken: string): ReviewExport {
   return {
     version: EXPORT_VERSION,
     runId: run.id,
@@ -100,7 +101,7 @@ export function buildExportJson(run: ReviewRun, previousRunId: string | null, pl
     files: run.files.map((f) => ({ path: normalizePath(f.file.path), status: f.status, reason: f.reason })),
     droppedInvalid: run.droppedInvalid,
     findings: sortFindings(run.findings).map((f) => ({ ...f, path: normalizePath(f.path) })),
-    rerun: rerunUseful(run.target) ? { url: rerunUrl(run.repoPath), command: rerunCommand(run.repoPath, platform) } : null,
+    rerun: rerunUseful(run.target) ? { url: rerunUrl(run.repoPath, rerunToken), command: rerunCommand(run.repoPath, platform, rerunToken) } : null,
   };
 }
 
@@ -129,10 +130,10 @@ function targetLine(run: ReviewRun): string {
   return `Pending commit — ${t.paths.length} file${t.paths.length === 1 ? '' : 's'} selected in the working tree`;
 }
 
-export function renderExportMarkdown(run: ReviewRun, previousRunId: string | null, platform: ExportPlatform): string {
+export function renderExportMarkdown(run: ReviewRun, previousRunId: string | null, platform: ExportPlatform, rerunToken: string): string {
   const live = sortFindings(run.findings.filter((f) => !f.dismissed));
   const jsonName = `${RUNS_DIR}/${safeRunId(run.id)}.json`;
-  const rerun = rerunCommand(run.repoPath, platform);
+  const rerun = rerunCommand(run.repoPath, platform, rerunToken);
   const out: string[] = [];
   out.push(`# GitGood review findings`);
   out.push('');
@@ -148,7 +149,7 @@ export function renderExportMarkdown(run: ReviewRun, previousRunId: string | nul
   out.push('4. Do not commit, stage, stash or otherwise run git write operations. Leave that to the user.');
   if (rerunUseful(run.target)) {
     out.push(`5. When you are done, ask GitGood to re-review by running: \`${rerun}\``);
-    if (platform === 'win32') out.push(`   From Command Prompt instead: \`start "" "${rerunUrl(run.repoPath)}"\``);
+    if (platform === 'win32') out.push(`   From Command Prompt instead: \`start "" "${rerunUrl(run.repoPath, rerunToken)}"\``);
     out.push(`6. Then re-read \`${LATEST_JSON}\` next to this file: its \`runId\` changes when the re-review finishes and its \`previousRunId\` names this run. Finding ids are not stable across runs, so compare by title and path. If its target differs from the one above, say so instead of comparing.`);
   } else {
     out.push('5. Do not ask GitGood to re-review. This review covers committed changes, so it would read the same commits again and report the same findings no matter what you fixed.');

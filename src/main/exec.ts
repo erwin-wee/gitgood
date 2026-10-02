@@ -54,16 +54,20 @@ export function formatCommand(file: string, args: string[]): string {
  * first, then the child's C runtime applies the backslash/quote rules to what
  * cmd passed on. So the argument is escaped for the C runtime, and then every
  * character cmd would act on -- including the quotes just added -- is prefixed
- * with `^`.
+ * with `^`. A `.cmd`/`.bat` target re-parses its arguments when it expands
+ * `%*`, so `forBatch` escapes a second time.
  *
  * Escaping the quotes is the part that is easy to get wrong. cmd tracks quote
  * state across the whole line and does not recognise `\"` as an escaped quote,
  * so a C-runtime-escaped argument flips that state and leaves a later `&` or
  * `|` looking like a command separator ("& was unexpected at this time").
  */
-export function cmdEscapeArgument(arg: string): string {
+export function cmdEscapeArgument(arg: string, forBatch = false): string {
   const forCRuntime = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
-  return forCRuntime.replace(/[()%!^"<>&|]/g, '^$&');
+  const once = forCRuntime.replace(/[()%!^"<>&|]/g, '^$&');
+  // A batch file's `%*` is substituted into its command line and parsed by cmd
+  // a second time, so the escaping has to survive two passes (as in cross-spawn).
+  return forBatch ? once.replace(/[()%!^"<>&|]/g, '^$&') : once;
 }
 
 /**
@@ -82,7 +86,7 @@ export function buildWindowsCmdInvocation(file: string, args: string[], comSpec:
   // every argument's quoting. Wrapping the whole thing in one extra pair
   // makes the two stripped quotes exactly that wrapper (see startOnWindows
   // and check-runner.ts's buildCheckInvocation, which already do this).
-  return { file: comSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${[file, ...args].map(cmdEscapeArgument).join(' ')}"`] };
+  return { file: comSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${[cmdEscapeArgument(file), ...args.map((a) => cmdEscapeArgument(a, true))].join(' ')}"`] };
 }
 
 /**

@@ -1,3 +1,4 @@
+import { assertNewBranchName, assertNotOption } from '@shared/util';
 import type { Branch } from '@shared/types';
 import type { GitClient } from './git';
 
@@ -47,6 +48,7 @@ export async function getBranches(git: GitClient, repoPath: string): Promise<Bra
 
 /** Local branch names already merged into `ref` (typically the default branch), via `git branch --merged`. */
 export async function getMergedBranchNames(git: GitClient, repoPath: string, ref: string): Promise<Set<string>> {
+  assertNotOption(ref);
   const out = await git.tryRun(repoPath, ['branch', '--merged', ref, '--format=%(refname:short)'], { readOnly: true, quiet: true });
   if (!out) return new Set();
   return new Set(out.stdout.split('\n').map((l) => l.trim()).filter(Boolean));
@@ -66,6 +68,8 @@ export async function getDefaultBranch(git: GitClient, repoPath: string): Promis
 }
 
 export async function createBranch(git: GitClient, repoPath: string, name: string, startPoint: string | null, checkout: boolean): Promise<void> {
+  assertNewBranchName(name);
+  assertNotOption(startPoint);
   if (checkout) {
     await git.run(repoPath, ['checkout', '-b', name, ...(startPoint ? [startPoint] : [])]);
   } else {
@@ -74,6 +78,7 @@ export async function createBranch(git: GitClient, repoPath: string, name: strin
 }
 
 export async function checkoutBranch(git: GitClient, repoPath: string, name: string): Promise<void> {
+  assertNotOption(name);
   await git.run(repoPath, ['checkout', name]);
 }
 
@@ -81,6 +86,7 @@ export async function checkoutBranch(git: GitClient, repoPath: string, name: str
 export async function checkoutRemoteBranch(git: GitClient, repoPath: string, remoteBranch: string): Promise<string> {
   const slash = remoteBranch.indexOf('/');
   const local = slash === -1 ? remoteBranch : remoteBranch.slice(slash + 1);
+  assertNotOption(remoteBranch, local);
   const localExists = await git.tryRun(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${local}`], { readOnly: true });
   if (localExists) {
     await git.run(repoPath, ['checkout', local]);
@@ -91,14 +97,18 @@ export async function checkoutRemoteBranch(git: GitClient, repoPath: string, rem
 }
 
 export async function renameBranch(git: GitClient, repoPath: string, oldName: string, newName: string): Promise<void> {
+  assertNotOption(oldName);
+  assertNewBranchName(newName);
   await git.run(repoPath, ['branch', '-m', oldName, newName]);
 }
 
 export async function deleteLocalBranch(git: GitClient, repoPath: string, name: string): Promise<void> {
+  assertNotOption(name);
   await git.run(repoPath, ['branch', '-D', name]);
 }
 
 export async function deleteRemoteBranch(git: GitClient, repoPath: string, remote: string, name: string): Promise<void> {
+  assertNotOption(remote, name);
   await git.run(repoPath, ['push', remote, '--delete', name]);
 }
 
@@ -114,4 +124,30 @@ export async function branchExists(git: GitClient, repoPath: string, name: strin
 export async function getUpstreamRemote(git: GitClient, repoPath: string, branch: string): Promise<string | null> {
   const out = await git.tryRun(repoPath, ['config', '--get', `branch.${branch}.remote`], { readOnly: true });
   return out?.stdout.trim() || null;
+}
+
+/**
+ * The current branch's stack: the other local branches whose tips lie on its first-parent history
+ * between the merge-base with the default branch and HEAD, oldest (closest to the default branch)
+ * first. Empty on the default branch, a detached HEAD, or when there is no default branch or common
+ * ancestor. A branch sitting on HEAD itself is a sibling, not part of the stack.
+ */
+export async function getStackParents(git: GitClient, repoPath: string): Promise<string[]> {
+  const [current, defaultBranch] = await Promise.all([getCurrentBranchName(git, repoPath), getDefaultBranch(git, repoPath)]);
+  if (!current || !defaultBranch || current === defaultBranch) return [];
+  const defaultRef = (await branchExists(git, repoPath, defaultBranch)) ? defaultBranch : `origin/${defaultBranch}`;
+  const base = await git.tryRun(repoPath, ['merge-base', defaultRef, 'HEAD'], { readOnly: true, quiet: true });
+  if (!base?.stdout.trim()) return [];
+  const chain = (await git.stdout(repoPath, ['rev-list', '--first-parent', '--reverse', `${base.stdout.trim()}..HEAD`], { readOnly: true })).split('\n').filter(Boolean);
+  if (chain.length < 2) return [];
+  const position = new Map(chain.slice(0, -1).map((sha, i) => [sha, i]));
+  const refs = await git.stdout(repoPath, ['for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads'], { readOnly: true });
+  const found: { name: string; at: number }[] = [];
+  for (const line of refs.split('\n')) {
+    const space = line.indexOf(' ');
+    const at = position.get(line.slice(0, space));
+    const name = line.slice(space + 1).replace(/^refs\/heads\//, '');
+    if (at !== undefined && name !== current) found.push({ name, at });
+  }
+  return found.sort((a, b) => a.at - b.at || (a.name < b.name ? -1 : 1)).map((f) => f.name);
 }

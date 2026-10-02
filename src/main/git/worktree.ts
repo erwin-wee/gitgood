@@ -1,4 +1,4 @@
-import { basename, dirname, isAbsolute, normalize, resolve } from 'node:path';
+import { basename, dirname, normalize, resolve } from 'node:path';
 import type { AddWorktreeOptions, Worktree } from '@shared/types';
 import type { GitClient } from './git';
 import { getGitDir } from './status';
@@ -77,7 +77,8 @@ export async function listWorktrees(git: GitClient, repoPath: string): Promise<W
     // Older git (< 2.36) rejects -z; fall back to the plain porcelain format.
     raw = (await git.run(repoPath, ['worktree', 'list', '--porcelain'], { readOnly: true })).stdout;
   }
-  return parseWorktreeList(raw, repoPath);
+  // git prints forward slashes on Windows; normalize() restores the native form callers compare against.
+  return parseWorktreeList(raw, repoPath).map((w) => ({ ...w, path: normalize(w.path) }));
 }
 
 export async function addWorktree(git: GitClient, repoPath: string, opts: AddWorktreeOptions): Promise<void> {
@@ -121,7 +122,7 @@ export async function pruneWorktrees(git: GitClient, repoPath: string): Promise<
 /** Absolute path to the `.git` directory shared by every worktree of this repository. */
 export async function getCommonDir(git: GitClient, repoPath: string): Promise<string> {
   const out = (await git.stdout(repoPath, ['rev-parse', '--git-common-dir'], { readOnly: true })).trim();
-  return isAbsolute(out) ? out : resolve(repoPath, out);
+  return resolve(repoPath, out);
 }
 
 /**

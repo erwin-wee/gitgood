@@ -7,7 +7,7 @@ import { isInside } from '../main/repo/paths';
 /** Reads the persisted bearer token, generating and storing a fresh 256-bit one on first run. */
 export function loadOrCreateToken(tokenFile: string, dir: string): string {
   if (existsSync(tokenFile)) return readFileSync(tokenFile, 'utf8').trim();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const token = randomBytes(32).toString('hex');
   writeFileSync(tokenFile, token, { mode: 0o600 });
   try {
@@ -91,7 +91,7 @@ export function originOk(req: IncomingMessage): boolean {
 /** Methods under `repo.`/`git.`/`gh.`/`ai.` whose first argument is not a repository path. */
 const NO_REPO_ARG = /^(gh\.(auth|repos|orgs|inbox)\.|gh\.(gitignoreTemplates|licenses|avatar)$|ai\.(cancel|test)$)/;
 /** Other methods whose first argument is a filesystem path. */
-const FIRST_ARG_PATH = /^(repos\.(add|watchedFolders\.add|isInWatchedFolder|exclusions\.remove)|app\.(showItemInFolder|openPath|pathExists|isRepository|moveToTrash|openInEditor|openInShell)|settings\.(exportToFile|previewImport|import))$/;
+const FIRST_ARG_PATH = /^(repos\.(add|watchedFolders\.add|isInWatchedFolder|exclusions\.remove)|app\.(showItemInFolder|openPath|pathExists|isRepository|moveToTrash|openInEditor|openInShell|openDiffTool|openMergeTool)|settings\.(exportToFile|previewImport|import))$/;
 
 function field(value: unknown, key: string): unknown {
   return value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;

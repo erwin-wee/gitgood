@@ -326,6 +326,17 @@ export function isValidBranchName(name: string): boolean {
   return true;
 }
 
+/** Main-process guard: git parses a ref/branch/tag/remote/sha argument that starts with "-" as an option. Never fix this with `--` (it would turn a checkout target into a pathspec). */
+export function assertNotOption(...values: (string | null | undefined)[]): void {
+  const bad = values.find((v) => v?.startsWith('-'));
+  if (bad) throw new Error(`"${bad}" is not a valid ref or name: it must not start with "-".`);
+}
+
+/** For a branch or tag name about to be created or renamed to. */
+export function assertNewBranchName(name: string): void {
+  if (!isValidBranchName(name)) throw new Error(`"${name}" is not a valid branch or tag name.`);
+}
+
 export function compareStrings(a: string, b: string): number {
   return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 }
@@ -563,6 +574,9 @@ export function explanationToMarkdown(explanation: Explanation, target: ExplainT
 /** AI-drafted footer appended to a pull request body only at create time (see the ai-pr-description spec's "Attribution and no automatic submission"). */
 export const PR_DRAFT_FOOTER = '_Drafted with AI in GitGood; reviewed before creating._';
 
+/** Oldest git/gh the app supports (README requirements); older tools still run, they're only flagged (see src/main/tools.ts). */
+export const MIN_TOOL_VERSIONS = { git: '2.30.0', gh: '2.40.0' } as const;
+
 /** AI-drafted footer appended to a release body only when it is published to GitHub (see the add-ai-release-notes spec). */
 export const RELEASE_NOTES_FOOTER = '_Drafted with AI in GitGood; reviewed before publishing._';
 
@@ -612,4 +626,46 @@ export function suggestNextPatchVersion(tag: string): string | null {
   if (!m) return null;
   const [, prefix, major, minor, patch] = m;
   return `${prefix ?? ''}${major}.${minor}.${parseInt(patch, 10) + 1}`;
+}
+
+// ---------------------------------------------------------------------------
+// Semver comparison
+// ---------------------------------------------------------------------------
+
+interface ParsedVersion {
+  parts: number[];
+  prerelease: string | null;
+}
+
+/** Strips a leading "v"/"V" (as in git tags like "v1.2.3") before parsing. */
+function parseVersion(raw: string): ParsedVersion {
+  const cleaned = raw.trim().replace(/^v/i, '');
+  const [core, ...rest] = cleaned.split('-');
+  const parts = core.split('.').map((p) => {
+    const n = parseInt(p, 10);
+    return Number.isFinite(n) ? n : 0;
+  });
+  return { parts, prerelease: rest.length ? rest.join('-') : null };
+}
+
+/**
+ * Compares two version strings (with an optional leading "v" and an
+ * optional "-prerelease" suffix), returning -1/0/1 like Array.prototype.sort
+ * comparators. Numeric parts compare numerically (so "1.9.0" < "1.10.0");
+ * a version with a prerelease suffix sorts before its release (per semver
+ * precedence rules), and otherwise prerelease suffixes compare as strings.
+ */
+export function compareVersions(a: string, b: string): number {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  const len = Math.max(pa.parts.length, pb.parts.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa.parts[i] ?? 0;
+    const nb = pb.parts[i] ?? 0;
+    if (na !== nb) return na < nb ? -1 : 1;
+  }
+  if (pa.prerelease === pb.prerelease) return 0;
+  if (pa.prerelease === null) return 1; // a is a release, b is a prerelease of the same core version: a is newer
+  if (pb.prerelease === null) return -1;
+  return pa.prerelease < pb.prerelease ? -1 : 1;
 }

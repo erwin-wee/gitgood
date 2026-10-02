@@ -3,13 +3,15 @@ import { join } from 'node:path';
 import { clipboard, dialog, ipcMain, nativeTheme, Notification, shell, type BrowserWindow } from 'electron';
 import { IPC_EVENT_CHANNEL, IPC_INVOKE_CHANNEL, type ApiMethods } from '@shared/ipc';
 import type { InboxItem, InboxState, IpcResult } from '@shared/types';
+import { compareVersions } from '@shared/util';
+import { appEntryUrl, isTrustedSender } from './app-url';
 import { applyInboxBadge } from './badge';
 import { ElectronHost } from './host/electron-host';
 import { sendEvent } from './ipc';
 import { ensureManagedServer, readUnit } from './local-server';
 import { log } from './logger';
+import { refreshMenuShortcuts } from './menu';
 import type { Store } from './store';
-import { compareVersions } from './update/update-core';
 import type { Updater } from './update/updater';
 
 /**
@@ -171,6 +173,7 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
       await host.openExternal(url);
     },
     'app.notify': (title, body) => host.notify(title, body),
+    'app.setShortcuts': async (overrides) => refreshMenuShortcuts(overrides),
     'app.zoom': async (direction) => {
       const next = host.zoom(direction);
       store.updateState({ zoomLevel: next });
@@ -214,9 +217,11 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
         'app.showItemInFolder': confined((p) => host.showItemInFolder(p)),
         'app.moveToTrash': confined((p) => host.trashItem(p)),
       }
-    : { ...always, ...updateMethods, 'app.openInEditor': unsupported, 'app.openInShell': unsupported };
+    : { ...always, ...updateMethods, 'app.openInEditor': unsupported, 'app.openInShell': unsupported, 'app.openDiffTool': unsupported, 'app.openMergeTool': unsupported };
 
-  ipcMain.handle(IPC_INVOKE_CHANNEL, async (_event, method: string, ...args: unknown[]): Promise<IpcResult<unknown> | null> => {
+  const entry = appEntryUrl(serverUrl);
+  ipcMain.handle(IPC_INVOKE_CHANNEL, async (event, method: string, ...args: unknown[]): Promise<IpcResult<unknown> | null> => {
+    if (!isTrustedSender(event, entry)) throw new Error('IPC refused: sender is not the app window.');
     const fn = native[method as keyof ApiMethods] as ((...a: unknown[]) => Promise<unknown>) | undefined;
     if (!fn) return null;
     try {
@@ -227,7 +232,8 @@ export function registerClientIpc(serverUrl: string, store: Store, getWindow: ()
   });
 
   // Server events the bridge forwards for the desktop shell itself.
-  ipcMain.on(IPC_EVENT_CHANNEL, (_event, name: string, payload: unknown) => {
+  ipcMain.on(IPC_EVENT_CHANNEL, (event, name: string, payload: unknown) => {
+    if (!isTrustedSender(event, entry)) return;
     if (name === 'gh.inbox.changed') applyInboxBadge(getWindow(), (payload as InboxState).unreadCount);
     else if (name === 'gh.inbox.new' && !getWindow()?.isFocused() && Notification.isSupported()) {
       for (const item of payload as InboxItem[]) showInboxNotification(getWindow, item);

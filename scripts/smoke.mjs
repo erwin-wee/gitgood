@@ -59,6 +59,7 @@ function makeRepo(workRoot) {
   run(['init', '-q', '-b', 'main', repoPath], root);
   run(['config', 'user.name', 'Test User']);
   run(['config', 'user.email', 'test@example.com']);
+  run(['config', 'core.autocrlf', 'false']);
   run(['config', 'commit.gpgsign', 'false']);
   let n = 0;
   const commit = (message, files = {}) => {
@@ -473,6 +474,10 @@ async function runElectron(electronPath, cwd, env, timeoutMs) {
       child.kill('SIGKILL');
       resolvePromise({ timedOut: true, code: null, stdout, stderr });
     }, timeoutMs);
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolvePromise({ timedOut: false, code: null, stdout, stderr: `${stderr}${err.message}` });
+    });
     child.on('close', (code) => {
       clearTimeout(timer);
       resolvePromise({ timedOut: false, code, stdout, stderr });
@@ -491,7 +496,11 @@ async function runScenario(scenarioFile, electronPath) {
   // (`git rev-parse --show-toplevel` resolves symlinks, as does the watched-folder
   // scanner), so an un-resolved fixture root would never match what a scenario
   // reads back. Every fixture path below is derived from this root.
-  const workRoot = realpathSync(mkdtempSync(join(tmpdir(), `gg-smoke-${name}-`)));
+  // macOS' per-user tmpdir is ~50 bytes deep and the fixture's gpg homedir sits
+  // below it; gpg's agent/keyboxd sockets then exceed the ~104-byte unix socket path limit.
+  const smokeRoot = mkdtempSync(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), `gg-smoke-${name}-`));
+  // Match repository discovery, including Windows 8.3 aliases and macOS /tmp.
+  const workRoot = realpathSync.native(smokeRoot);
   const userData = join(workRoot, 'userdata');
   mkdirSync(userData, { recursive: true });
 
@@ -595,14 +604,20 @@ async function runScenario(scenarioFile, electronPath) {
     if (existsSync(logsDir)) cpSync(logsDir, join(outDir, 'logs'), { recursive: true });
   }
 
-  rmSync(workRoot, { recursive: true, force: true });
+  try {
+    rmSync(workRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (err) {
+    // Windows gpg-agent can retain a temporary keyring briefly; the runner deletes its temp directory.
+    if (process.platform !== 'win32') throw err;
+  }
   return { name, ok: failures.length === 0, failures, outDir };
 }
 
 async function main() {
   if (!process.env.GITGOOD_SMOKE_SKIP_BUILD) {
     log('building (electron-vite build)…');
-    execFileSync(join(ROOT, 'node_modules', '.bin', 'electron-vite'), ['build'], { cwd: ROOT, stdio: 'inherit' });
+    // Via node: on Windows .bin/electron-vite is a .cmd shim, which execFileSync cannot spawn.
+    execFileSync(process.execPath, [join(ROOT, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'), 'build'], { cwd: ROOT, stdio: 'inherit' });
   } else {
     log('skipping build (GITGOOD_SMOKE_SKIP_BUILD set)');
   }

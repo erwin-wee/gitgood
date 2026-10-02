@@ -1,7 +1,9 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import type { OperationOutcome } from '@shared/ipc';
-import type { RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
+import type { CloneOptions, RebaseSquashOptions, Remote, Stash, Tag, GitConfigInfo, SigningConfig, SigningConfigInfo, SigningFormat } from '@shared/types';
+import { assertNewBranchName, assertNotOption } from '@shared/util';
+import { getBranches, getCurrentBranchName, getStackParents, getUpstreamRemote } from './branches';
 import { getStashFiles, toFsPath } from './diff';
 import { GitError, TransferProgressParser, type GitClient } from './git';
 import { getGitDir } from './status';
@@ -39,6 +41,7 @@ export function getRemotes(git: GitClient, repoPath: string): Promise<Remote[]> 
 }
 
 export async function fetch(git: GitClient, repoPath: string, remote: string | null, onProgress: ProgressSink, signal?: AbortSignal): Promise<void> {
+  assertNotOption(remote);
   const parser = new TransferProgressParser('fetch');
   const args = ['fetch', '--progress', '--prune'];
   if (remote) args.push(remote);
@@ -84,6 +87,7 @@ export async function push(
   onProgress: ProgressSink,
   signal?: AbortSignal,
 ): Promise<void> {
+  assertNotOption(opts.remote, opts.branch);
   const parser = new TransferProgressParser('push');
   const args = ['push', '--progress'];
   if (opts.force) args.push('--force-with-lease');
@@ -101,12 +105,85 @@ export async function push(
   });
 }
 
-export async function clone(git: GitClient, url: string, directory: string, branch: string | null, onProgress: ProgressSink, signal?: AbortSignal): Promise<void> {
-  const parser = new TransferProgressParser('fetch');
-  const args = ['clone', '--progress', '--recurse-submodules'];
-  if (branch) args.push('--branch', branch);
+/** argv for pushing a whole stack of branches in one go, every one with a lease. */
+export function pushStackArgs(remote: string, branches: string[]): string[] {
+  assertNotOption(remote, ...branches);
+  return ['push', '--progress', '--force-with-lease', remote, ...branches];
+}
+
+/**
+ * Where a branch's stack is published, in git's own push order: `branch.<n>.pushRemote`, `remote.pushDefault`, the branch's
+ * upstream remote, then `origin`. An upstream remote of `.` means "tracks a local branch" (a stacked child), never a place to push,
+ * so it is skipped; with nothing configured a lone remote is used, and several unconfigured ones are refused as ambiguous.
+ */
+export async function resolvePushRemote(git: GitClient, repoPath: string, branch: string): Promise<string> {
+  const config = async (key: string) => (await git.tryRun(repoPath, ['config', '--get', key], { readOnly: true }))?.stdout.trim() || null;
+  const configured = [await config(`branch.${branch}.pushRemote`), await config('remote.pushDefault'), await getUpstreamRemote(git, repoPath, branch)].find((r) => r && r !== '.');
+  if (configured) return configured;
+  const names = (await getRemotes(git, repoPath)).map((r) => r.name);
+  const remote = names.includes('origin') ? 'origin' : names.length === 1 ? names[0] : null;
+  if (!remote) throw new Error(names.length ? `Several remotes and none is chosen for "${branch}": set branch.${branch}.pushRemote or remote.pushDefault.` : 'This repository has no remote to push the stack to.');
+  return remote;
+}
+
+/**
+ * Force-pushes (with lease) the current branch and the stack branches below it to its publishing remote (see resolvePushRemote).
+ * Only branches without any upstream get one afterwards, pointing at `remote/<same name>`; a child already tracking its parent locally keeps that.
+ * Returns the pushed branch names, oldest first.
+ */
+export async function pushStack(git: GitClient, repoPath: string, onProgress: ProgressSink, signal?: AbortSignal): Promise<string[]> {
+  const current = await getCurrentBranchName(git, repoPath);
+  if (!current) throw new Error('Check out a branch to push its stack.');
+  const branches = [...(await getStackParents(git, repoPath)), current];
+  const local = new Map((await getBranches(git, repoPath)).filter((b) => b.kind === 'local').map((b) => [b.name, b]));
+  const remote = await resolvePushRemote(git, repoPath, current);
+  const parser = new TransferProgressParser('push');
+  await git.run(repoPath, pushStackArgs(remote, branches), {
+    signal,
+    onStderr: (chunk) => {
+      const p = parser.feed(chunk);
+      if (p) onProgress(p.percent, p.description);
+    },
+    timeoutMs: 30 * 60 * 1000,
+  });
+  for (const b of branches.filter((n) => !local.get(n)?.upstream)) {
+    await git.run(repoPath, ['config', `branch.${b}.remote`, remote]);
+    await git.run(repoPath, ['config', `branch.${b}.merge`, `refs/heads/${b}`]);
+  }
+  return branches;
+}
+
+/** Cone-mode sparse-checkout directories: repository-relative, forward slashes, no `..`, nothing option-like. */
+export function normalizeSparseDirs(dirs: string[]): string[] {
+  const out = dirs.map((d) => d.trim().replace(/\\/g, '/').replace(/^(\.\/|\/)+/, '').replace(/\/+$/, '')).filter(Boolean);
+  const bad = out.find((d) => d.startsWith('-') || d.split('/').includes('..'));
+  if (bad) throw new Error(`"${bad}" is not a valid sparse-checkout directory.`);
+  return [...new Set(out)];
+}
+
+/** argv for `git clone` honouring the advanced options (shallow, single branch, blobless partial clone, sparse checkout, submodules; submodules default to on). */
+export function cloneArgs(url: string, directory: string, opts: Omit<CloneOptions, 'url' | 'directory'>): string[] {
+  assertNotOption(opts.branch);
+  const args = ['clone', '--progress'];
+  if (opts.submodules !== false) args.push('--recurse-submodules');
+  if (opts.branch) args.push('--branch', opts.branch);
+  if (opts.depth != null) {
+    if (!Number.isInteger(opts.depth) || opts.depth < 1) throw new Error('Clone depth must be a whole number of 1 or more.');
+    args.push('--depth', String(opts.depth));
+    if (opts.submodules !== false) args.push('--shallow-submodules');
+  }
+  // --depth already implies --single-branch in git, so a shallow clone needs no flag.
+  if (opts.singleBranch) args.push('--single-branch');
+  if (opts.blobless) args.push('--filter=blob:none');
+  if (opts.sparse?.length) args.push('--sparse');
   args.push('--', url, directory);
-  await git.run(null, args, {
+  return args;
+}
+
+export async function clone(git: GitClient, url: string, directory: string, opts: Omit<CloneOptions, 'url' | 'directory'>, onProgress: ProgressSink, signal?: AbortSignal): Promise<void> {
+  const parser = new TransferProgressParser('fetch');
+  const sparse = normalizeSparseDirs(opts.sparse ?? []);
+  await git.run(null, cloneArgs(url, directory, { ...opts, sparse }), {
     signal,
     onStderr: (chunk) => {
       const p = parser.feed(chunk);
@@ -114,11 +191,13 @@ export async function clone(git: GitClient, url: string, directory: string, bran
     },
     timeoutMs: 60 * 60 * 1000,
   });
+  if (sparse.length) await git.run(directory, ['sparse-checkout', 'set', '--cone', ...sparse]);
 }
 
 // ---------- merge / rebase / cherry-pick / revert ----------
 
 export async function merge(git: GitClient, repoPath: string, branch: string, squash: boolean): Promise<OperationOutcome> {
+  assertNotOption(branch);
   try {
     const args = squash ? ['merge', '--squash', branch] : ['merge', '--no-edit', branch];
     const res = await git.run(repoPath, args, { env: { GIT_EDITOR: 'true' } });
@@ -142,9 +221,11 @@ export async function mergeContinue(git: GitClient, repoPath: string): Promise<O
   }
 }
 
-export async function rebase(git: GitClient, repoPath: string, onto: string): Promise<OperationOutcome> {
+/** `--update-refs` (git 2.38+) also moves every local branch that points into the rebased range, which keeps a stack of branches intact. */
+export async function rebase(git: GitClient, repoPath: string, onto: string, updateRefs = false): Promise<OperationOutcome> {
+  assertNotOption(onto);
   try {
-    await git.run(repoPath, ['rebase', onto], { env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' } });
+    await git.run(repoPath, ['rebase', ...(updateRefs ? ['--update-refs'] : []), onto], { env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' } });
     return { status: 'complete' };
   } catch (err) {
     return outcomeFromError(err);
@@ -182,6 +263,7 @@ export async function rebaseAbort(git: GitClient, repoPath: string): Promise<voi
 }
 
 export async function cherryPick(git: GitClient, repoPath: string, shas: string[]): Promise<OperationOutcome> {
+  assertNotOption(...shas);
   try {
     await git.run(repoPath, ['cherry-pick', ...shas], { env: { GIT_EDITOR: 'true' } });
     return { status: 'complete' };
@@ -204,6 +286,7 @@ export async function cherryPickAbort(git: GitClient, repoPath: string): Promise
 }
 
 export async function revert(git: GitClient, repoPath: string, sha: string): Promise<OperationOutcome> {
+  assertNotOption(sha);
   try {
     const isMerge = (await git.stdout(repoPath, ['rev-list', '--parents', '-n', '1', sha], { readOnly: true })).trim().split(' ').length > 2;
     await git.run(repoPath, ['revert', '--no-edit', ...(isMerge ? ['-m', '1'] : []), sha], { env: { GIT_EDITOR: 'true' } });
@@ -259,6 +342,7 @@ async function listTodo(git: GitClient, repoPath: string, base: string | null): 
 
 /** Determines the rebase base for the given commits: parent of the oldest one, or null for --root. Exported for the AI rebase assistant's applier (src/main/git/rebase-apply.ts), which needs the same "parent of the oldest of a set of commits" computation for a History multi-selection. */
 export async function rebaseBaseFor(git: GitClient, repoPath: string, shas: string[]): Promise<string | null> {
+  assertNotOption(...shas);
   let oldest: string | null = null;
   for (const sha of shas) {
     if (oldest === null) {
@@ -370,6 +454,7 @@ export async function reorderCommits(git: GitClient, repoPath: string, shas: str
 }
 
 export async function rewordCommit(git: GitClient, repoPath: string, sha: string, message: string): Promise<OperationOutcome> {
+  assertNotOption(sha);
   const head = (await git.stdout(repoPath, ['rev-parse', 'HEAD'], { readOnly: true })).trim();
   if (head === sha) {
     await git.run(repoPath, ['commit', '--amend', '--allow-empty', '-F', '-', '--cleanup=strip'], { stdin: message.endsWith('\n') ? message : `${message}\n` });
@@ -488,6 +573,7 @@ export async function stashDrop(git: GitClient, repoPath: string, sha: string): 
 
 /** Creates a branch at the stash's parent commit, checks it out with the stash applied, and removes the stash (`git stash branch`). */
 export async function stashBranch(git: GitClient, repoPath: string, sha: string, branchName: string): Promise<OperationOutcome> {
+  assertNewBranchName(branchName);
   const ref = await requireStashRef(git, repoPath, sha);
   try {
     await git.run(repoPath, ['stash', 'branch', branchName, ref]);
@@ -525,6 +611,8 @@ export async function getLatestReachableTag(git: GitClient, repoPath: string): P
 }
 
 export async function createTag(git: GitClient, repoPath: string, name: string, sha: string, message: string | null): Promise<void> {
+  assertNewBranchName(name);
+  assertNotOption(sha);
   if (message && message.trim()) {
     // tag.gpgsign (if set) already makes an annotated tag signed automatically; no explicit -S needed here.
     await git.run(repoPath, ['tag', '-a', name, sha, '-F', '-'], { stdin: `${message.trim()}\n` });
@@ -538,6 +626,7 @@ export async function createTag(git: GitClient, repoPath: string, name: string, 
 }
 
 export async function deleteTag(git: GitClient, repoPath: string, name: string, remote: boolean): Promise<void> {
+  assertNotOption(name);
   await git.run(repoPath, ['tag', '-d', name]);
   if (remote) await git.tryRun(repoPath, ['push', 'origin', '--delete', `refs/tags/${name}`]);
 }
@@ -709,12 +798,13 @@ export async function appendGitignore(repoPath: string, patterns: string[]): Pro
 }
 
 export async function isAncestor(git: GitClient, repoPath: string, ancestor: string, descendant: string): Promise<boolean> {
+  assertNotOption(ancestor, descendant);
   return (await git.tryRun(repoPath, ['merge-base', '--is-ancestor', ancestor, descendant], { readOnly: true })) !== null;
 }
 
 export async function getTopLevel(git: GitClient, path: string): Promise<string | null> {
   const out = await git.tryRun(path, ['rev-parse', '--show-toplevel'], { readOnly: true });
-  return out?.stdout.trim() || null;
+  return out?.stdout.trim() ? normalize(out.stdout.trim()) : null;
 }
 
 export async function init(git: GitClient, directory: string, defaultBranch: string | null): Promise<void> {

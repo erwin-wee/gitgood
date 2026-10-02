@@ -17,7 +17,7 @@ extraResources:
 win:
   target:
     - target: nsis
-      arch: [x64]
+      arch: [x64, arm64]
   icon: build/icon.png
   artifactName: ${productName}-Setup-${version}.${ext}
 nsis:
@@ -29,12 +29,16 @@ nsis:
   shortcutName: GitGood
   deleteAppDataOnUninstall: false
 mac:
-  target: [dmg, zip]
+  target:
+    - target: dmg
+      arch: [universal]
+    - target: zip
+      arch: [universal]
   category: public.app-category.developer-tools
   icon: build/icon.png
   artifactName: ${productName}-${version}.${ext}
 linux:
-  target: [AppImage]
+  target: [AppImage, deb]
   category: Development
   icon: build/icon.png
   maintainer: Erwin Wee

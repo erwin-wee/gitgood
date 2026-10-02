@@ -235,13 +235,14 @@ function describeContext(ctx: ReviewPromptContext): string {
   return parts.join('\n\n');
 }
 
-export function buildReviewFilePrompt(input: ReviewFilePromptInput): string {
-  const parts: string[] = [describeContext(input.context)];
+/** `sharedPrompt` (PR context, identical for every file of a run) and `prompt` (the per-file part); backends send `sharedPrompt` as a cached leading block, the full text is `sharedPrompt + '\n\n' + prompt`. */
+export function buildReviewFilePrompt(input: ReviewFilePromptInput): { sharedPrompt: string; prompt: string } {
+  const parts: string[] = [];
   parts.push(`File under review: ${input.path}${input.oldPath ? ` (renamed from ${input.oldPath})` : ''} — ${input.status}${input.language ? `, ${input.language}` : ''}`);
   parts.push(`Diff${input.truncated ? ' (truncated; review what is shown)' : ''}. Each new-side line is prefixed with [new:N]; deleted lines are prefixed with [del] and cannot be cited:\n${input.annotatedDiff}`);
   if (input.contextExcerpt) parts.push(`Surrounding code from the new version of the file (for understanding only; cite diff lines, not these):\n${input.contextExcerpt}`);
   parts.push('Review this file and return findings using the schema.');
-  return parts.join('\n\n');
+  return { sharedPrompt: describeContext(input.context), prompt: parts.join('\n\n') };
 }
 
 export function buildReviewSummaryPrompt(ctx: ReviewPromptContext, fileSummaries: { path: string; summary: string }[], findings: { path: string; line: number; severity: string; title: string }[], skipped: number, droppedInvalid: number): string {
@@ -320,13 +321,13 @@ export interface PrecommitFilePromptInput {
   truncated: boolean;
 }
 
-export function buildPrecommitFilePrompt(input: PrecommitFilePromptInput): string {
-  const parts: string[] = [describePrecommitContext(input.context)];
+export function buildPrecommitFilePrompt(input: PrecommitFilePromptInput): { sharedPrompt: string; prompt: string } {
+  const parts: string[] = [];
   parts.push(`File under review: ${input.path}${input.oldPath ? ` (renamed from ${input.oldPath})` : ''} — ${input.status}${input.language ? `, ${input.language}` : ''}${input.partial ? '. Only the lines below are selected for this commit; the rest of the file is left out.' : ''}`);
   parts.push(`Diff${input.truncated ? ' (truncated; review what is shown)' : ''}. Each new-side line is prefixed with [new:N]; deleted lines are prefixed with [del] and cannot be cited:\n${input.annotatedDiff}`);
   if (input.contextExcerpt) parts.push(`Surrounding code from the current version of the file (for understanding only; cite diff lines, not these):\n${input.contextExcerpt}`);
   parts.push('Review this file and return findings using the schema.');
-  return parts.join('\n\n');
+  return { sharedPrompt: describePrecommitContext(input.context), prompt: parts.join('\n\n') };
 }
 
 export function buildPrecommitSummaryPrompt(ctx: PrecommitPromptContext, fileSummaries: { path: string; summary: string }[], findings: { path: string; line: number; severity: string; title: string }[], skipped: number, droppedInvalid: number): string {

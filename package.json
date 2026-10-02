@@ -6,12 +6,17 @@
   "author": "Erwin Wee",
   "license": "MIT",
   "private": true,
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "homepage": "https://github.com/erwin-wee/gitgood",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && npm run build:server",
+    "build": "electron-vite build && npm run build:server && npm run build:mcp",
     "build:server": "vite build --config vite.server.config.ts",
+    "build:mcp": "vite build --config vite.mcp.config.ts",
     "start:server": "node out/server/index.mjs",
+    "start:mcp": "node out/mcp/index.mjs",
     "install:service": "node scripts/install-service.mjs",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
@@ -21,8 +26,8 @@
     "test:unit": "vitest run --project unit",
     "test:fixture": "vitest run --project fixture",
     "test:smoke": "node scripts/smoke.mjs",
-    "lint": "npm run typecheck",
-    "dist:win": "npm run build && electron-builder --win --x64",
+    "lint": "eslint . && npm run typecheck",
+    "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:mac": "npm run build && electron-builder --mac",
     "postinstall": "electron-builder install-app-deps",
@@ -30,7 +35,7 @@
     "release:tag": "node scripts/release.mjs tag"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.126.0",
+    "@anthropic-ai/sdk": "^0.131.0",
     "electron-updater": "6.8.9",
     "highlight.js": "^11.12.0",
     "react": "^19.3.0",
@@ -40,10 +45,13 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@typescript-eslint/parser": "^8.71.0",
     "@vitejs/plugin-react": "^5.1.0",
-    "electron": "^44.4.1",
+    "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "typescript": "^5.9.0",
     "vite": "^7.3.0",
     "vitest": "^5.0.1"

@@ -12,7 +12,8 @@
  *
  * Flags:
  *   --yes        skip the confirmation prompt (required when not on a TTY)
- *   --no-verify  skip the "is CI green on main" check in tag mode
+ *   --skip-ci-check  skip the "is CI green on main" check in tag mode. Without it the
+ *                    check is mandatory: if gh cannot answer, the tag is refused.
  */
 import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
@@ -100,19 +101,19 @@ async function prepare(version, { yes }) {
 
 /** The workflow only typechecks, so a red Test run on main would otherwise reach a release unnoticed. */
 function requireGreenCi() {
+  const skip = 'or pass --skip-ci-check to tag without it.';
   let runs;
   try {
     runs = JSON.parse(run('gh', ['run', 'list', '--branch', 'main', '--workflow', 'Test', '--limit', '1', '--json', 'conclusion,status,headSha,url']));
   } catch {
-    log('could not reach gh to check CI — skipping that check.');
-    return;
+    fail('Could not check CI: `gh run list` failed.', `Install and authenticate gh (\`gh auth login\`), ${skip}`);
   }
   const [latest] = runs;
-  if (!latest) return log('no Test run found for main — skipping that check.');
+  if (!latest) fail('No Test run found for main.', `Wait for CI to start, ${skip}`);
   const head = git('rev-parse', 'HEAD');
-  if (latest.headSha !== head) log(`warning: the latest Test run is for ${latest.headSha.slice(0, 7)}, not HEAD.`);
-  if (latest.status !== 'completed') fail(`The Test run on main is still ${latest.status}.`, `${latest.url} — wait for it, or pass --no-verify.`);
-  if (latest.conclusion !== 'success') fail(`The Test run on main concluded "${latest.conclusion}".`, `${latest.url} — fix it, or pass --no-verify.`);
+  if (latest.headSha !== head) fail(`The latest Test run is for ${latest.headSha.slice(0, 7)}, not HEAD (${head.slice(0, 7)}).`, `${latest.url} — wait for the run on HEAD, ${skip}`);
+  if (latest.status !== 'completed') fail(`The Test run on main is still ${latest.status}.`, `${latest.url} — wait for it, ${skip}`);
+  if (latest.conclusion !== 'success') fail(`The Test run on main concluded "${latest.conclusion}".`, `${latest.url} — fix it, ${skip}`);
 }
 
 async function tag({ yes, verify }) {
@@ -143,9 +144,9 @@ async function tag({ yes, verify }) {
 }
 
 const [mode, ...rest] = process.argv.slice(2);
-const flags = { yes: rest.includes('--yes'), verify: !rest.includes('--no-verify') };
+const flags = { yes: rest.includes('--yes'), verify: !rest.includes('--skip-ci-check') };
 const positional = rest.filter((a) => !a.startsWith('--'));
 
 if (mode === 'prepare') await prepare(positional[0] ?? fail('Usage: node scripts/release.mjs prepare <version>'), flags);
 else if (mode === 'tag') await tag(flags);
-else fail('Usage: node scripts/release.mjs <prepare <version>|tag> [--yes] [--no-verify]');
+else fail('Usage: node scripts/release.mjs <prepare <version>|tag> [--yes] [--skip-ci-check]');

@@ -1,6 +1,6 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { app, BrowserWindow, dialog, Menu, nativeTheme, Notification } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, Notification } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { InboxItem } from '@shared/types';
 import { ErrorExplainService } from './ai/error-explain';
@@ -10,12 +10,14 @@ import { PrDraftService } from './ai/prDraft';
 import { RebasePlanService } from './ai/rebasePlan';
 import { ReleaseNotesService } from './ai/release-notes';
 import { ConflictResolver } from './ai/resolver';
+import { configureUsage } from './ai/usage';
 import { ReviewService } from './ai/review';
 import { SplitterService } from './ai/splitter';
 import { TriageService } from './ai/triage';
 import { applyInboxBadge } from './badge';
 import { clientServerUrl, fetchServerVersion, isLocalServerUrl, registerClientIpc, showInboxNotification, waitForServer, watchServerVersion } from './client';
-import { ensureManagedServer, setUpManagedServer } from './local-server';
+import { BACKGROUND_SERVER_FLAG, ensureManagedServer, managedServerSupported, setUpManagedServer, startBackgroundServer } from './local-server';
+import { pathFromArgv } from './argv';
 import { GitClient } from './git/git';
 import { fetch as gitFetch } from './git/operations';
 import { GhClient } from './gh/gh';
@@ -24,11 +26,13 @@ import { shouldNotifyInboxItem } from './gh/inbox';
 import { SettingsSyncService } from './gh/settings-sync';
 import { registerIpc, sendEvent, type HandlerDeps } from './ipc';
 import { EventBus } from './core/bus';
+import { currentClient } from './core/client-context';
+import { windowClientId, windowsFor } from './core/event-routing';
 import { ElectronHost } from './host/electron-host';
 import { electronStorePlatform } from './host/electron-store-platform';
 import { WatchedFolderScanner } from './repo/watched-folders';
 import { initLogger, log } from './logger';
-import { buildMenu } from './menu';
+import { installMenu } from './menu';
 import { parseProtocolUrl, protocolUrlFromArgv } from './protocol';
 import { RepositoryManager } from './repo/manager';
 import { Store } from './store';
@@ -58,13 +62,19 @@ if (process.env.GITGOOD_USER_DATA) app.setPath('userData', process.env.GITGOOD_U
 
 const PROTOCOLS = ['gitgood', 'x-github-client'];
 const pendingProtocolUrls: string[] = [];
+const pendingOpenPaths: string[] = [];
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
+const backgroundServer = process.argv.includes(BACKGROUND_SERVER_FLAG);
+const gotLock = backgroundServer || app.requestSingleInstanceLock();
+if (backgroundServer) {
+  // Windows login item: only the headless server, no window/menu and no single-instance lock (the GUI app must still start).
+  startBackgroundServer();
+} else if (!gotLock) {
   app.quit();
 } else {
-  let mainWindow: BrowserWindow | null = null;
-  const getWindow = () => mainWindow;
+  let clientMode = false;
+  /** The window that gets menu, protocol-link and command-line actions: the focused one, else any (headless smoke windows are never focused). */
+  const getWindow = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
 
   const deliverProtocolUrl = (raw: string) => {
     const parsed = parseProtocolUrl(raw);
@@ -76,17 +86,29 @@ if (!gotLock) {
     }
     if (win.isMinimized()) win.restore();
     win.focus();
-    if (parsed.kind === 'review-rerun') sendEvent(win, 'menu.action', { action: 'protocol-review-rerun', args: { repoPath: parsed.repoPath } });
+    if (parsed.kind === 'review-rerun') sendEvent(win, 'menu.action', { action: 'protocol-review-rerun', args: { repoPath: parsed.repoPath, token: parsed.token } });
     else sendEvent(win, 'menu.action', { action: 'protocol-open', args: { url: parsed.url, branch: parsed.branch, filepath: parsed.filepath } });
   };
 
-  app.on('second-instance', (_event, argv) => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+  /** Opens a folder passed on the command line (`gitgood <path>`). Local mode only: in client mode the path is on this machine, the repositories on the server. */
+  const openPath = (argv: string[], cwd: string) => {
+    if (clientMode) return;
+    const path = pathFromArgv(argv, { defaultApp: !!process.defaultApp, cwd, isDirectory: (p) => statSync(p, { throwIfNoEntry: false })?.isDirectory() ?? false });
+    if (!path) return;
+    const win = getWindow();
+    if (win) sendEvent(win, 'menu.action', { action: 'open-path', args: { path } });
+    else pendingOpenPaths.push(path);
+  };
+
+  app.on('second-instance', (_event, argv, workingDirectory) => {
+    const win = getWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
     const url = protocolUrlFromArgv(argv);
     if (url) deliverProtocolUrl(url);
+    openPath(argv, workingDirectory);
   });
   app.on('open-url', (event, url) => {
     event.preventDefault();
@@ -94,6 +116,7 @@ if (!gotLock) {
   });
   const initialUrl = protocolUrlFromArgv(process.argv);
   if (initialUrl) pendingProtocolUrls.push(initialUrl);
+  openPath(process.argv, process.cwd());
 
   /** Delivers protocol links that arrived before the renderer could take them. */
   const flushPendingProtocolUrls = (win: BrowserWindow) => {
@@ -101,6 +124,7 @@ if (!gotLock) {
       // Give the renderer a moment to bootstrap before delivering queued links.
       setTimeout(() => {
         for (const raw of pendingProtocolUrls.splice(0)) deliverProtocolUrl(raw);
+        if (!clientMode) for (const path of pendingOpenPaths.splice(0)) sendEvent(win, 'menu.action', { action: 'open-path', args: { path } });
       }, 1500);
     });
   };
@@ -124,6 +148,7 @@ if (!gotLock) {
     if (serverUrl) {
       // Client mode keeps the repository on the server, but the desktop still owns its installer update channel.
       log.info(`Client mode: using the GitGood server at ${serverUrl}`);
+      clientMode = true;
       const disabledEnv: DisabledEnv = { isPackaged: app.isPackaged, platform: process.platform, portableExecutableDir: process.env.PORTABLE_EXECUTABLE_DIR, appImagePath: process.env.APPIMAGE, appImageWritable: appImageWritable(process.env.APPIMAGE) };
       const updateProvider = new ElectronUpdaterProvider(autoUpdater as unknown as ElectronAutoUpdater, () => store.getSettings().updateChannel);
       const updater = new Updater(store, updateProvider, (state) => {
@@ -142,17 +167,16 @@ if (!gotLock) {
           log.warn(`Could not update the managed GitGood server: ${(err as Error).message}`);
         }
       }
-      Menu.setApplicationMenu(buildMenu(getWindow));
+      // Client mode: no New Window. Each window would be a separate server client, but the updater, theme and inbox-badge plumbing here targets a single window.
+      installMenu(getWindow);
       const openWindow = () => {
-        mainWindow = createMainWindow(store, undefined, serverUrl);
-        watchServerVersion(serverUrl, mainWindow, app.getVersion(), updater);
-        mainWindow.on('closed', () => {
-          mainWindow = null;
-        });
-        flushPendingProtocolUrls(mainWindow);
+        const win = createMainWindow(store, undefined, serverUrl);
+        watchServerVersion(serverUrl, win, app.getVersion(), updater);
+        flushPendingProtocolUrls(win);
+        return win;
       };
-      openWindow();
-      if (process.env.GITGOOD_SMOKE_SCRIPT && mainWindow) runSmokeScript(mainWindow, process.env.GITGOOD_SMOKE_SCRIPT);
+      const firstWindow = openWindow();
+      if (process.env.GITGOOD_SMOKE_SCRIPT) runSmokeScript(firstWindow, process.env.GITGOOD_SMOKE_SCRIPT);
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) openWindow();
       });
@@ -161,14 +185,21 @@ if (!gotLock) {
 
     nativeTheme.themeSource = store.getSettings().theme;
     const bus = new EventBus();
-    const host = new ElectronHost(getWindow);
+    const host = new ElectronHost(getWindow, (repoId) => openDesktopWindow(repoId));
     const busy = new Set<string>();
-    bus.subscribe((event, payload) => sendEvent(getWindow(), event, payload));
+    // Each window is its own client (see core/event-routing): events go to the window that owns them, app-wide ones to all.
+    bus.subscribe((event, payload) => {
+      const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()).map((win) => ({ win, clientId: windowClientId(win.webContents.id) }));
+      for (const { win } of windowsFor(event, payload, currentClient(), windows, (repoPath) => repos.clientsWatching(repoPath))) sendEvent(win, event, payload);
+    });
 
     const tools = new ToolLocator(store);
+    tools.onChange((state) => bus.emit('tools.changed', state));
     const git = new GitClient(tools);
     const gh = new GhClient(tools);
     const repos = new RepositoryManager(store, git, bus.emit);
+    tools.policyRepo = (repoPath) => repos.policyRepo(repoPath);
+    configureUsage(userData);
     const resolver = new ConflictResolver(store, tools, git);
     const review = new ReviewService(store, tools, git, gh, repos, userData);
     const splitter = new SplitterService(store, tools, git);
@@ -184,7 +215,7 @@ if (!gotLock) {
       gh,
       (state) => {
         bus.emit('gh.inbox.changed', state);
-        applyInboxBadge(getWindow(), state.unreadCount);
+        for (const win of BrowserWindow.getAllWindows()) applyInboxBadge(win, state.unreadCount);
       },
       (items) => notifyNewInboxItems(items),
       { listLocalRepos: () => store.getRepositories().map((r) => ({ id: r.id, github: r.github })), getAccount: () => tools.current().ghAccount },
@@ -203,7 +234,7 @@ if (!gotLock) {
     }, { getVersion: () => app.getVersion(), manualUrl: RELEASES_URL, disabledEnv, isPerMachineInstall: isPerMachineInstall(process.execPath, process.platform) });
     const deps: HandlerDeps = { store, tools, git, gh, repos, resolver, review, splitter, triage, prDraft, rebasePlan, releaseNotes, explain, errorExplain, inbox, settingsSync, updater, nlPalette, watchedFolders, host, emit: bus.emit, busy };
     registerIpc(deps);
-    Menu.setApplicationMenu(buildMenu(getWindow, { showManagedServer: process.platform === 'linux' && app.isPackaged, onManagedServer: () => void setUpManagedServer(userData) }));
+    installMenu(getWindow, { showManagedServer: managedServerSupported(), onManagedServer: () => void setUpManagedServer(userData), onNewWindow: () => openDesktopWindow(null), shortcuts: store.getSettings().shortcuts });
 
     /** Desktop notification for a freshly-arrived inbox item (only while the window is unfocused; see shouldNotifyInboxItem for the per-category gating). */
     function notifyNewInboxItems(items: InboxItem[]): void {
@@ -229,16 +260,21 @@ if (!gotLock) {
     // it a window recreated after every window was closed stops driving the
     // inbox poller's focus/blur cadence.
     const onFocusChange = (focused: boolean) => (focused ? inbox.onFocus() : inbox.onBlur());
-    mainWindow = createMainWindow(store, onFocusChange);
-    applyInboxBadge(mainWindow, inbox.getState().unreadCount);
+    /** Opens a window as its own client. `repoId` is the repository it starts on: undefined = the most recently opened, null = none. */
+    const openDesktopWindow = (repoId?: string | null): BrowserWindow => {
+      const win = createMainWindow(store, onFocusChange, undefined, repoId === undefined ? undefined : `repo=${encodeURIComponent(repoId ?? '')}`);
+      applyInboxBadge(win, inbox.getState().unreadCount);
+      const clientId = windowClientId(win.webContents.id);
+      // A closed window gives up the repository it was watching, like a server client disconnecting.
+      win.on('closed', () => repos.releaseClient(clientId));
+      return win;
+    };
+    const firstWindow = openDesktopWindow();
     inbox.start();
     updater.start();
     watchedFolders.watchSettings();
-    mainWindow.on('closed', () => {
-      mainWindow = null;
-    });
-    flushPendingProtocolUrls(mainWindow);
-    if (process.env.GITGOOD_SMOKE_SCRIPT) runSmokeScript(mainWindow, process.env.GITGOOD_SMOKE_SCRIPT);
+    flushPendingProtocolUrls(firstWindow);
+    if (process.env.GITGOOD_SMOKE_SCRIPT) runSmokeScript(firstWindow, process.env.GITGOOD_SMOKE_SCRIPT);
 
     store.onSettingsChanged((settings) => bus.emit('settings.changed', settings));
     nativeTheme.on('updated', () => bus.emit('theme.changed', { dark: nativeTheme.shouldUseDarkColors }));
@@ -246,16 +282,17 @@ if (!gotLock) {
     // Discover git/gh/claude in the background and tell the renderer.
     void tools.refresh().then((state) => {
       log.info(`git: ${state.git.version ?? 'missing'} (${state.git.path ?? '-'}); gh: ${state.gh.version ?? 'missing'} (${state.gh.path ?? '-'}); account: ${state.ghAccount?.login ?? 'none'}`);
-      bus.emit('tools.changed', state);
-      // A scan registers candidates through Git, so wait until initial tool discovery finishes.
-      if (store.getSettings().watchedFolders.length) {
+    });
+    // A scan registers candidates through Git only, so it waits for the git probe — never for gh, whose probe and sign-in read can take many seconds.
+    if (store.getSettings().watchedFolders.length) {
+      void tools.ensure('git').then(() => {
         log.info('Scanning watched folders');
-        void watchedFolders
+        return watchedFolders
           .scan()
           .then((r) => log.info(`Watched-folder scan: ${r.added} added, ${r.skipped} skipped, ${r.dropped} dropped, ${r.unreadable} unreadable${r.cancelled ? ', cancelled' : ''}`))
           .catch((err) => log.error('Watched-folder scan failed', err));
-      }
-    });
+      });
+    }
 
     // Periodic background fetch for the active repository.
     setInterval(async () => {
@@ -281,7 +318,7 @@ if (!gotLock) {
     }, 30_000);
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow(store, onFocusChange);
+      if (BrowserWindow.getAllWindows().length === 0) openDesktopWindow();
     });
     app.on('before-quit', () => {
       inbox.dispose();

@@ -1,10 +1,20 @@
 import { access, constants, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
-import type { GitHubAccount, ToolInfo, ToolsState } from '@shared/types';
+import { delimiter, join, normalize } from 'node:path';
+import type { GhAccountEntry, GitHubAccount, RepositoryInfo, ToolInfo, ToolsState } from '@shared/types';
+import { compareVersions, MIN_TOOL_VERSIONS } from '@shared/util';
+import { repoScope } from './core/client-context';
 import { exec } from './exec';
+import { parseGhAuthStatus, primaryAccount } from './gh/accounts';
+import { GitError } from './git/git';
 import { log } from './logger';
 import type { Store } from './store';
+
+/** Marks `info` outdated (with the minimum) when its version is known and below `min`; never blocks. */
+export function flagOutdated(info: ToolInfo, min: string): ToolInfo {
+  if (!info.installed || !info.version) return info;
+  return compareVersions(info.version, min) < 0 ? { ...info, outdated: true, minVersion: min } : info;
+}
 
 const isWindows = process.platform === 'win32';
 
@@ -85,35 +95,60 @@ async function loginShellPath(): Promise<string | null> {
   return null;
 }
 
+type ProbeKey = 'git' | 'gh' | 'claudeCli' | 'gitLfs' | 'gpg' | 'sshKeygen';
+type Probes = Record<ProbeKey, Promise<ToolInfo>>;
+
+const PENDING: ToolInfo = { installed: false, version: null, path: null, error: null, pending: true };
+const samePath = (a: string, b: string): boolean => (isWindows ? normalize(a).toLowerCase() === normalize(b).toLowerCase() : normalize(a) === normalize(b));
+
 export class ToolLocator {
   private state: ToolsState = {
-    git: { installed: false, version: null, path: null, error: null },
-    gh: { installed: false, version: null, path: null, error: null },
-    claudeCli: { installed: false, version: null, path: null, error: null },
-    gitLfs: { installed: false, version: null, path: null, error: null },
-    gpg: { installed: false, version: null, path: null, error: null },
-    sshKeygen: { installed: false, version: null, path: null, error: null },
+    git: { ...PENDING },
+    gh: { ...PENDING },
+    claudeCli: { ...PENDING },
+    gitLfs: { ...PENDING },
+    gpg: { ...PENDING },
+    sshKeygen: { ...PENDING },
     ghAccount: null,
+    ghAccounts: [],
     ghAuthError: null,
     credentialHelperConfigured: false,
   };
-  private envCache: NodeJS.ProcessEnv | null = null;
+  /** One shared login-shell PATH lookup; concurrent probes await the same promise. */
+  private envPromise: Promise<NodeJS.ProcessEnv> | null = null;
+  private probes: Probes | null = null;
   private refreshing: Promise<ToolsState> | null = null;
-  private located: Promise<void> | null = null;
+  private readonly listeners = new Set<(state: ToolsState) => void>();
+  /** In-memory only: `host\0login` → token from `gh auth token --user`. Never logged, persisted or exported. */
+  private readonly accountTokens = new Map<string, Promise<string>>();
 
   constructor(private readonly store: Store) {}
 
+  /** The repository whose machine-local policy governs a path; the entry points swap in `RepositoryManager.policyRepo` so linked worktrees follow their main repository. */
+  policyRepo: (repoPath: string) => Promise<RepositoryInfo | null> = async (repoPath) => this.store.getRepositories().find((r) => samePath(r.path, repoPath)) ?? null;
+
+  /** Called with the new state whenever a probe or the auth read settles (renderers get it as `tools.changed`). */
+  onChange(listener: (state: ToolsState) => void): void {
+    this.listeners.add(listener);
+  }
+
+  private patch(patch: Partial<ToolsState>): void {
+    this.state = { ...this.state, ...patch };
+    for (const listener of this.listeners) listener(this.state);
+  }
+
   /** process.env augmented with the user's login-shell PATH (mac/Linux GUI launches have a minimal PATH). */
-  async env(): Promise<NodeJS.ProcessEnv> {
-    if (this.envCache) return this.envCache;
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    const shellPath = await loginShellPath();
-    if (shellPath) {
-      const merged = new Set([...(shellPath.split(delimiter)), ...((env.PATH ?? '').split(delimiter))]);
-      env.PATH = [...merged].filter(Boolean).join(delimiter);
-    }
-    this.envCache = env;
-    return env;
+  env(): Promise<NodeJS.ProcessEnv> {
+    this.envPromise ??= (async () => {
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      const shellPath = await loginShellPath();
+      if (shellPath) {
+        const merged = new Set([...shellPath.split(delimiter), ...(env.PATH ?? '').split(delimiter)]);
+        env.PATH = [...merged].filter(Boolean).join(delimiter);
+      }
+      return env;
+    })();
+    return this.envPromise;
   }
 
   current(): ToolsState {
@@ -135,24 +170,32 @@ export class ToolLocator {
   }
 
   /**
-   * Fast local discovery of the git/gh/claude binaries (no network). Runs once;
-   * git and gh commands await this so early requests never race the startup scan.
+   * Starts every probe at once (no network; a slow one never delays another). Each probe updates the
+   * state when it settles; a restart (`refresh`) makes results of the previous round discard themselves.
    */
-  ensureLocated(): Promise<void> {
-    if (this.located) return this.located;
-    this.located = (async () => {
-      const settings = this.store.getSettings();
-      const [git, gh, claudeCli, gpg, sshKeygen] = await Promise.all([
-        this.locate('git', settings.gitPath, ['--version'], (o) => /git version (\S+)/.exec(o)?.[1] ?? null),
-        this.locate('gh', settings.ghPath, ['--version'], (o) => /gh version (\S+)/.exec(o)?.[1] ?? null),
-        this.locate('claude', settings.ai.claudeCliPath, ['--version'], (o) => o.trim().split('\n')[0]?.trim() || null),
-        this.locate('gpg', null, ['--version'], (o) => /gpg \(GnuPG\) (\S+)/.exec(o)?.[1] ?? null),
-        this.locateSshKeygen(),
-      ]);
-      const gitLfs = await this.locateLfs(git);
-      this.state = { ...this.state, git, gh, claudeCli, gitLfs, gpg, sshKeygen };
-    })();
-    return this.located;
+  private startProbes(): Probes {
+    if (this.probes) return this.probes;
+    const settings = this.store.getSettings();
+    const mine = {} as Probes;
+    this.probes = mine;
+    const track = (key: ProbeKey, probe: Promise<ToolInfo>): void => {
+      mine[key] = probe.then((info) => {
+        if (this.probes === mine) this.patch({ [key]: info });
+        return info;
+      });
+    };
+    track('git', this.locate('git', settings.gitPath, ['--version'], (o) => /git version (\S+)/.exec(o)?.[1] ?? null).then((i) => flagOutdated(i, MIN_TOOL_VERSIONS.git)));
+    track('gh', this.locate('gh', settings.ghPath, ['--version'], (o) => /gh version (\S+)/.exec(o)?.[1] ?? null).then((i) => flagOutdated(i, MIN_TOOL_VERSIONS.gh)));
+    track('claudeCli', this.locate('claude', settings.ai.claudeCliPath, ['--version'], (o) => o.trim().split('\n')[0]?.trim() || null));
+    track('gpg', this.locate('gpg', null, ['--version'], (o) => /gpg \(GnuPG\) (\S+)/.exec(o)?.[1] ?? null));
+    track('sshKeygen', this.locateSshKeygen());
+    track('gitLfs', mine.git.then((git) => this.locateLfs(git)));
+    return mine;
+  }
+
+  /** Resolves with that tool's info once its probe has finished; git commands wait for the git probe only, never for gh/claude/gpg. */
+  ensure(key: ProbeKey): Promise<ToolInfo> {
+    return this.startProbes()[key];
   }
 
   /**
@@ -194,13 +237,19 @@ export class ToolLocator {
     }
   }
 
+  /** Re-probes every tool (settings changed, Setup "re-check") and re-reads the gh sign-in state. */
   refresh(): Promise<ToolsState> {
     if (this.refreshing) return this.refreshing;
-    this.located = null;
-    this.refreshing = this.doRefresh().finally(() => {
+    this.probes = null;
+    this.refreshing = this.readAuth().finally(() => {
       this.refreshing = null;
     });
     return this.refreshing;
+  }
+
+  /** Re-reads only the gh sign-in state (accounts, credential helper); tool probes stay as they are. */
+  refreshAuth(): Promise<ToolsState> {
+    return this.readAuth();
   }
 
   private async locate(tool: 'git' | 'gh' | 'claude' | 'gpg' | 'sshKeygen', override: string | null, versionArgs: string[], parse: (out: string) => string | null): Promise<ToolInfo> {
@@ -221,49 +270,30 @@ export class ToolLocator {
     }
   }
 
-  private async doRefresh(): Promise<ToolsState> {
-    await this.ensureLocated();
-    const { git, gh, claudeCli } = this.state;
-    const next: ToolsState = { ...this.state, git, gh, claudeCli };
-    if (gh.installed && gh.path) {
-      const auth = await this.readGhAuth(gh.path);
-      next.ghAccount = auth.account;
-      next.ghAuthError = auth.error;
-    } else {
-      next.ghAccount = null;
-      next.ghAuthError = null;
-    }
-    next.credentialHelperConfigured = git.installed && git.path ? await this.checkCredentialHelper(git.path) : false;
-    this.state = next;
-    return next;
+  private async readAuth(): Promise<ToolsState> {
+    this.accountTokens.clear();
+    const { git, gh } = this.startProbes();
+    const [gitInfo, ghInfo] = await Promise.all([git, gh]);
+    const auth = ghInfo.installed && ghInfo.path ? await this.readGhAuth(ghInfo.path) : { accounts: [], account: null, error: null };
+    const credentialHelperConfigured = gitInfo.installed && gitInfo.path ? await this.checkCredentialHelper(gitInfo.path) : false;
+    this.patch({ ghAccount: auth.account, ghAccounts: auth.accounts, ghAuthError: auth.error, credentialHelperConfigured });
+    return this.state;
   }
 
-  private async readGhAuth(ghPath: string): Promise<{ account: GitHubAccount | null; error: string | null }> {
+  private async readGhAuth(ghPath: string): Promise<{ accounts: GhAccountEntry[]; account: GitHubAccount | null; error: string | null }> {
     const env = await this.ghEnv();
+    const none = { accounts: [], account: null };
     try {
-      const result = await exec(ghPath, ['auth', 'status', '--json', 'hosts'], { env, timeoutMs: 20000, okExitCodes: [1] });
-      const text = result.stdout.trim();
-      if (!text.startsWith('{')) {
-        return { account: null, error: result.stderr.includes('not logged') ? null : result.stderr.trim() || null };
+      // `--json hosts` needs gh 2.67+; older gh fails with "unknown flag" and gets the human-readable output instead.
+      let result = await exec(ghPath, ['auth', 'status', '--json', 'hosts'], { env, timeoutMs: 20000, okExitCodes: [1] });
+      if (!result.stdout.trim().startsWith('{') && /unknown flag/i.test(result.stderr)) {
+        result = await exec(ghPath, ['auth', 'status'], { env, timeoutMs: 20000, okExitCodes: [1] });
       }
-      const parsed = JSON.parse(text) as { hosts: Record<string, { state: string; active: boolean; host: string; login: string; scopes: string; gitProtocol: string }[]> };
-      let entry: { state: string; active: boolean; host: string; login: string; scopes: string; gitProtocol: string } | null = null;
-      for (const list of Object.values(parsed.hosts ?? {})) {
-        const active = list.find((e) => e.active && e.state === 'success') ?? list.find((e) => e.state === 'success');
-        if (active) {
-          entry = active;
-          if (active.host === 'github.com') break;
-        }
-      }
-      if (!entry) return { account: null, error: null };
-      const account: GitHubAccount = {
-        login: entry.login,
-        name: null,
-        avatarUrl: null,
-        host: entry.host,
-        scopes: entry.scopes ? entry.scopes.split(',').map((s) => s.trim()).filter(Boolean) : [],
-        protocol: entry.gitProtocol || null,
-      };
+      const isJson = result.stdout.trim().startsWith('{');
+      const accounts = parseGhAuthStatus(isJson ? result.stdout : `${result.stdout}\n${result.stderr}`);
+      const entry = primaryAccount(accounts);
+      if (!entry) return { ...none, error: /not logged/i.test(`${result.stdout}${result.stderr}`) ? null : result.stderr.trim() || null };
+      const account: GitHubAccount = { login: entry.login, name: null, avatarUrl: null, host: entry.host, scopes: entry.scopes, protocol: entry.protocol };
       try {
         const user = await exec(ghPath, ['api', 'user', '--hostname', entry.host, '--jq', '{login: .login, name: .name, avatar_url: .avatar_url}'], { env, timeoutMs: 20000 });
         const u = JSON.parse(user.stdout) as { login: string; name: string | null; avatar_url: string | null };
@@ -272,9 +302,9 @@ export class ToolLocator {
       } catch (err) {
         log.warn(`Could not fetch GitHub profile: ${(err as Error).message}`);
       }
-      return { account, error: null };
+      return { accounts, account, error: null };
     } catch (err) {
-      return { account: null, error: (err as Error).message };
+      return { ...none, error: (err as Error).message };
     }
   }
 
@@ -288,6 +318,36 @@ export class ToolLocator {
     delete env.GH_FORCE_TTY;
     delete env.CLICOLOR_FORCE;
     return env;
+  }
+
+  /**
+   * The account chosen for the repository at `repoPath` (Repository settings → GitHub account) with its
+   * token, or null when the repository follows the host's active account. The token is fetched from
+   * `gh auth token --user` once and kept in memory only. A chosen account that is no longer signed in
+   * is an error: silently using another identity could push as the wrong user.
+   */
+  async repoAccount(repoPath: string | null | undefined): Promise<{ host: string; token: string } | null> {
+    const path = repoPath ?? repoScope.getStore();
+    const chosen = path ? (await this.policyRepo(path))?.githubAccount : undefined;
+    if (!chosen) return null;
+    const key = `${chosen.host}\0${chosen.login}`;
+    let token = this.accountTokens.get(key);
+    if (!token) {
+      token = (async () => {
+        await this.ensure('gh');
+        const result = await exec(this.ghPath(), ['auth', 'token', '--hostname', chosen.host, '--user', chosen.login], { env: await this.ghEnv(), timeoutMs: 15000 });
+        const value = result.stdout.trim();
+        if (!value) throw new Error('empty token');
+        return value;
+      })();
+      this.accountTokens.set(key, token);
+    }
+    try {
+      return { host: chosen.host, token: await token };
+    } catch {
+      this.accountTokens.delete(key);
+      throw new GitError({ message: `This repository is set to use the GitHub account ${chosen.login} on ${chosen.host}, which is not signed in. Sign in again from Options → Accounts or choose another account in Repository settings.`, command: '', exitCode: null, stderr: '', stdout: '', code: 'gh-not-authenticated' });
+    }
   }
 
   private async checkCredentialHelper(gitPath: string): Promise<boolean> {

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 // anywhere in it (even transitively via a sibling in core/) would drag the
 // desktop runtime into a headless Node process. Guard the boundary here rather
 // than only discovering it when the server build fails.
-const CORE_FILES = ['src/main/core/handlers.ts', 'src/main/core/bus.ts', 'src/main/core/host.ts', 'src/main/core/store-platform.ts', 'src/main/store.ts'];
+const HANDLER_FILES = readdirSync(resolve('src/main/core/handlers')).map((f) => `src/main/core/handlers/${f}`);
+const CORE_FILES = [...HANDLER_FILES, 'src/main/core/bus.ts', 'src/main/core/host.ts', 'src/main/core/store-platform.ts', 'src/main/store.ts'];
 describe('Electron-free core', () => {
   for (const file of CORE_FILES) {
     it(`${file} does not import electron`, () => {

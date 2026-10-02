@@ -1,3 +1,4 @@
+import { aiEnabled } from '@shared/ai-model';
 import type { RebaseApplyProgress, RebasePlan, RebasePlanAction, RebasePlanRow } from '@shared/types';
 import { errorMessage, invoke } from '../api';
 import { hasUncommittedChanges, refreshAll, refreshStatus, showError } from './actions';
@@ -12,7 +13,7 @@ const UNDO_WINDOW_MS = 10 * 60 * 1000;
 /** Hidden (not just disabled) when the AI provider is disabled, per spec. */
 export function tidyBranchVisible(): boolean {
   const s = store.get();
-  return !!s.currentRepo && s.settings?.ai.provider !== 'disabled';
+  return !!s.currentRepo && aiEnabled(s.settings, s.currentRepo);
 }
 
 /** Reason the action is not actionable right now (default branch, or a merge commit in a History multi-selection), or null when it can proceed. Full-range merge-commit detection is deferred to the pre-flight, since the whole "ahead of base" range is not necessarily loaded client-side. */
@@ -143,7 +144,7 @@ export function reproposeRebasePlan(): void {
 }
 
 export function cancelRebasePropose(): void {
-  void invoke('ai.cancel').catch(() => undefined);
+  void invoke('ai.cancel', 'rebase').catch(() => undefined);
 }
 
 export function closeRebaseDialog(): void {

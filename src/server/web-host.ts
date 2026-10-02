@@ -84,4 +84,12 @@ export class WebHost implements HostCapabilities {
     // Zoom is native to the browser in web mode.
     return 0;
   }
+
+  async openWindow(): Promise<void> {
+    throw new UnsupportedCapabilityError('openWindow');
+  }
+
+  setMenuShortcuts(): void {
+    // No application menu in web mode: the page handles its own shortcuts.
+  }
 }

@@ -31,6 +31,10 @@
 - [x] 4.2 `npm run typecheck` clean and `npx electron-vite build` succeeds
 - [x] 4.3 Smoke run in branch mode with a stubbed run: pre-flight card, gutter markers, inline card, findings panel and split view screenshots captured
 - [ ] 4.4 Live review of a real branch with the Claude Code CLI provider; verify findings anchor to real lines and the dropped count is reported
+  - 2026-10-01: still open — needs a live `claude` CLI session against a real branch; the findings-validation and dropped-count logic is unit-tested (`test/review.test.ts`) but no live run has been recorded.
 - [ ] 4.5 Pull request mode against a real GitHub repository including a fork PR; verify `gh pr diff` fallback and contents fetch for context
+  - 2026-10-01: still open — needs a real GitHub repository and a fork PR; only `gh pr diff` splitting is unit-tested (`test/main-parsers.test.ts`), not the fallback or context fetch against GitHub.
 - [ ] 4.6 Post a review on a test pull request; verify one review with inline comments is created, own-PR restriction applies, and the 422 retry path is exercised with a deliberately bad line
+  - 2026-10-01: still open — posting a real review (and the 422 retry) needs a throwaway pull request on GitHub; only the verdict/inline-comment building logic is unit-tested (`test/review.test.ts`).
 - [ ] 4.7 Update the README Features and AI sections (done) and confirm they still match after live testing
+  - 2026-10-01: README and docs/AI-FEATURES.md are in place; the "still match after live testing" half waits on 4.4–4.6.

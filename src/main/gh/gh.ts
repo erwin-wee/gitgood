@@ -2,6 +2,7 @@ import type { CheckRun, CreateIssueOptions, CreatePullRequestOptions, CreateRele
 import { ExecError, exec, type ExecResult } from '../exec';
 import { GitError, toGitErrorInfo } from '../git/git';
 import { log } from '../logger';
+import { ghAccountEnv } from './accounts';
 import type { ToolLocator } from '../tools';
 
 interface GhRunOptions {
@@ -39,6 +40,7 @@ interface RawPr {
   changedFiles?: number;
   mergeable?: string;
   mergeStateStatus?: string;
+  autoMergeRequest?: { mergeMethod?: string; enabledBy?: { login?: string } | null } | null;
   labels?: { name: string }[];
   assignees?: { login: string }[];
   reviewRequests?: { login?: string; name?: string }[];
@@ -51,7 +53,7 @@ interface RawPr {
 // Bulk list (up to 100 PRs) must stay under GitHub's GraphQL cost limits: no `commits` (nested authors: 100×100×100 nodes, over the
 // 500k cap) and no mergeability (computed per PR on demand; times out on repos with many open PRs). Single-PR calls add mergeability back.
 const PR_LIST_FIELDS = 'number,title,url,author,headRefName,baseRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,isDraft,state,createdAt,updatedAt,statusCheckRollup,reviewDecision,body,additions,deletions,changedFiles,labels,assignees,reviewRequests,files,reviews,latestReviews,comments';
-const PR_FIELDS = `${PR_LIST_FIELDS},mergeable,mergeStateStatus`;
+const PR_FIELDS = `${PR_LIST_FIELDS},mergeable,mergeStateStatus,autoMergeRequest`;
 
 const ISSUE_FIELDS = 'number,title,url,state,author,labels,assignees,milestone,createdAt,updatedAt,comments,body';
 
@@ -173,6 +175,7 @@ export function toPullRequest(raw: RawPr): PullRequest {
     changedFiles: raw.changedFiles ?? null,
     mergeable: raw.mergeable ?? null,
     mergeStateStatus: raw.mergeStateStatus ?? null,
+    autoMerge: raw.autoMergeRequest ? { method: ({ MERGE: 'merge', SQUASH: 'squash', REBASE: 'rebase' } as const)[(raw.autoMergeRequest.mergeMethod ?? '').toUpperCase()] ?? null, enabledBy: raw.autoMergeRequest.enabledBy?.login ?? null } : null,
     labels: (raw.labels ?? []).map((l) => l.name),
     assignees: (raw.assignees ?? []).map((a) => a.login),
     reviewRequests: (raw.reviewRequests ?? []).map((r) => r.login ?? r.name ?? '').filter(Boolean),
@@ -215,6 +218,16 @@ export function repoSelector(ref: GitHubRepoRef): string {
   return ref.host === 'github.com' ? `${ref.owner}/${ref.name}` : `${ref.host}/${ref.owner}/${ref.name}`;
 }
 
+/** argv for `gh pr merge`: merge now, enable auto-merge (`--auto`, which on merge-queue branches queues the PR once checks pass), or turn auto-merge off. */
+export function prMergeArgs(selector: string, number: number, mode: { method: 'merge' | 'squash' | 'rebase'; deleteBranch: boolean; auto: boolean } | 'disable-auto'): string[] {
+  const args = ['pr', 'merge', String(number), '--repo', selector];
+  if (mode === 'disable-auto') return [...args, '--disable-auto'];
+  args.push(`--${mode.method}`);
+  if (mode.auto) args.push('--auto');
+  if (mode.deleteBranch) args.push('--delete-branch');
+  return args;
+}
+
 // ---------------------------------------------------------------------------
 // Settings sync (gists)
 // ---------------------------------------------------------------------------
@@ -223,11 +236,13 @@ interface RawGist {
   id: string;
   description?: string | null;
   updated_at?: string;
+  public?: boolean;
+  files?: Record<string, unknown>;
 }
 
-/** Finds the gist matching `description` in a `gh api gists --paginate` listing. Pure so it can be unit tested without spawning `gh`. */
-export function findGistByDescription(gists: RawGist[], description: string): { id: string; updatedAt: string } | null {
-  const match = gists.find((g) => g.description === description);
+/** Finds the secret gist matching `description` that holds `filename` in a `gh api gists --paginate` listing. Public gists and look-alikes (same description, other files) are never adopted: they would receive uploads. Pure so it can be unit tested without spawning `gh`. */
+export function findGistByDescription(gists: RawGist[], description: string, filename: string): { id: string; updatedAt: string } | null {
+  const match = gists.find((g) => g.description === description && g.public === false && !!g.files && filename in g.files);
   return match ? { id: match.id, updatedAt: match.updated_at ?? '' } : null;
 }
 
@@ -286,9 +301,12 @@ export class GhClient {
   constructor(private readonly tools: ToolLocator) {}
 
   async run(args: string[], opts: GhRunOptions = {}): Promise<ExecResult> {
-    await this.tools.ensureLocated();
+    await this.tools.ensure('gh');
     const gh = this.tools.ghPath();
     const env = await this.tools.ghEnv();
+    // A repository with a chosen GitHub account (cwd, or the handler's repoScope) runs gh as that account.
+    const account = await this.tools.repoAccount(opts.cwd);
+    if (account) Object.assign(env, ghAccountEnv(account.host, account.token));
     try {
       return await exec(gh, args, { cwd: opts.cwd, env, stdin: opts.stdin, signal: opts.signal, onStderr: opts.onStderr, onStdout: opts.onStdout, timeoutMs: opts.timeoutMs ?? 120000, okExitCodes: opts.okExitCodes });
     } catch (err) {
@@ -383,8 +401,14 @@ export class GhClient {
     this.loginProcess = null;
   }
 
-  async logout(host: string): Promise<void> {
-    await this.run(['auth', 'logout', '--hostname', host], { okExitCodes: [1] });
+  /** Signs out one account (`login`), or the host's active account when omitted. */
+  async logout(host: string, login?: string): Promise<void> {
+    await this.run(['auth', 'logout', '--hostname', host, ...(login ? ['--user', login] : [])], { okExitCodes: [1] });
+  }
+
+  /** Makes `login` the account gh uses by default on `host` (repositories with a chosen account are unaffected). */
+  async switchAccount(host: string, login: string): Promise<void> {
+    await this.run(['auth', 'switch', '--hostname', host, '--user', login], { timeoutMs: 30000 });
   }
 
   async setupGit(): Promise<void> {
@@ -392,7 +416,7 @@ export class GhClient {
   }
 
   async account(): Promise<GitHubAccount | null> {
-    return (await this.tools.refresh()).ghAccount;
+    return (await this.tools.refreshAuth()).ghAccount;
   }
 
   // ---------- repositories ----------
@@ -528,10 +552,12 @@ export class GhClient {
     return { url: /https?:\/\/\S+\/pull\/\d+/.exec(res.stdout + res.stderr)?.[0] ?? null };
   }
 
-  async prMerge(ref: GitHubRepoRef, number: number, method: 'merge' | 'squash' | 'rebase', deleteBranch: boolean): Promise<void> {
-    const args = ['pr', 'merge', String(number), '--repo', repoSelector(ref), `--${method}`];
-    if (deleteBranch) args.push('--delete-branch');
-    await this.run(args, { timeoutMs: 120000 });
+  async prMerge(ref: GitHubRepoRef, number: number, method: 'merge' | 'squash' | 'rebase', deleteBranch: boolean, auto = false): Promise<void> {
+    await this.run(prMergeArgs(repoSelector(ref), number, { method, deleteBranch, auto }), { timeoutMs: 120000 });
+  }
+
+  async prDisableAutoMerge(ref: GitHubRepoRef, number: number): Promise<void> {
+    await this.run(prMergeArgs(repoSelector(ref), number, 'disable-auto'), { timeoutMs: 120000 });
   }
 
   async prReady(ref: GitHubRepoRef, number: number, ready: boolean): Promise<void> {
@@ -767,9 +793,9 @@ export class GhClient {
   // ---------- settings sync (gists) ----------
 
   /** Finds an existing gist by its description (`gh gist list` output is not JSON in all versions, so the search goes through the API instead). */
-  async gistFind(description: string): Promise<{ id: string; updatedAt: string } | null> {
+  async gistFind(description: string, filename: string): Promise<{ id: string; updatedAt: string } | null> {
     const raw = await this.json<RawGist[]>(['api', 'gists', '--paginate'], { timeoutMs: 60000 });
-    return findGistByDescription(raw ?? [], description);
+    return findGistByDescription(raw ?? [], description, filename);
   }
 
   /** Creates a new secret gist from `content` (sent over stdin to avoid command-line length limits) and returns its id. */
@@ -797,11 +823,11 @@ export class GhClient {
     await this.run(['gist', 'edit', id, '--filename', filename, '-'], { stdin: content, timeoutMs: 60000 });
   }
 
-  /** The gist's `updated_at`, or null when it no longer exists (used to detect a deleted gist without treating it as an error). */
-  async gistMetadata(id: string): Promise<{ updatedAt: string } | null> {
+  /** The gist's `updated_at` and visibility, or null when it no longer exists (used to detect a deleted gist without treating it as an error). */
+  async gistMetadata(id: string): Promise<{ updatedAt: string; public: boolean } | null> {
     try {
-      const raw = await this.json<{ updated_at?: string }>(['api', `gists/${id}`], { timeoutMs: 30000 });
-      return raw ? { updatedAt: raw.updated_at ?? '' } : null;
+      const raw = await this.json<{ updated_at?: string; public?: boolean }>(['api', `gists/${id}`], { timeoutMs: 30000 });
+      return raw ? { updatedAt: raw.updated_at ?? '', public: raw.public !== false } : null;
     } catch (err) {
       if (err instanceof GitError && isGistNotFound(err.info)) return null;
       throw err;

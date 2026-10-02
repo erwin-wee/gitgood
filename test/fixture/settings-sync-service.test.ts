@@ -39,12 +39,25 @@ describe('SettingsSyncService against the gh stub', () => {
     });
   });
 
-  it('enable reuses an existing gist found by its description', async () => {
-    await withService([{ match: 'gists', stdout: JSON.stringify([{ id: 'existing123', description: 'GitGood settings', updated_at: '2026-01-01T00:00:00Z' }]) }], async (service, store) => {
+  it('enable reuses an existing secret gist found by its description and file', async () => {
+    await withService([{ match: 'gists', stdout: JSON.stringify([{ id: 'existing123', description: 'GitGood settings', public: false, files: { 'gitgood-settings.json': {} }, updated_at: '2026-01-01T00:00:00Z' }]) }], async (service, store) => {
       const result = await service.enable();
       expect(result.gistId).toBe('existing123');
       expect(store.getSettingsSync().gistId).toBe('existing123');
     });
+  });
+
+  it('enable does not adopt a public gist with the matching description; it creates a secret one', async () => {
+    await withService(
+      [
+        { match: ['api', 'gists', '--paginate'], stdout: JSON.stringify([{ id: 'pub1', description: 'GitGood settings', public: true, files: { 'gitgood-settings.json': {} } }]) },
+        { match: 'gist create', stdout: 'https://gist.github.com/octocat/newgist123\n' },
+      ],
+      async (service, store) => {
+        expect((await service.enable()).gistId).toBe('newgist123');
+        expect(store.getSettingsSync().gistId).toBe('newgist123');
+      },
+    );
   });
 
   it('enable creates a new gist when none is found, and records a hash', async () => {
@@ -73,13 +86,22 @@ describe('SettingsSyncService against the gh stub', () => {
   });
 
   it('upload sends the current export over stdin and records the new hash and timestamp', async () => {
-    await withService([{ match: 'gist edit', stdoutFromStdin: true }], async (service, store, scenario) => {
+    await withService([{ match: ['api', 'gists/abc'], stdout: { updated_at: '2026-01-01T00:00:00Z', public: false } }, { match: 'gist edit', stdoutFromStdin: true }], async (service, store, scenario) => {
       store.setSettingsSync({ gistId: 'abc', lastSyncedAt: null, lastHash: null });
       await service.upload();
       expect(store.getSettingsSync().lastSyncedAt).toBeTruthy();
       expect(store.getSettingsSync().lastHash).toBeTruthy();
       const log = await readStubLog(scenario.logPath);
-      expect(log[0].args).toEqual(['gist', 'edit', 'abc', '--filename', 'gitgood-settings.json', '-']);
+      expect(log[1].args).toEqual(['gist', 'edit', 'abc', '--filename', 'gitgood-settings.json', '-']);
+    });
+  });
+
+  it('upload refuses a public gist and never edits it', async () => {
+    await withService([{ match: ['api', 'gists/abc'], stdout: { updated_at: '2026-01-01T00:00:00Z', public: true } }, { match: 'gist edit', stdoutFromStdin: true }], async (service, store, scenario) => {
+      store.setSettingsSync({ gistId: 'abc', lastSyncedAt: null, lastHash: 'h' });
+      await expect(service.upload()).rejects.toThrow(/public/);
+      expect(store.getSettingsSync().lastHash).toBe('h');
+      expect((await readStubLog(scenario.logPath)).some((e) => e.args.includes('edit'))).toBe(false);
     });
   });
 

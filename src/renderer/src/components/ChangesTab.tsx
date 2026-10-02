@@ -1,13 +1,15 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { aiEnabled as aiOn } from '@shared/ai-model';
 import type { CommitFile, ReviewFinding, ReviewSeverity, WorkingFile } from '@shared/types';
 import { extname } from '@shared/util';
 import { invoke, isMac } from '../api';
 import * as actions from '../state/actions';
-import { openDialog, patchChanges, store, useAppStore } from '../state/store';
+import { openDialog, patchChanges, store, useAppStore, useAiEnabled } from '../state/store';
 import { liveFindings, SEVERITY_ICON, SEVERITY_TONE } from './review/ReviewView';
 import { onListKeyDown } from '../lib/listKeys';
 import { Avatar, Button, Checkbox, Icon, PathLabel, Spinner, openContextMenu, statusIcon, statusLabel, type MenuItem } from './ui';
 import { useWindowedRows } from '../lib/windowing';
+import { shortcutMatches } from '../lib/shortcuts';
 
 const SUMMARY_LIMIT = 72;
 
@@ -48,7 +50,7 @@ export function ChangesTab(): React.JSX.Element {
     const items: MenuItem[] = [];
     if (file.conflict) {
       items.push(
-        { label: 'Resolve with AI', icon: 'sparkle', onClick: () => void actions.resolveWithAi(file.path), disabled: s.settings?.ai.provider === 'disabled' || s.aiBusy },
+        { label: 'Resolve with AI', icon: 'sparkle', onClick: () => void actions.resolveWithAi(file.path), disabled: !aiOn(s.settings, s.currentRepo) || s.aiBusy },
         { label: `Use ${s.status?.operation.kind === 'rebase' ? 'upstream' : 'current branch'} version (ours)`, onClick: () => void actions.useSide(file.path, 'ours') },
         { label: `Use ${s.status?.operation.kind === 'rebase' ? 'rebased commit' : 'incoming'} version (theirs)`, onClick: () => void actions.useSide(file.path, 'theirs') },
         { label: 'Mark as resolved', onClick: () => void actions.markResolved([file.path]) },
@@ -154,7 +156,7 @@ function PrecommitFindingsStrip(): React.JSX.Element | null {
   const review = useAppStore((s) => s.precommitReview);
   const run = review.run;
   // Subscribed so turning the AI provider off hides the Fix with agent action immediately.
-  useAppStore((s) => s.settings?.ai.provider);
+  useAiEnabled();
   const findings = useMemo(() => liveFindings(run), [run]);
   if (!run && !review.running) return null;
 
@@ -241,6 +243,7 @@ function CommitForm(): React.JSX.Element {
   const status = useAppStore((s) => s.status);
   const changes = useAppStore((s) => s.changes);
   const settings = useAppStore((s) => s.settings);
+  const aiAvailable = useAiEnabled();
   const aiCommitBusy = useAppStore((s) => s.aiCommitBusy);
   const precommitReview = useAppStore((s) => s.precommitReview);
   const precommitFindings = useMemo(() => liveFindings(precommitReview.run), [precommitReview.run]);
@@ -265,6 +268,12 @@ function CommitForm(): React.JSX.Element {
     };
   }, [repoPath, signingConfigVersion]);
 
+  // Prefill from commit.template when the form is empty: on repository open, after a commit empties it, and when amend is switched off.
+  const statusLoaded = !!status;
+  useEffect(() => {
+    if (statusLoaded) void actions.prefillCommitTemplate();
+  }, [repoPath, statusLoaded, changes.amend, changes.committing]);
+
   const files = status?.files ?? [];
   const excludedSet = new Set(changes.excluded);
   const included = files.filter((f) => !excludedSet.has(f.path));
@@ -275,7 +284,7 @@ function CommitForm(): React.JSX.Element {
   const label = changes.committing ? 'Committing…' : changes.amend ? 'Amend last commit' : inMerge ? `Commit ${status?.operation.kind === 'merge' ? 'merge' : status?.operation.kind}` : status?.branch.detached ? 'Commit to detached HEAD' : `Commit to ${branchName}`;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && canCommit) {
+    if (canCommit && shortcutMatches('commit', e)) {
       e.preventDefault();
       void actions.commit();
     }
@@ -350,14 +359,21 @@ function CommitForm(): React.JSX.Element {
           />
         </div>
       ) : null}
+      <div className="commit-options" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12 }}>
+        <Checkbox checked={!!repo?.signoff} onChange={(v) => repo && void actions.setRepoPrefs(repo, { signoff: v })} label="Sign off" disabled={changes.committing || !repo} title="Add a Signed-off-by trailer (git commit --signoff). Remembered for this repository." />
+        <Checkbox checked={changes.noVerify} onChange={(v) => patchChanges({ noVerify: v })} label={changes.noVerify ? <span style={{ color: 'var(--attention)' }}>Skip hooks (this commit only)</span> : 'Skip hooks'} disabled={changes.committing} title="Run git commit --no-verify: skips the pre-commit and commit-msg hooks for the next commit only." />
+      </div>
       <div className="form-actions">
         <div className="left">
           <Button variant="ghost" size="sm" icon="person" title={changes.showCoAuthors ? 'Remove co-authors' : 'Add co-authors'} onClick={() => patchChanges((c) => ({ showCoAuthors: !c.showCoAuthors }))} />
           {willSign ? <Icon name="lock" size={14} className="muted" title="Commits are signed" /> : null}
-          {settings?.ai.provider !== 'disabled' ? (
+          {aiAvailable ? (
             <Button variant="ghost" iconOnly icon="sparkle" className="sparkle" loading={aiCommitBusy} title="Generate commit message with AI" aria-label="Generate commit message with AI" onClick={() => void actions.generateCommitMessage()} disabled={included.length === 0 || changes.committing} />
           ) : null}
-          {settings?.ai.provider !== 'disabled' ? (
+          {aiCommitBusy ? (
+            <Button variant="ghost" size="sm" title="Stop generating the commit message" onClick={() => void invoke('ai.cancel', 'commitMessage')}>Cancel</Button>
+          ) : null}
+          {aiAvailable ? (
             <Button variant="ghost" iconOnly icon="eye" loading={precommitReview.running} title="Review changes with AI before committing" aria-label="Review changes with AI before committing" onClick={() => void actions.reviewChangesBeforeCommit()} disabled={included.length === 0 || changes.committing} />
           ) : null}
           {actions.splitEntryVisible() ? (

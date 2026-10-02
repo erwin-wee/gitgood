@@ -28,7 +28,6 @@ export function on<K extends EventName>(event: K, listener: (payload: EventPaylo
 export const platform: string = window.gitgoodBridge.platform;
 export const isMac = platform === 'darwin';
 export const isWindows = platform === 'win32';
-export const modKey = isMac ? '⌘' : 'Ctrl';
 
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.info.message;

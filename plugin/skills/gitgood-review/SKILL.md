@@ -38,7 +38,7 @@ If `latest.json` is missing, tell the user that GitGood has not exported a revie
     "confidence": "high" | "medium" | "low",
     "dismissed": false     // true = the user dismissed it; skip these
   }],
-  "rerun": { "url": "gitgood://review/rerun?repo=…", "command": "xdg-open '…'" }  // null for a pull request or branch review
+  "rerun": { "url": "gitgood://review/rerun?repo=…&token=…", "command": "xdg-open '…'" }  // null for a pull request or branch review
 }
 ```
 
@@ -54,7 +54,7 @@ Findings are already sorted blocker → warning → nit, then by path and line. 
    - Keep edits minimal and scoped to the finding.
 4. **Do not commit, stage, stash, amend, rebase or push.** The user commits from GitGood. Read-only git commands are fine.
 5. What to do when you are done depends on `rerun`:
-   - **`rerun` is an object** (a pre-commit review, `target.kind` is `worktree`): run the command in `rerun.command`. It opens the `gitgood://review/rerun?repo=…` URL — `xdg-open` on Linux, `open` on macOS, `Start-Process` in PowerShell, `start "" "<url>"` in Command Prompt. GitGood must be running with this repository in its list; if the command errors or nothing happens within a few seconds, tell the user to press Re-review in GitGood.
+   - **`rerun` is an object** (a pre-commit review, `target.kind` is `worktree`): run the command in `rerun.command`. It opens the `gitgood://review/rerun?repo=…&token=…` URL (run the command exactly as written; the token is single-use and GitGood asks the user to confirm when it is missing or already spent) — `xdg-open` on Linux, `open` on macOS, `Start-Process` in PowerShell, `start "" "<url>"` in Command Prompt. GitGood must be running with this repository in its list; if the command errors or nothing happens within a few seconds, tell the user to press Re-review in GitGood.
    - **`rerun` is null** (a pull request or branch review): do **not** try to trigger a re-review. That review reads committed history, so it would report the same findings however much you fixed. List what you changed per finding and tell the user to commit in GitGood and press Re-review. You are done.
 6. After triggering a re-review, poll `latest.json` every few seconds for up to two minutes, until `runId` differs from the one you started with and `finishedAt` is not null.
 7. **Re-read `latest.json`.** Finding ids are not stable across runs, so compare by `path` and `title`, not by `id`. Report which of the original findings are gone, which remain (and why, if you skipped them), and anything new the re-review raised. If the new run's `target` differs from the one you started with (for example GitGood ran a pull request review in between), say so instead of comparing.

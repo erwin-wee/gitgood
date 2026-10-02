@@ -11,6 +11,8 @@ export interface FakeToolsOptions {
   /** Extra environment variables merged on top of process.env for env()/ghEnv(). */
   env?: NodeJS.ProcessEnv;
   ghAccount?: GitHubAccount | null;
+  /** What `repoAccount()` resolves to (a repository with a chosen GitHub account); null = follows the active account. */
+  repoAccount?: { host: string; token: string } | null;
 }
 
 /**
@@ -30,6 +32,7 @@ export function createFakeTools(opts: FakeToolsOptions = {}): ToolLocator {
     gpg: { installed: !!opts.gpgPath, version: 'test', path: opts.gpgPath ?? null, error: opts.gpgPath ? null : 'gpg not configured in fake tools' },
     sshKeygen: { installed: !!opts.sshKeygenPath, version: null, path: opts.sshKeygenPath ?? null, error: opts.sshKeygenPath ? null : 'ssh-keygen not configured in fake tools' },
     ghAccount: opts.ghAccount ?? null,
+    ghAccounts: [],
     ghAuthError: null,
     credentialHelperConfigured: false,
   };
@@ -46,10 +49,19 @@ export function createFakeTools(opts: FakeToolsOptions = {}): ToolLocator {
     current(): ToolsState {
       return state;
     },
-    async ensureLocated(): Promise<void> {},
+    async ensure(key: 'git' | 'gh' | 'claudeCli' | 'gitLfs' | 'gpg' | 'sshKeygen'): Promise<ToolsState[typeof key]> {
+      return state[key];
+    },
+    async repoAccount(): Promise<{ host: string; token: string } | null> {
+      return opts.repoAccount ?? null;
+    },
     async refresh(): Promise<ToolsState> {
       return state;
     },
+    async refreshAuth(): Promise<ToolsState> {
+      return state;
+    },
+    onChange(): void {},
     gitPath(): string {
       if (!opts.gitPath) throw new Error('Git was not found (fake tools).');
       return opts.gitPath;

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { gitReadHandlers } from '../../src/main/core/handlers/gitRead';
+import type { HandlerContext } from '../../src/main/core/handlers/context';
 import { getRangePatch } from '../../src/main/git/diff';
 import { GitClient } from '../../src/main/git/git';
 import { createRepo, hasGitSync } from '../helpers/repo';
@@ -48,6 +50,32 @@ describe.skipIf(!hasGitSync())('getRangePatch', () => {
       const result = await getRangePatch(git, repo.path, head, head, 1_000_000);
       expect(result.patch).toBe('');
       expect(result.truncated).toBe(false);
+    } finally {
+      await repo.dispose();
+    }
+  });
+
+  it('shows a renamed file as a rename in the range diff, with only the real changed lines', async () => {
+    const make = (tag: string) => Array.from({ length: 20 }, (_, i) => `${tag} line ${i}`).join('\n') + '\n';
+    const body = make('edit');
+    const repo = await createRepo({ commits: [{ message: 'init', files: { 'old.txt': make('old'), 'edit.txt': body } }] });
+    try {
+      repo.git(['checkout', '-b', 'feature']);
+      repo.git(['mv', 'old.txt', 'new.txt']);
+      repo.git(['mv', 'edit.txt', 'moved.txt']);
+      repo.commit({ message: 'rename', files: { 'moved.txt': body.replace('edit line 10\n', 'edit line ten\n') } });
+      const git = new GitClient(repo.tools());
+      const handlers = gitReadHandlers({ git } as unknown as HandlerContext);
+
+      const pure = await handlers['repo.diff.range'](repo.path, 'main', 'feature', 'new.txt', {});
+      expect(pure).toEqual({ kind: 'empty', reason: 'Renamed from old.txt with no content changes.' });
+
+      const edited = await handlers['repo.diff.range'](repo.path, 'main', 'feature', 'moved.txt', {});
+      if (edited.kind !== 'text') throw new Error(`expected text diff, got ${edited.kind}`);
+      expect(edited.oldPath).toBe('edit.txt');
+      expect(edited.newPath).toBe('moved.txt');
+      const changed = edited.hunks.flatMap((h) => h.lines).filter((l) => l.type !== 'context').map((l) => `${l.type}:${l.text}`);
+      expect(changed).toEqual(['delete:edit line 10', 'add:edit line ten']);
     } finally {
       await repo.dispose();
     }

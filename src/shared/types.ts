@@ -2,19 +2,50 @@
  * Shared data types that cross the IPC boundary between the Electron main
  * process and the renderer. Keep this file free of Node or DOM specifics.
  */
+import type { ShortcutOverrides } from './shortcuts';
 
 export type Theme = 'system' | 'light' | 'dark';
 export type DiffViewMode = 'unified' | 'split';
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/** The AI features that can run (and be cancelled / metered) independently. */
+export type AiFeature = 'resolver' | 'commitMessage' | 'review' | 'split' | 'triage' | 'prDraft' | 'rebase' | 'releaseNotes' | 'explain' | 'errorExplain' | 'nlPalette';
+
+/** Token usage reported by a backend for one request; `costUsd` only when the backend itself reports it. */
+export interface AiUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number | null;
+}
+
+/** Per-feature totals for one calendar month (machine-local; see ai/usage.ts). */
+export interface AiUsageTotals extends AiUsage {
+  requests: number;
+}
+
+export interface AiUsageMonth {
+  /** `YYYY-MM` (local time). */
+  month: string;
+  features: Partial<Record<AiFeature, AiUsageTotals>>;
+}
 export type PullBehavior = 'git-config' | 'merge' | 'rebase';
 export type UncommittedChangesStrategy = 'ask' | 'stash' | 'move';
 export type UpdateChannel = 'stable' | 'beta';
 
 export interface AiSettings {
-  /** Which backend performs AI conflict resolution. */
-  provider: 'anthropic' | 'claude-cli' | 'disabled';
+  /** Which backend performs AI features. 'openai-compatible' talks to any OpenAI-style `/chat/completions` server (see `openaiBaseUrl`). */
+  provider: 'anthropic' | 'claude-cli' | 'openai-compatible' | 'disabled';
   /** Anthropic model ID used by the API backend, or a model alias for the CLI backend. */
   model: string;
+  /** Base URL of the OpenAI-compatible server including any version path, e.g. `https://api.openai.com/v1` or `http://localhost:11434/v1`. Portable. */
+  openaiBaseUrl: string;
+  /** Model name sent to the OpenAI-compatible server. Portable. */
+  openaiModel: string;
+  /** True when an OpenAI-compatible API key has been stored (the key itself never crosses IPC and is never exported). */
+  hasOpenaiApiKey: boolean;
+  /** Optional per-feature model overrides; a missing/empty entry uses the global model of the active provider (see `modelFor`). */
+  featureModels: Partial<Record<AiFeature, string>>;
   effort: EffortLevel;
   /** True when an API key has been stored (the key itself never crosses IPC). */
   hasApiKey: boolean;
@@ -96,6 +127,8 @@ export interface AppSettings {
   showUnpushedWorkIndicator: boolean;
   /** Verify commit signatures while loading History (adds %G?/%GS/%GK to the log format, which is slower on large histories). Default off. */
   historyVerifySignatures: boolean;
+  /** Draw the commit graph (branch lanes) beside the History list. Only shown while no search/filter/file path narrows the list; hidden on phone layouts. */
+  historyGraph: boolean;
   /** Poll GitHub notifications for the Inbox. Defaults to on once signed in; has no effect while signed out. */
   notificationsEnabled: boolean;
   /** Minimum minutes between notification polls; the server's own X-Poll-Interval is honoured when it asks for longer. */
@@ -116,6 +149,8 @@ export interface AppSettings {
    * never leave the machine through a settings export or gist sync.
    */
   watchedFolders: WatchedFolder[];
+  /** Keyboard shortcut overrides by action id (an accelerator, or null = unbound); see `shared/shortcuts.ts`. Part of the portable preferences. */
+  shortcuts: ShortcutOverrides;
   ai: AiSettings;
 }
 
@@ -258,7 +293,22 @@ export interface RepositoryInfo {
    * hand keeps 'manual' even when a scan later finds it in a watched folder.
    */
   origin?: 'manual' | 'watched';
+  /** Machine-local "Disable AI for this repository" choice. Not part of a settings export. */
+  aiDisabled?: boolean;
+  /** Set (not persisted) when the repository's `.gitgood/config.json` says `"ai": false`; filled in by `repo.open`. */
+  aiConfigOff?: boolean;
+  /** Machine-local: pinned to the top of the repository list. */
+  pinned?: boolean;
+  /** Machine-local custom group (shown before the owner groups in the repository list); absent/null = no custom group. */
+  group?: string | null;
+  /** Machine-local: add a `Signed-off-by` trailer (`git commit --signoff`) to commits in this repository. */
+  signoff?: boolean;
+  /** Machine-local: gh account used for this repository's gh calls and git network operations (token from `gh auth token --user`); absent = the host's active account. Never exported. */
+  githubAccount?: { host: string; login: string };
 }
+
+/** Machine-local per-repository prefs `repos.setPrefs` accepts; only the keys present change (`githubAccount: null` returns to the host's active account). */
+export type RepoPrefs = Pick<RepositoryInfo, 'pinned' | 'group' | 'signoff'> & { githubAccount?: RepositoryInfo['githubAccount'] | null };
 
 /** `RepositoryInfo.origin` with the default applied: entries written before watched folders existed are manual. */
 export function repositoryOrigin(repo: Pick<RepositoryInfo, 'origin'>): 'manual' | 'watched' {
@@ -394,6 +444,31 @@ export interface InProgressOperation {
   message: string | null;
 }
 
+/** One `git reflog` entry for HEAD, newest first; `index` is N in `HEAD@{N}`. `action` is the text before the first ": " (e.g. "commit (amend)", "checkout"), `message` the rest. */
+export interface ReflogEntry {
+  index: number;
+  sha: string;
+  action: string;
+  message: string;
+  /** Epoch ms. */
+  timestamp: number;
+}
+
+/** What "Undo last Git operation" would do: move HEAD back to `target` (reset --keep) or switch back to the previous branch/commit. */
+export type UndoPlan = { kind: 'reset'; description: string; target: ReflogEntry } | { kind: 'checkout'; description: string; ref: string; isBranch: boolean };
+
+/** An in-progress `git bisect`. `remaining`/`steps` are null until both a good and a bad commit are known. */
+export interface BisectState {
+  bad: string | null;
+  good: string[];
+  /** The commit currently checked out for testing. */
+  head: { sha: string; summary: string } | null;
+  remaining: number | null;
+  steps: number | null;
+  /** Set once git has narrowed the range to a single commit. */
+  firstBad: { sha: string; summary: string } | null;
+}
+
 export interface BranchState {
   name: string | null;
   sha: string | null;
@@ -433,6 +508,13 @@ export interface Branch {
   unpublished: boolean;
   /** True when the branch has an upstream configured but it was deleted (git's `[gone]` marker). */
   upstreamGone: boolean;
+}
+
+/** The current branch's stack of branches below it (oldest first); see getStackParents in src/main/git/branches.ts. */
+export interface BranchStack {
+  parents: string[];
+  /** False when the installed git predates `rebase --update-refs` (2.38). */
+  canUpdateRefs: boolean;
 }
 
 export interface Tag {
@@ -681,6 +763,8 @@ export interface PullRequest {
   changedFiles: number | null;
   mergeable: string | null;
   mergeStateStatus: string | null;
+  /** Auto-merge enabled on this pull request (gh `autoMergeRequest`); null when off or when gh does not report it. `method` is null if gh reports an unrecognised method. */
+  autoMerge: { method: 'merge' | 'squash' | 'rebase' | null; enabledBy: string | null } | null;
   labels: string[];
   assignees: string[];
   reviewRequests: string[];
@@ -714,11 +798,25 @@ export interface GitHubAccount {
   protocol: string | null;
 }
 
+/** One signed-in `gh` account (every host/login `gh auth status` lists); `active` is the account gh uses by default on that host. */
+export interface GhAccountEntry {
+  host: string;
+  login: string;
+  active: boolean;
+  scopes: string[];
+  protocol: string | null;
+}
+
 export interface ToolInfo {
   installed: boolean;
   version: string | null;
   path: string | null;
   error: string | null;
+  /** Set when the installed version is below the supported minimum (still usable; the UI only warns). */
+  outdated?: boolean;
+  minVersion?: string;
+  /** True until this tool's startup probe finishes (git is always settled before the first state is served); the UI shows "checking…" instead of "not found". */
+  pending?: boolean;
 }
 
 export interface ToolsState {
@@ -729,6 +827,8 @@ export interface ToolsState {
   gpg: ToolInfo;
   sshKeygen: ToolInfo;
   ghAccount: GitHubAccount | null;
+  /** Every signed-in gh account across hosts, active ones flagged; `ghAccount` is the primary active one with its profile. */
+  ghAccounts: GhAccountEntry[];
   ghAuthError: string | null;
   credentialHelperConfigured: boolean;
 }
@@ -982,6 +1082,10 @@ export interface CommitOptions {
   partialPatches: Record<string, string>;
   /** 'default' follows the repository's signing configuration; 'sign' forces -S; 'unsigned' forces --no-gpg-sign for this commit only (never persisted). */
   signOverride?: 'default' | 'sign' | 'unsigned';
+  /** `--signoff`: add a Signed-off-by trailer. */
+  signoff?: boolean;
+  /** `--no-verify`: skip the pre-commit and commit-msg hooks for this commit only. */
+  noVerify?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1211,16 @@ export interface CloneOptions {
   directory: string;
   /** Branch to check out after cloning, optional. */
   branch: string | null;
+  /** Shallow clone with this many commits of history (`--depth`); null/absent = full history. */
+  depth?: number | null;
+  /** Fetch only the history of one branch (`--single-branch`); a shallow clone (`depth`) already does. */
+  singleBranch?: boolean;
+  /** Blobless partial clone (`--filter=blob:none`): file contents are fetched on demand. */
+  blobless?: boolean;
+  /** Cone-mode sparse checkout: only these directories (plus top-level files) are checked out. */
+  sparse?: string[];
+  /** Clone submodules too (`--recurse-submodules`). Defaults to true when absent. */
+  submodules?: boolean;
 }
 
 export interface NewRepositoryOptions {
@@ -1380,6 +1494,8 @@ export interface PrDraft {
   truncated: boolean;
   /** True when the model's body did not preserve the template's headings and the body was rebuilt around them. */
   restored: boolean;
+  /** Files left out of the request because they look like secrets (`path: reason`). */
+  skipped: string[];
   model: string;
 }
 
@@ -1734,8 +1850,8 @@ export interface Housekeeping {
 
 export type SettingsSection = 'preferences' | 'repositories' | 'integrations';
 
-/** Fields of AppSettings['ai'] that are safe to export: never the stored-key flag or the CLI path (both machine/secret specific). */
-export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter' | 'agentCommand' | 'agentCustomCommand'>;
+/** Fields of AppSettings['ai'] that are safe to export: never the stored-key flags, the CLI path or the custom agent command (machine-specific or runs a shell command). API keys are never exported. */
+export type PortableAiSettings = Pick<AiSettings, 'provider' | 'model' | 'openaiBaseUrl' | 'openaiModel' | 'featureModels' | 'effort' | 'autoStageAfterResolve' | 'reviewStrictness' | 'reviewMaxFiles' | 'reviewPostFooter' | 'agentCommand'>;
 
 /**
  * Explicit allowlist of AppSettings fields that may leave the machine (a
@@ -1776,10 +1892,12 @@ export interface PortablePreferences {
   healthLargeFileThresholdBytes: number;
   showUnpushedWorkIndicator: boolean;
   historyVerifySignatures: boolean;
+  historyGraph: boolean;
   notificationsEnabled: boolean;
   notificationsPollIntervalMinutes: number;
   notifyMentions: boolean;
   notifyReviewRequests: boolean;
+  shortcuts: ShortcutOverrides;
   ai: PortableAiSettings;
 }
 
@@ -1875,6 +1993,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   healthLargeFileThresholdBytes: 5 * 1024 * 1024,
   showUnpushedWorkIndicator: false,
   historyVerifySignatures: false,
+  historyGraph: true,
   notificationsEnabled: true,
   notificationsPollIntervalMinutes: 2,
   notifyMentions: true,
@@ -1883,11 +2002,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoDownloadUpdates: true,
   updateChannel: 'stable',
   watchedFolders: [],
+  shortcuts: {},
   ai: {
     provider: 'anthropic',
     model: 'claude-opus-5',
     effort: 'high',
     hasApiKey: false,
+    openaiBaseUrl: '',
+    openaiModel: '',
+    hasOpenaiApiKey: false,
+    featureModels: {},
     claudeCliPath: null,
     autoStageAfterResolve: true,
     reviewStrictness: 'strict',

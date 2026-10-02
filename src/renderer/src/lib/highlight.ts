@@ -1,62 +1,93 @@
 import hljs from 'highlight.js/lib/core';
-import bash from 'highlight.js/lib/languages/bash';
-import c from 'highlight.js/lib/languages/c';
-import clojure from 'highlight.js/lib/languages/clojure';
-import cmake from 'highlight.js/lib/languages/cmake';
-import cpp from 'highlight.js/lib/languages/cpp';
-import csharp from 'highlight.js/lib/languages/csharp';
-import css from 'highlight.js/lib/languages/css';
-import dart from 'highlight.js/lib/languages/dart';
-import diff from 'highlight.js/lib/languages/diff';
-import dockerfile from 'highlight.js/lib/languages/dockerfile';
-import dos from 'highlight.js/lib/languages/dos';
-import elixir from 'highlight.js/lib/languages/elixir';
-import erlang from 'highlight.js/lib/languages/erlang';
-import fortran from 'highlight.js/lib/languages/fortran';
-import go from 'highlight.js/lib/languages/go';
-import graphql from 'highlight.js/lib/languages/graphql';
-import groovy from 'highlight.js/lib/languages/groovy';
-import haskell from 'highlight.js/lib/languages/haskell';
-import ini from 'highlight.js/lib/languages/ini';
-import java from 'highlight.js/lib/languages/java';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import julia from 'highlight.js/lib/languages/julia';
-import kotlin from 'highlight.js/lib/languages/kotlin';
-import less from 'highlight.js/lib/languages/less';
-import lua from 'highlight.js/lib/languages/lua';
-import makefile from 'highlight.js/lib/languages/makefile';
-import markdown from 'highlight.js/lib/languages/markdown';
-import nginx from 'highlight.js/lib/languages/nginx';
-import objectivec from 'highlight.js/lib/languages/objectivec';
-import perl from 'highlight.js/lib/languages/perl';
-import php from 'highlight.js/lib/languages/php';
-import plaintext from 'highlight.js/lib/languages/plaintext';
-import powershell from 'highlight.js/lib/languages/powershell';
-import protobuf from 'highlight.js/lib/languages/protobuf';
-import python from 'highlight.js/lib/languages/python';
-import r from 'highlight.js/lib/languages/r';
-import ruby from 'highlight.js/lib/languages/ruby';
-import rust from 'highlight.js/lib/languages/rust';
-import scala from 'highlight.js/lib/languages/scala';
-import scss from 'highlight.js/lib/languages/scss';
-import sql from 'highlight.js/lib/languages/sql';
-import swift from 'highlight.js/lib/languages/swift';
-import typescript from 'highlight.js/lib/languages/typescript';
-import vbnet from 'highlight.js/lib/languages/vbnet';
-import xml from 'highlight.js/lib/languages/xml';
-import yaml from 'highlight.js/lib/languages/yaml';
+import { useEffect, useSyncExternalStore } from 'react';
 
-const LANGUAGES: Record<string, Parameters<typeof hljs.registerLanguage>[1]> = {
-  bash, c, clojure, cmake, cpp, csharp, css, dart, diff, dockerfile, dos, elixir, erlang, fortran, go, graphql, groovy, haskell, ini, java, javascript, json, julia, kotlin, less, lua, makefile, markdown, nginx, objectivec, perl, php, plaintext, powershell, protobuf, python, r, ruby, rust, scala, scss, sql, swift, typescript, vbnet, xml, yaml,
+/** Grammars load on demand (one small chunk each), so the main bundle carries none of them. Keys are the language ids from `languageForPath` (src/shared/util.ts). */
+const LANGUAGES: Record<string, () => Promise<{ default: Parameters<typeof hljs.registerLanguage>[1] }>> = {
+  bash: () => import('highlight.js/lib/languages/bash'),
+  c: () => import('highlight.js/lib/languages/c'),
+  clojure: () => import('highlight.js/lib/languages/clojure'),
+  cmake: () => import('highlight.js/lib/languages/cmake'),
+  cpp: () => import('highlight.js/lib/languages/cpp'),
+  csharp: () => import('highlight.js/lib/languages/csharp'),
+  css: () => import('highlight.js/lib/languages/css'),
+  dart: () => import('highlight.js/lib/languages/dart'),
+  diff: () => import('highlight.js/lib/languages/diff'),
+  dockerfile: () => import('highlight.js/lib/languages/dockerfile'),
+  dos: () => import('highlight.js/lib/languages/dos'),
+  elixir: () => import('highlight.js/lib/languages/elixir'),
+  erlang: () => import('highlight.js/lib/languages/erlang'),
+  fortran: () => import('highlight.js/lib/languages/fortran'),
+  go: () => import('highlight.js/lib/languages/go'),
+  graphql: () => import('highlight.js/lib/languages/graphql'),
+  groovy: () => import('highlight.js/lib/languages/groovy'),
+  haskell: () => import('highlight.js/lib/languages/haskell'),
+  ini: () => import('highlight.js/lib/languages/ini'),
+  java: () => import('highlight.js/lib/languages/java'),
+  javascript: () => import('highlight.js/lib/languages/javascript'),
+  json: () => import('highlight.js/lib/languages/json'),
+  julia: () => import('highlight.js/lib/languages/julia'),
+  kotlin: () => import('highlight.js/lib/languages/kotlin'),
+  less: () => import('highlight.js/lib/languages/less'),
+  lua: () => import('highlight.js/lib/languages/lua'),
+  makefile: () => import('highlight.js/lib/languages/makefile'),
+  markdown: () => import('highlight.js/lib/languages/markdown'),
+  nginx: () => import('highlight.js/lib/languages/nginx'),
+  objectivec: () => import('highlight.js/lib/languages/objectivec'),
+  perl: () => import('highlight.js/lib/languages/perl'),
+  php: () => import('highlight.js/lib/languages/php'),
+  powershell: () => import('highlight.js/lib/languages/powershell'),
+  protobuf: () => import('highlight.js/lib/languages/protobuf'),
+  python: () => import('highlight.js/lib/languages/python'),
+  r: () => import('highlight.js/lib/languages/r'),
+  ruby: () => import('highlight.js/lib/languages/ruby'),
+  rust: () => import('highlight.js/lib/languages/rust'),
+  scala: () => import('highlight.js/lib/languages/scala'),
+  scss: () => import('highlight.js/lib/languages/scss'),
+  sql: () => import('highlight.js/lib/languages/sql'),
+  swift: () => import('highlight.js/lib/languages/swift'),
+  typescript: () => import('highlight.js/lib/languages/typescript'),
+  vbnet: () => import('highlight.js/lib/languages/vbnet'),
+  xml: () => import('highlight.js/lib/languages/xml'),
+  yaml: () => import('highlight.js/lib/languages/yaml'),
 };
-for (const [name, def] of Object.entries(LANGUAGES)) hljs.registerLanguage(name, def);
 hljs.configure({ ignoreUnescapedHTML: true });
+
+const loading = new Set<string>();
+const listeners = new Set<() => void>();
+let loadedCount = 0;
+
+/** Starts loading `language`'s grammar once; subscribers (see `useLanguageLoaded`) are notified when it is registered. */
+function loadLanguage(language: string): void {
+  if (loading.has(language) || hljs.getLanguage(language)) return;
+  loading.add(language);
+  void LANGUAGES[language]()
+    .then((m) => {
+      hljs.registerLanguage(language, m.default);
+      loadedCount++;
+      for (const l of listeners) l();
+    })
+    .catch(() => undefined); // chunk failed to load: the diff simply stays plain text
+}
+
+/** True once `language`'s grammar is available; loads it on first use and re-renders the caller when it arrives. Diffs show plain text until then. */
+export function useLanguageLoaded(language: string | null): boolean {
+  useEffect(() => {
+    if (isHighlightable(language)) loadLanguage(language);
+  }, [language]);
+  useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    () => loadedCount,
+  );
+  return language !== null && hljs.getLanguage(language) !== undefined;
+}
 
 const MAX_HIGHLIGHT_CHARS = 1_200_000;
 
 export function isHighlightable(language: string | null): language is string {
-  return language !== null && language !== 'plaintext' && hljs.getLanguage(language) !== undefined;
+  return language !== null && Object.hasOwn(LANGUAGES, language);
 }
 
 /**
@@ -98,7 +129,7 @@ export function splitHighlightedHtml(html: string): string[] {
 
 /** Returns per-line HTML for `code`, or null when highlighting is not possible. */
 export function highlightToLines(code: string, language: string | null): string[] | null {
-  if (!isHighlightable(language)) return null;
+  if (!isHighlightable(language) || !hljs.getLanguage(language)) return null;
   if (code.length > MAX_HIGHLIGHT_CHARS) return null;
   try {
     const normalized = code.replace(/\r\n?/g, '\n');
@@ -125,6 +156,7 @@ const HIGHLIGHT_MAX_LINE_CHARS = 5000;
 /** HTML for 1-based `lineNo` of `lines`, highlighting (and caching under `cacheKey`) its block on first use. */
 export function highlightBlockLine(cache: Map<string, string[] | null>, cacheKey: string, lines: string[], lineNo: number, language: string | null): string | undefined {
   if (lineNo < 1 || lineNo > lines.length) return undefined;
+  if (isHighlightable(language) && !hljs.getLanguage(language)) return undefined; // grammar still loading: plain text for now, and not cached (see useLanguageLoaded)
   const block = Math.floor((lineNo - 1) / HIGHLIGHT_BLOCK_LINES);
   const key = `${cacheKey}:${block}`;
   let html = cache.get(key);
@@ -136,14 +168,4 @@ export function highlightBlockLine(cache: Map<string, string[] | null>, cacheKey
     cache.set(key, html);
   }
   return html ? html[(lineNo - 1) % HIGHLIGHT_BLOCK_LINES] : undefined;
-}
-
-/** Highlight a single line in isolation (fallback when full content is unavailable). */
-export function highlightLine(text: string, language: string | null): string | null {
-  if (!isHighlightable(language)) return null;
-  try {
-    return hljs.highlight(text, { language, ignoreIllegals: true }).value;
-  } catch {
-    return null;
-  }
 }

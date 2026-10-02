@@ -1,14 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { bootstrap, setView } from './state/actions';
 import { store, useAppStore } from './state/store';
 import { Banners } from './components/Banners';
 import { ChangesTab } from './components/ChangesTab';
 import { Dialogs } from './components/dialogs';
+import { DropZone } from './components/DropZone';
 import { DiffPane } from './components/diff/DiffPane';
-import { HealthView } from './components/HealthView';
 import { CommitDetailsPane, HistoryTab } from './components/HistoryTab';
 import { HelpPanel } from './components/HelpPanel';
-import { InboxPanel } from './components/Inbox';
 import { SetupScreen } from './components/Setup';
 import { StashesView } from './components/StashesTab';
 import { Toasts } from './components/Toasts';
@@ -17,6 +16,12 @@ import { ContextMenuHost, Icon } from './components/ui';
 import { TabBar, installLongPress, installPhoneNavigation, onPhoneTap } from './components/Mobile';
 import { Welcome } from './components/Welcome';
 import { ReviewView } from './components/review/ReviewView';
+import { lazyExport } from './lib/lazy';
+import { shortcutMatches } from './lib/shortcuts';
+import { invoke } from './api';
+
+const HealthView = lazyExport(() => import('./components/HealthView'), 'HealthView');
+const InboxPanel = lazyExport(() => import('./components/Inbox'), 'InboxPanel');
 
 /** Drives the sidebar width from the DOM while dragging (one style write per mousemove) and commits it to the store on release, so the tree re-renders once per drag instead of once per pixel. */
 function useSidebarResize(): { width: number; asideRef: React.RefObject<HTMLElement | null>; onMouseDown: (e: React.MouseEvent) => void; active: boolean } {
@@ -71,6 +76,7 @@ export function App(): React.JSX.Element {
   const reviewPath = useAppStore((s) => s.review.selectedPath);
   const reviewFile = useAppStore((s) => s.review.run?.files.find((f) => f.file.path === s.review.selectedPath)?.file ?? null);
   const phonePane = useAppStore((s) => s.phonePane);
+  const inboxOpen = useAppStore((s) => s.inboxUi.open);
   const popover = useAppStore((s) => s.popover);
   const { width, asideRef, onMouseDown, active } = useSidebarResize();
 
@@ -87,12 +93,18 @@ export function App(): React.JSX.Element {
     void bootstrap();
   }, []);
 
+  // The native menu carries the accelerators; tell it whenever the overrides load or change (it ignores unchanged ones).
+  const shortcuts = useAppStore((s) => s.settings?.shortcuts);
+  useEffect(() => {
+    if (shortcuts) void invoke('app.setShortcuts', shortcuts).catch(() => undefined);
+  }, [shortcuts]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && !e.shiftKey && (e.key === '1' || e.key === '2')) {
+      const target = shortcutMatches('show-changes', e) ? 'changes' : shortcutMatches('show-history', e) ? 'history' : null;
+      if (target) {
         e.preventDefault();
-        setView(e.key === '1' ? 'changes' : 'history');
+        setView(target);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -111,7 +123,11 @@ export function App(): React.JSX.Element {
   } else if (view === 'stashes' && !reviewOpen) {
     content = <StashesView />;
   } else if (view === 'health' && !reviewOpen) {
-    content = <HealthView />;
+    content = (
+      <Suspense fallback={<div className="empty-state">Loading…</div>}>
+        <HealthView />
+      </Suspense>
+    );
   } else {
     const workingFile = selectedWorking ? status?.files.find((f) => f.path === selectedWorking) ?? null : null;
     content = (
@@ -163,7 +179,12 @@ export function App(): React.JSX.Element {
       {repo && !reviewOpen && view === 'history' && showCommitDiff ? <PortalDiff target="commit-diff-slot" path={historySelectedFile} oldPath={commitDiffFile?.oldPath ?? null} status={commitDiffFile?.status ?? null} mode="commit" /> : null}
       <Dialogs />
       <HelpPanel />
-      <InboxPanel />
+      {inboxOpen ? (
+        <Suspense fallback={null}>
+          <InboxPanel />
+        </Suspense>
+      ) : null}
+      <DropZone />
       <Toasts />
       <ContextMenuHost />
     </div>

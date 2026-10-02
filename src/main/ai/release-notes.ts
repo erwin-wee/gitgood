@@ -1,4 +1,5 @@
 import type { ReleaseNotes, ReleaseNotesInput, ReleaseRangeQuery, ReleaseRangeResult, ReleasePr } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import { mapWithConcurrency } from '@shared/util';
 import { getLatestReachableTag } from '../git/operations';
 import { getReleaseDiffStat, getReleaseLog } from '../git/log';
@@ -11,6 +12,7 @@ import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
 import { buildReleaseNotes, collectPrNumbers } from './release-notes-core';
 import { buildReleaseNotesPrompt, RELEASE_NOTES_SCHEMA, releaseNotesSystemPrompt, type ReleaseNotesPromptCommit, type ReleaseNotesPromptPr } from './prompts';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 
 /** Pull request numbers beyond this many in one range are not looked up (spec: "capped at 100"). */
@@ -29,18 +31,17 @@ export type ReleaseNotesReporter = (phase: ReleaseNotesProgressPhase, message: s
  * actions (see repo.changelog.insert and GhClient.releaseCreate).
  */
 export class ReleaseNotesService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient, private readonly gh: GhClient, private readonly repos: RepositoryManager) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a generation is in flight; used by the update install gate to refuse installing mid-generation. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   /** Pull request numbers referenced in a range, fetched (title/labels/author/url) up to MAX_PR_LOOKUPS with PR_LOOKUP_CONCURRENCY in flight; empty when `includePrs` is off, there is no GitHub remote, or the user is not signed in. */
@@ -73,12 +74,11 @@ export class ReleaseNotesService {
   }
 
   async generate(repoPath: string, input: ReleaseNotesInput, report: ReleaseNotesReporter): Promise<ReleaseNotes> {
-    const controller = new AbortController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     const signal = controller.signal;
     try {
       report('started', 'Reading commits…');
-      const { backend, settings } = await createBackend(this.store, this.tools);
+      const { backend, settings } = await createBackend(this.store, this.tools, 'releaseNotes');
 
       const { commits, mergeSubjects, truncated } = await getReleaseLog(this.git, repoPath, input.range.from, input.range.to);
       if (!commits.length) throw new AiError('There are no commits in this range to generate notes from.', 'other');
@@ -87,7 +87,7 @@ export class ReleaseNotesService {
       const prs = await this.fetchPrs(repoPath, prNumbers, input.includePrs);
       const prTitles = new Map(prs.map((p) => [p.number, p.title]));
 
-      report('thinking', `Drafting with ${settings.model}…`);
+      report('thinking', `Drafting with ${modelFor(settings, 'releaseNotes')}…`);
       const promptCommits: ReleaseNotesPromptCommit[] = commits.map((c) => ({ sha: c.sha, subject: c.subject, body: c.body, prNumber: c.prNumber }));
       const promptPrs: ReleaseNotesPromptPr[] = prs.map((p) => ({ number: p.number, title: p.title, labels: p.labels }));
       const response = await backend.complete({
@@ -103,7 +103,7 @@ export class ReleaseNotesService {
           truncated,
         }),
         schema: RELEASE_NOTES_SCHEMA as unknown as Record<string, unknown>,
-        model: settings.model,
+        model: modelFor(settings, 'releaseNotes'),
         effort: settings.effort,
         signal,
         onProgress: (m) => report('writing', m),
@@ -119,7 +119,7 @@ export class ReleaseNotesService {
       if (!signal.aborted) report('error', message);
       throw err;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 }

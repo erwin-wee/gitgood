@@ -1,8 +1,9 @@
+import { aiEnabled } from '@shared/ai-model';
 import type { ReviewRun } from '@shared/types';
 import { AGENT_PRESETS } from '@shared/agent-presets';
 import { pathsEqual } from '@shared/util';
 import { invoke, isMac } from '../api';
-import { openRepository, showError, updateSettings } from './actions';
+import { includedFiles, openRepository, showError, updateSettings } from './actions';
 import { reviewChangesBeforeCommit } from './precommitReview';
 import { openDialog, showToast, store } from './store';
 
@@ -15,7 +16,7 @@ import { openDialog, showToast, store } from './store';
 /** Whether the Fix with agent action should be shown for this run: provider on and at least one live finding. */
 export function agentHandoffAvailable(run: ReviewRun | null): boolean {
   const s = store.get();
-  return !!run && !!s.currentRepo && s.settings?.ai.provider !== 'disabled' && run.findings.some((f) => !f.dismissed);
+  return !!run && !!s.currentRepo && aiEnabled(s.settings, s.currentRepo) && run.findings.some((f) => !f.dismissed);
 }
 
 function agentLabel(): string {
@@ -82,18 +83,20 @@ async function waitForStatus(repoPath: string): Promise<boolean> {
 }
 
 /**
- * The `gitgood://review/rerun?repo=…` deep link: re-runs the most recent
+ * The `gitgood://review/rerun?repo=…&token=…` deep link: re-runs the most recent
  * review for that repository. Every refusal is explained in a toast and
- * starts nothing. Exposed on window.__gitgood.actions for smoke tests.
+ * starts nothing. A link without a valid, unspent token (anything not written
+ * by GitGood's own export) asks the user to confirm before any upload.
+ * Exposed on window.__gitgood.actions for smoke tests.
  */
-export async function handleProtocolReviewRerun(args: { repoPath: string }): Promise<void> {
+export async function handleProtocolReviewRerun(args: { repoPath: string; token?: string | null }): Promise<void> {
   const s = store.get();
   const match = s.repos.find((r) => !r.missing && samePathHere(r.path, args.repoPath));
   if (!match) {
     showToast({ kind: 'info', title: 'Re-review requested for a repository that is not open in GitGood', message: args.repoPath });
     return;
   }
-  if (!s.settings || s.settings.ai.provider === 'disabled') {
+  if (!aiEnabled(s.settings, s.currentRepo)) {
     showToast({ kind: 'info', title: 'AI features are turned off', message: 'Enable a provider under Options → AI to re-review.', action: { label: 'Options', onClick: () => openDialog({ kind: 'settings', tab: 'ai' }) } });
     return;
   }
@@ -134,5 +137,21 @@ export async function handleProtocolReviewRerun(args: { repoPath: string }): Pro
     }, 12000);
     return;
   }
-  await reviewChangesBeforeCommit();
+  // Spent only now, once nothing else can refuse the request, so a transient refusal does not burn the agent's link.
+  if (args.token && (await invoke('ai.review.consumeRerunToken', match.path, args.token))) {
+    await reviewChangesBeforeCommit();
+    return;
+  }
+  const files = includedFiles().map((f) => f.path);
+  openDialog({
+    kind: 'confirm',
+    title: 'Send your pending changes to AI for a re-review?',
+    message: [
+      'A link from outside GitGood asked for a re-review and did not carry a valid token, so nothing has been sent yet.',
+      `Repository: ${match.path}`,
+      `Files that would be sent to ${s.settings?.ai.provider}:\n${files.slice(0, 15).join('\n')}${files.length > 15 ? `\n… and ${files.length - 15} more` : ''}`,
+    ].join('\n\n'),
+    confirmLabel: 'Re-review',
+    onConfirm: () => reviewChangesBeforeCommit(),
+  });
 }

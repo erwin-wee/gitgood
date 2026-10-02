@@ -2,17 +2,17 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, join, normalize, resolve } from 'node:path';
 import type { EventPayloads } from '@shared/ipc';
-import { repositoryOrigin, type GitHubRepoRef, type RepositoryInfo, type RepoWork } from '@shared/types';
+import { repositoryOrigin, type GitHubRepoRef, type RepositoryInfo, type RepoPrefs, type RepoWork } from '@shared/types';
 import { mapWithConcurrency, parseRemoteUrl } from '@shared/util';
 import { getBranches } from '../git/branches';
 import { currentClient } from '../core/client-context';
 import type { GitClient } from '../git/git';
 import { getRemotes, getStashes, getTopLevel } from '../git/operations';
-import { getGitDir, getStatus } from '../git/status';
+import { getGitDir, getStatus, getStatusIndicator } from '../git/status';
 import { getCommonDir, getMainWorktreePath, listWorktrees } from '../git/worktree';
 import { log } from '../logger';
 import type { Store } from '../store';
-import { canonicalPath, isInside, normalizePath } from './paths';
+import { canonicalPath, isInside, normalizePath, samePath } from './paths';
 import { RepositoryWatcher } from './watcher';
 
 const normalizeForCompare = normalizePath;
@@ -66,6 +66,11 @@ export function repositoryId(path: string): string {
   return createHash('sha1').update(normalized).digest('hex').slice(0, 16);
 }
 
+/** A linked worktree's own controls for these are disabled: it follows its main repository's machine-local AI opt-out and GitHub account. */
+function withMainPolicy<T extends RepositoryInfo>(repo: T, main: RepositoryInfo | undefined): T {
+  return main ? { ...repo, aiDisabled: main.aiDisabled, githubAccount: main.githubAccount } : repo;
+}
+
 export class RepositoryManager {
   private watchers = new Map<string, RepositoryWatcher>();
   private githubCache = new Map<string, GitHubRepoRef | null>();
@@ -90,7 +95,31 @@ export class RepositoryManager {
     if (fresh) this.invalidateWorktrees();
     const stored = this.store.getRepositories().map((r) => ({ ...r, missing: !existsSync(r.path) }));
     const derived = await this.deriveWorktreeChildren(stored);
-    return [...stored, ...derived].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    const mains = new Map(stored.map((r) => [r.id, r]));
+    return [...stored, ...derived].map((r) => withMainPolicy(r, r.worktreeOf ? mains.get(r.worktreeOf) : undefined)).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  }
+
+  /**
+   * The repository whose machine-local policy (GitHub account, AI opt-out) governs `repoPath`: its own
+   * entry, or for a linked worktree, registered or only known to git, its main repository's. Null when
+   * `repoPath` is not (a worktree of) a registered repository.
+   */
+  async policyRepo(repoPath: string): Promise<RepositoryInfo | null> {
+    const repos = this.store.getRepositories();
+    const own = repos.find((r) => samePath(r.path, repoPath));
+    if (own) return own.worktreeOf ? (repos.find((r) => r.id === own.worktreeOf) ?? own) : own;
+    // ponytail: one `git rev-parse` per call for an unregistered path; cache if derived worktrees get hot.
+    try {
+      const mainPath = await getMainWorktreePath(this.git, repoPath);
+      return mainPath ? (repos.find((r) => samePath(r.path, mainPath)) ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The repository paths some client (desktop window or server client) currently has open. */
+  openPaths(): string[] {
+    return [...new Set(this.watching.values())];
   }
 
   /** `git worktree list` output per main repository, cached briefly so that event-driven list(false) calls are not a git run per repository each time. */
@@ -447,6 +476,26 @@ export class RepositoryManager {
     this.send('repos.changed', await this.list(false));
   }
 
+  /** Machine-local list/commit/account prefs; only the keys present in `prefs` change (a blank group, or a null/malformed githubAccount, clears it). */
+  async setPrefs(id: string, prefs: RepoPrefs): Promise<void> {
+    const patch: Partial<RepositoryInfo> = {};
+    if (prefs.pinned !== undefined) patch.pinned = prefs.pinned === true || undefined;
+    if (prefs.group !== undefined) patch.group = typeof prefs.group === 'string' ? prefs.group.trim().slice(0, 60) || undefined : undefined;
+    if (prefs.signoff !== undefined) patch.signoff = prefs.signoff === true || undefined;
+    if (prefs.githubAccount !== undefined) {
+      // host and login end up in gh/git argv and a git config key: plain hostname / login characters only.
+      const a = prefs.githubAccount;
+      patch.githubAccount = a && /^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(a.host) && /^\w[\w.-]*$/.test(a.login) ? { host: a.host, login: a.login } : undefined;
+    }
+    this.store.saveRepositories(this.store.getRepositories().map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    this.send('repos.changed', await this.list(false));
+  }
+
+  async setAiDisabled(id: string, disabled: boolean): Promise<void> {
+    this.store.saveRepositories(this.store.getRepositories().map((r) => (r.id === id ? { ...r, aiDisabled: disabled || undefined } : r)));
+    this.send('repos.changed', await this.list(false));
+  }
+
   touch(id: string): void {
     this.store.saveRepositories(this.store.getRepositories().map((r) => (r.id === id ? { ...r, lastOpened: Date.now() } : r)));
     const recent = [id, ...this.store.getState().recentRepositoryIds.filter((r) => r !== id)].slice(0, 10);
@@ -480,7 +529,7 @@ export class RepositoryManager {
     const info = (await this.getOrAdd(path));
     this.touch(info.id);
     await this.watch(info.path);
-    return { ...info, github: await this.detectGitHub(info.path) };
+    return withMainPolicy({ ...info, github: await this.detectGitHub(info.path) }, info.worktreeOf ? this.get(info.worktreeOf) ?? undefined : undefined);
   }
 
   private async getOrAdd(path: string): Promise<RepositoryInfo> {
@@ -535,6 +584,11 @@ export class RepositoryManager {
     this.stopIfUnwanted(repoPath);
   }
 
+  /** The clients (see core/client-context) currently showing `repoPath`. */
+  clientsWatching(repoPath: string): string[] {
+    return [...this.watching].filter(([, path]) => path === repoPath).map(([owner]) => owner);
+  }
+
   /** Stops watching `repoPath` for every client (the repository was removed). */
   stopWatching(repoPath: string): void {
     for (const [owner, path] of this.watching) if (path === repoPath) this.watching.delete(owner);
@@ -563,8 +617,7 @@ export class RepositoryManager {
     const updated = await mapWithConcurrency(repos, 3, async (repo): Promise<RepositoryInfo> => {
       if (!existsSync(repo.path)) return { ...repo, indicator: null };
       try {
-        const status = await getStatus(this.git, repo.path);
-        return { ...repo, indicator: { ahead: status.branch.ahead, behind: status.branch.behind, hasChanges: status.files.length > 0 } };
+        return { ...repo, indicator: await getStatusIndicator(this.git, repo.path) };
       } catch {
         return { ...repo, indicator: null };
       }
@@ -573,17 +626,14 @@ export class RepositoryManager {
     // Derived (unregistered) worktrees are not persisted, so their indicators
     // are computed fresh here rather than cached across refreshes.
     const list = await this.list(false);
-    const withDerivedIndicators = await Promise.all(
-      list.map(async (r) => {
-        if (!r.worktreeOf || r.missing || updated.some((u) => u.id === r.id)) return r;
-        try {
-          const status = await getStatus(this.git, r.path);
-          return { ...r, indicator: { ahead: status.branch.ahead, behind: status.branch.behind, hasChanges: status.files.length > 0 } };
-        } catch {
-          return r;
-        }
-      }),
-    );
+    const withDerivedIndicators = await mapWithConcurrency(list, 3, async (r) => {
+      if (!r.worktreeOf || r.missing || updated.some((u) => u.id === r.id)) return r;
+      try {
+        return { ...r, indicator: await getStatusIndicator(this.git, r.path) };
+      } catch {
+        return r;
+      }
+    });
     this.send('repos.changed', withDerivedIndicators);
     return withDerivedIndicators;
   }

@@ -1,5 +1,5 @@
-import { realpath } from 'node:fs/promises';
-import { normalize, parse, sep } from 'node:path';
+import { lstat, readFile, realpath, writeFile } from 'node:fs/promises';
+import { dirname, join, normalize, parse, sep } from 'node:path';
 
 /**
  * Path comparison for watched folders and exclusions, matching the rules
@@ -48,4 +48,51 @@ export function isInside(parent: string, child: string): boolean {
   const p = normalizePath(parent);
   const c = normalizePath(child);
   return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+}
+
+/**
+ * Reads a regular file inside the repository, or returns null. Repo contents are
+ * untrusted: a symlink (or a symlinked parent directory) must never make us read
+ * — and later upload to an AI backend or run — a file outside the repo. Symlinks
+ * are refused outright and the resolved path must stay inside the resolved repo.
+ * ponytail: lstat/realpath then read is not atomic; a racing local writer could swap in a link.
+ */
+export async function readRepoFile(repoPath: string, relPath: string): Promise<Buffer | null> {
+  try {
+    const file = join(repoPath, ...relPath.split('/'));
+    if (!(await lstat(file)).isFile()) return null;
+    if (!isInside(await realpath(repoPath), await realpath(file))) return null;
+    return await readFile(file);
+  } catch {
+    return null;
+  }
+}
+
+/** Throws unless the deepest existing ancestor of `fsPath` resolves (symlinks included) to a place inside the repository. For writes that may create new directories. */
+export async function assertInsideRepo(repoPath: string, fsPath: string): Promise<void> {
+  const root = await realpath(repoPath);
+  let dir = dirname(fsPath);
+  for (;;) {
+    try {
+      if (isInside(root, await realpath(dir))) return;
+      throw new Error(`Path escapes the repository: ${fsPath}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      dir = dirname(dir);
+    }
+  }
+}
+
+/**
+ * Writes `content` to `relPath` inside the repository, refusing a symlinked leaf
+ * (an in-repo link pointing outside would otherwise be written through) and any
+ * path whose parent resolves outside the repo. For AI-generated file writes.
+ * ponytail: lstat then write is not atomic; a racing local writer could swap in a link.
+ */
+export async function writeRepoFile(repoPath: string, relPath: string, content: string): Promise<void> {
+  const file = join(repoPath, ...relPath.split('/'));
+  await assertInsideRepo(repoPath, file);
+  const leaf = await lstat(file).catch((err: NodeJS.ErrnoException) => (err.code === 'ENOENT' ? null : Promise.reject(err)));
+  if (leaf?.isSymbolicLink()) throw new Error(`Refusing to write through a symbolic link: ${relPath}`);
+  await writeFile(file, content, 'utf8');
 }

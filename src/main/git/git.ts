@@ -1,5 +1,6 @@
 import type { GitErrorInfo } from '@shared/types';
 import { ExecError, exec, type ExecOptions, type ExecResult } from '../exec';
+import { gitAccountEnv, isNetworkGitCommand } from '../gh/accounts';
 import { log } from '../logger';
 import type { ToolLocator } from '../tools';
 
@@ -81,7 +82,7 @@ export class GitClient {
   constructor(private readonly tools: ToolLocator) {}
 
   async executable(): Promise<string> {
-    await this.tools.ensureLocated();
+    await this.tools.ensure('git');
     return this.tools.gitPath();
   }
   async baseEnv(extra?: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
@@ -106,6 +107,9 @@ export class GitClient {
     const gitPath = await this.executable();
     const env = await this.baseEnv(opts.env);
     if (opts.readOnly) env.GIT_OPTIONAL_LOCKS = '0';
+    // Network operations in a repository with a chosen GitHub account authenticate as that account.
+    const account = isNetworkGitCommand(args) ? await this.tools.repoAccount(repoPath) : null;
+    if (account) Object.assign(env, gitAccountEnv(account.host, account.token, env));
     const fullArgs = ['-c', 'core.quotePath=false', '-c', 'color.ui=never', '-c', 'advice.detachedHead=false'];
     if (process.platform === 'win32') fullArgs.push('-c', 'core.longpaths=true');
     fullArgs.push('--no-pager', ...args);

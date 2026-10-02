@@ -19,6 +19,7 @@
 - [x] 3.2 Wire gutter markers and finding cards in `TextDiff.tsx` for the worktree run, with Dismiss, Copy, Open in editor and Apply to file (hidden for partial files); verify by driving `window.__gitgood.actions.reviewChanges()` with a stubbed run and dumping the store
 - [x] 3.3 Highlight the Commit button when blockers exist and show the intent-mismatch note next to the summary; verify the button still commits in the smoke script
 - [ ] 3.4 Implement staleness on file change and Re-review of stale files only; verify by editing a fixture file during the smoke run and asserting only that file is re-sent
+  - 2026-10-01: implemented (`ReviewService.worktreeStale`, `rereviewStalePrecommitFindings` → `startWorktree` with `rereviewOf`, stale chips in `ChangesTab.tsx`/`DiffPane.tsx`) and staleness detection is unit-tested in `test/precommit-review-service.test.ts`; left open because no test or smoke step yet asserts that a re-review sends only the edited file.
 - [x] 3.5 Add the Review before every commit setting to `SettingsDialog.tsx` and the Commit anyway / Go back dialog; verify Go back leaves status unchanged
 
 ## 4. Verification

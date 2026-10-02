@@ -6,7 +6,6 @@
  * spawning so the argument shapes can be unit tested on any platform.
  * `shells.ts` turns the result into an actual launch.
  */
-import type { CommandQuoting } from '@shared/agent-presets';
 
 export type Platform = 'linux' | 'darwin' | 'win32';
 
@@ -29,21 +28,6 @@ export function buildCommandScript(cwd: string, command: string): string {
 
 function cmdQuote(s: string): string {
   return `"${s.replace(/"/g, '""')}"`;
-}
-
-/**
- * Which shell will parse the agent command in this terminal, so the file path
- * substituted into it can be escaped for that shell. Answered for every
- * terminal GitGood knows, including the ones it cannot start a command in
- * (their command is only copied to the clipboard, but it still has to be
- * pasteable).
- */
-export function quotingFor(id: string, platform: Platform): CommandQuoting {
-  if (platform !== 'win32') return 'posix';
-  // Windows Terminal is given `cmd /k <command>`; Git Bash is a POSIX shell.
-  if (id === 'powershell') return 'powershell';
-  if (id === 'gitbash') return 'posix';
-  return 'cmd';
 }
 
 /**

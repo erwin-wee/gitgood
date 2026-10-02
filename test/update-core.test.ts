@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canInstall, compareVersions, detectDisabledReason, isEligibleForChannel, isNewerVersion, isPerMachineInstall, reduceUpdateState, type ReleaseInfo } from '../src/main/update/update-core';
+import { compareVersions } from '../src/shared/util';
+import { canInstall, detectDisabledReason, isEligibleForChannel, isNewerVersion, isPerMachineInstall, reduceUpdateState, type ReleaseInfo } from '../src/main/update/update-core';
 import type { UpdateState } from '../src/shared/types';
 
 function release(overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {
@@ -161,8 +162,12 @@ describe('detectDisabledReason', () => {
     expect(detectDisabledReason({ ...packaged, platform: 'darwin' })).toMatch(/unsigned/i);
   });
 
-  it('allows a packaged, non-portable, non-AppImage, non-macOS build through', () => {
-    expect(detectDisabledReason(packaged)).toBeNull();
+  it('disables a packaged Linux run that is not an AppImage (.deb)', () => {
+    expect(detectDisabledReason(packaged)).toMatch(/\.deb/);
+  });
+
+  it('allows a packaged Windows build through', () => {
+    expect(detectDisabledReason({ ...packaged, platform: 'win32' })).toBeNull();
   });
 });
 

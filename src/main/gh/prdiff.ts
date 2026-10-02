@@ -1,15 +1,5 @@
 import type { CommitFile, FileStatusKind } from '@shared/types';
-import { parseUnifiedDiff, unquote, type ParsedDiff } from '@shared/diff/parse';
-
-/** Paths from a `diff --git a/x b/y` line; the only place binary diffs name their files. */
-export function pathsFromDiffHeader(line: string): { oldPath: string; newPath: string } | null {
-  const m = /^diff --git (?:"(a\/(?:[^"\\]|\\.)*)"|(a\/\S.*?)) (?:"(b\/(?:[^"\\]|\\.)*)"|(b\/.*))$/.exec(line);
-  if (!m) return null;
-  const a = m[1] ? unquote(`"${m[1]}"`) : m[2];
-  const b = m[3] ? unquote(`"${m[3]}"`) : m[4];
-  if (!a || !b) return null;
-  return { oldPath: a.slice(2), newPath: b.slice(2) };
-}
+import { parseUnifiedDiff, pathsFromDiffHeader, type ParsedDiff } from '@shared/diff/parse';
 
 export interface SplitPrDiff {
   files: CommitFile[];

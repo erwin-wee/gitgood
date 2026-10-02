@@ -1,28 +1,56 @@
-import React from 'react';
+import React, { Suspense } from 'react';
+import { lazyExport } from '../../lib/lazy';
 import { useAppStore } from '../../state/store';
 import { CommandPalette } from '../CommandPalette';
 import { CherryPickDialog, CompareDialog, DeleteBranchDialog, MergeDialog, NewBranchDialog, RenameBranchDialog, UncommittedChangesDialog } from './BranchDialogs';
 import { ConfirmDialog, DiscardDialog, DiscardLinesDialog, ErrorDialog, RewordDialog, SigningFailedDialog, SquashDialog, TagDialog } from './CommitDialogs';
 import { ConflictsDialog } from './ConflictsDialog';
-import { CreatePullRequestDialog, ForcePushDialog, PullRequestDetailsDialog, SignInDialog } from './GitHubDialogs';
-import { BulkDeleteBranchesDialog } from './HealthDialogs';
 import { FileAtCommitDialog } from './HistoryDialogs';
-import { IssuesDialog, NewIssueDialog } from './IssueDialogs';
 import { LfsDialog } from './LfsDialogs';
 import { AddRepoDialog, CloneDialog, NewRepoDialog, PublishDialog, RemoveRepoDialog, RepoSettingsDialog } from './RepoDialogs';
-import { TidyBranchDialog } from './RebaseDialogs';
-import { ReleaseNotesDialog } from './ReleaseNotesDialog';
 import { ResolutionPopoverDialog } from './ResolutionPopover';
-import { SplitPlanDialog } from './SplitDialogs';
 import { TrustRepoCheckDialog } from './TrustRepoCheckDialog';
 import { PostReviewDialog, PrecommitReviewGateDialog, ReviewPreflightDialog } from './ReviewDialogs';
-import { AboutDialog, SettingsDialog, ShortcutsDialog, UpdateNotesDialog } from './SettingsDialog';
-import { ExportSettingsDialog, ImportSettingsDialog } from './SettingsSyncDialogs';
 import { BranchFromStashDialog, StashSelectedFilesDialog } from './StashDialogs';
 import { SubmodulesDialog } from './SubmoduleDialogs';
-import { AddWorktreeDialog, LockWorktreeDialog, PruneWorktreesDialog, RemoveWorktreeDialog, WorktreesDialog } from './WorktreeDialogs';
+import { ServerFolderPicker } from './ServerFolderPicker';
 
-export function Dialogs(): React.JSX.Element | null {
+const SettingsDialog = lazyExport(() => import('./SettingsDialog'), 'SettingsDialog');
+const AboutDialog = lazyExport(() => import('./SettingsDialog'), 'AboutDialog');
+const ShortcutsDialog = lazyExport(() => import('./SettingsDialog'), 'ShortcutsDialog');
+const UpdateNotesDialog = lazyExport(() => import('./SettingsDialog'), 'UpdateNotesDialog');
+const ExportSettingsDialog = lazyExport(() => import('./SettingsSyncDialogs'), 'ExportSettingsDialog');
+const ImportSettingsDialog = lazyExport(() => import('./SettingsSyncDialogs'), 'ImportSettingsDialog');
+const IssuesDialog = lazyExport(() => import('./IssueDialogs'), 'IssuesDialog');
+const NewIssueDialog = lazyExport(() => import('./IssueDialogs'), 'NewIssueDialog');
+const ReleaseNotesDialog = lazyExport(() => import('./ReleaseNotesDialog'), 'ReleaseNotesDialog');
+const SplitPlanDialog = lazyExport(() => import('./SplitDialogs'), 'SplitPlanDialog');
+const TidyBranchDialog = lazyExport(() => import('./RebaseDialogs'), 'TidyBranchDialog');
+const ReflogDialog = lazyExport(() => import('./ReflogDialogs'), 'ReflogDialog');
+const BisectStartDialog = lazyExport(() => import('./ReflogDialogs'), 'BisectStartDialog');
+const BulkDeleteBranchesDialog = lazyExport(() => import('./HealthDialogs'), 'BulkDeleteBranchesDialog');
+const WorktreesDialog = lazyExport(() => import('./WorktreeDialogs'), 'WorktreesDialog');
+const AddWorktreeDialog = lazyExport(() => import('./WorktreeDialogs'), 'AddWorktreeDialog');
+const RemoveWorktreeDialog = lazyExport(() => import('./WorktreeDialogs'), 'RemoveWorktreeDialog');
+const LockWorktreeDialog = lazyExport(() => import('./WorktreeDialogs'), 'LockWorktreeDialog');
+const PruneWorktreesDialog = lazyExport(() => import('./WorktreeDialogs'), 'PruneWorktreesDialog');
+const CreatePullRequestDialog = lazyExport(() => import('./GitHubDialogs'), 'CreatePullRequestDialog');
+const ForcePushDialog = lazyExport(() => import('./GitHubDialogs'), 'ForcePushDialog');
+const PullRequestDetailsDialog = lazyExport(() => import('./GitHubDialogs'), 'PullRequestDetailsDialog');
+const SignInDialog = lazyExport(() => import('./GitHubDialogs'), 'SignInDialog');
+
+export function Dialogs(): React.JSX.Element {
+  return (
+    <>
+      <Suspense fallback={null}>
+        <CurrentDialog />
+      </Suspense>
+      <ServerFolderPicker />
+    </>
+  );
+}
+
+function CurrentDialog(): React.JSX.Element | null {
   const dialog = useAppStore((s) => s.dialog);
   if (!dialog) return null;
   switch (dialog.kind) {
@@ -31,7 +59,7 @@ export function Dialogs(): React.JSX.Element | null {
     case 'new-repo':
       return <NewRepoDialog />;
     case 'add-repo':
-      return <AddRepoDialog />;
+      return <AddRepoDialog initialPath={dialog.path} />;
     case 'remove-repo':
       return <RemoveRepoDialog repo={dialog.repo} />;
     case 'publish':
@@ -130,6 +158,10 @@ export function Dialogs(): React.JSX.Element | null {
       return <SplitPlanDialog />;
     case 'tidy-branch':
       return <TidyBranchDialog />;
+    case 'reflog':
+      return <ReflogDialog />;
+    case 'bisect-start':
+      return <BisectStartDialog bad={dialog.bad} badLabel={dialog.badLabel} />;
     case 'trust-repo-check':
       return <TrustRepoCheckDialog repoPath={dialog.repoPath} command={dialog.command} onDecision={dialog.onDecision} />;
     case 'resolution-popover':

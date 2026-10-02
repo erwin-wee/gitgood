@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { Branch, Commit } from '@shared/types';
+import type { Branch, Commit, CommitFile, FileDiff } from '@shared/types';
 import { compareStrings, isValidBranchName, sanitizeBranchName } from '@shared/util';
 import { errorMessage, invoke } from '../../api';
 import * as actions from '../../state/actions';
 import { closeDialog, openDialog, useAppStore } from '../../state/store';
-import { Button, Callout, Checkbox, Dialog, FilterInput, Icon, RelativeTime, Spinner, TextField, useFilter } from '../ui';
+import { Button, Callout, Checkbox, Dialog, FilterInput, Icon, RelativeTime, Segmented, Spinner, TextField, useFilter } from '../ui';
+import { CommitFileRow } from '../ChangesTab';
+import { ImageDiff } from '../diff/ImageDiff';
+import { TextDiff } from '../diff/TextDiff';
 
 const branchKeys = (b: Branch) => [b.name, b.lastCommitSubject];
 
@@ -200,12 +203,14 @@ export function MergeDialog({ squash, preselect, rebase }: { squash: boolean; pr
   const [selected, setSelected] = useState<Branch | null>(() => branches.find((b) => b.name === preselect) ?? null);
   const compare = useCompare(current, selected?.name ?? null);
   const [busy, setBusy] = useState(false);
+  const stack = useAppStore((s) => s.stack);
+  const [updateRefs, setUpdateRefs] = useState(true);
   const title = rebase ? `Rebase ${current}` : squash ? `Squash and merge into ${current}` : `Merge into ${current}`;
   const verb = rebase ? 'Rebase' : squash ? 'Squash and merge' : 'Merge';
   const run = async () => {
     if (!selected) return;
     setBusy(true);
-    if (rebase) await actions.rebaseOnto(selected.name);
+    if (rebase) await actions.rebaseOnto(selected.name, stack.parents.length > 0 && stack.canUpdateRefs && updateRefs);
     else await actions.mergeBranch(selected.name, squash);
     setBusy(false);
   };
@@ -238,7 +243,80 @@ export function MergeDialog({ squash, preselect, rebase }: { squash: boolean; pr
     >
       <BranchPicker branches={branches} selected={selected} onSelect={setSelected} exclude={(b) => b.isCurrent} />
       {rebase && status && status.files.length ? <Callout tone="warning">You have uncommitted changes. Commit or stash them before rebasing.</Callout> : null}
+      {rebase && stack.parents.length ? (
+        <>
+          <Callout tone="info">Stack: {[...stack.parents, current].join(' → ')}</Callout>
+          <Checkbox
+            checked={updateRefs && stack.canUpdateRefs}
+            disabled={!stack.canUpdateRefs}
+            onChange={setUpdateRefs}
+            label="Update dependent branches (--update-refs)"
+            title="Moves the branches below this one in the stack along with the rebase"
+          />
+          {!stack.canUpdateRefs ? <p className="muted" style={{ fontSize: 12 }}>Updating dependent branches needs Git 2.38 or newer.</p> : null}
+        </>
+      ) : null}
     </Dialog>
+  );
+}
+
+/** "Files changed" view of the Compare dialog: the `base...head` file list and the shared TextDiff rendering of `repo.diff.range` for the selected file. */
+function RangeFiles({ base, head }: { base: string; head: string }): React.JSX.Element {
+  const repo = useAppStore((s) => s.currentRepo);
+  const settings = useAppStore((s) => s.settings);
+  const [files, setFiles] = useState<CommitFile[] | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [diff, setDiff] = useState<FileDiff | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setFiles(null);
+    setSelected(null);
+    setError(null);
+    if (!repo) return;
+    void invoke('repo.diff.rangeFiles', repo.path, base, head)
+      .then((f) => !cancelled && (setFiles(f), setSelected(f[0]?.path ?? null)))
+      .catch((err) => !cancelled && setError(errorMessage(err)));
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, base, head]);
+  useEffect(() => {
+    let cancelled = false;
+    setDiff(null);
+    if (!repo || !selected) return;
+    void invoke('repo.diff.range', repo.path, base, head, selected, { hideWhitespace: settings?.diffHideWhitespace ?? false })
+      .then((d) => !cancelled && setDiff(d))
+      .catch((err) => !cancelled && setDiff({ kind: 'empty', reason: errorMessage(err) }));
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, base, head, selected, settings?.diffHideWhitespace]);
+  if (error) return <span style={{ color: 'var(--danger)' }}>{error}</span>;
+  if (!files) return <Spinner />;
+  if (files.length === 0) return <p className="muted">No file changes between {base} and {head}.</p>;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 12, minHeight: 200 }}>
+      <div role="listbox" aria-label="Changed files" style={{ maxHeight: '55vh', overflow: 'auto' }}>
+        {files.map((f) => (
+          <CommitFileRow key={f.path} file={f} selected={selected === f.path} onSelect={() => setSelected(f.path)} />
+        ))}
+      </div>
+      <div className="diff-body" style={{ maxHeight: '55vh', overflow: 'auto' }}>
+        {!diff ? (
+          <Spinner />
+        ) : diff.kind === 'text' ? (
+          <TextDiff diff={diff} mode="unified" wrap={settings?.diffWrapLines ?? false} syntax={settings?.diffSyntaxHighlighting ?? true} intraline={settings?.diffShowIntraline ?? true} selectable={false} selectedLines={null} />
+        ) : diff.kind === 'image' ? (
+          <ImageDiff diff={diff} />
+        ) : (
+          <div className="diff-message">
+            <Icon name="info" size={24} />
+            <span>{diff.kind === 'empty' ? diff.reason : diff.kind === 'binary' ? 'Binary file not shown.' : diff.kind === 'too-large' ? 'This diff is too large to display.' : 'Preview not available for this change.'}</span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -248,6 +326,7 @@ export function CompareDialog(): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
   const current = status?.branch.name ?? 'HEAD';
   const [selected, setSelected] = useState<Branch | null>(null);
+  const [tab, setTab] = useState<'commits' | 'files'>('commits');
   const compare = useCompare(selected?.name ?? null, current);
   return (
     <Dialog title={`Compare ${current} to…`} icon="branch" onClose={closeDialog} width="xwide" footer={<Button onClick={closeDialog}>Close</Button>}>
@@ -259,6 +338,16 @@ export function CompareDialog(): React.JSX.Element {
           ) : compare.loading ? (
             <Spinner />
           ) : (
+            <>
+              <Segmented
+                value={tab}
+                onChange={setTab}
+                options={[
+                  { value: 'commits', label: 'Commits' },
+                  { value: 'files', label: 'Files changed', title: `Changes on ${current} since it diverged from ${selected.name}` },
+                ]}
+              />
+              {tab === 'files' ? <RangeFiles base={selected.name} head={current} /> : (
             <div className="compare-columns">
               <div>
                 <h4>
@@ -291,6 +380,8 @@ export function CompareDialog(): React.JSX.Element {
                 {repo?.github ? <Button size="sm" variant="ghost" icon="external" onClick={() => void actions.openExternal(`${repo.github!.url}/compare/${encodeURIComponent(selected.name.replace(/^origin\//, ''))}...${encodeURIComponent(current)}`)}>Compare on GitHub</Button> : null}
               </div>
             </div>
+              )}
+            </>
           )}
         </div>
       </div>

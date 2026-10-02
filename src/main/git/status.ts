@@ -217,3 +217,18 @@ export async function getStatus(git: GitClient, repoPath: string): Promise<Repos
   }
   return { branch, files: files.filter((f) => f.status !== 'ignored'), operation, hasConflicts: files.some((f) => f.conflict !== null), lastFetched };
 }
+
+/** Ahead/behind/dirty from raw `status --porcelain=v2 --branch -z` output: anything that is not a `# ` header is a changed or untracked entry. */
+export function parseStatusIndicator(output: string): { ahead: number; behind: number; hasChanges: boolean } {
+  const ab = /(?:^|\0)# branch\.ab \+(\d+) -(\d+)/.exec(output);
+  return { ahead: ab ? parseInt(ab[1], 10) : 0, behind: ab ? parseInt(ab[2], 10) : 0, hasChanges: output.split('\0').some((t) => t !== '' && !t.startsWith('# ')) };
+}
+
+/**
+ * The repository-list indicator without `getStatus`'s extras: no LFS attribute lookup, operation detection or FETCH_HEAD stat,
+ * and untracked directories stay collapsed (dirty needs only to know there is something).
+ */
+export async function getStatusIndicator(git: GitClient, repoPath: string): Promise<{ ahead: number; behind: number; hasChanges: boolean }> {
+  const result = await git.run(repoPath, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal', '--ignore-submodules=none', '-z'], { readOnly: true, maxBuffer: 64 * 1024 * 1024 });
+  return parseStatusIndicator(result.stdout);
+}

@@ -2,22 +2,28 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, "ci/**"]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -25,15 +31,16 @@ jobs:
 
       # Debian/Ubuntu's xvfb package ships xvfb-run; scripts/smoke.mjs picks it
       # up automatically (and only uses it on Linux). Windows runners already
-      # have a desktop session, so nothing extra is needed there.
+      # have a desktop session and macOS renders offscreen, so nothing extra is
+      # needed there.
       - name: Install xvfb
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Lint and typecheck
+        run: npm run lint
 
       # Headless server bundle: fails if server-reachable code imports electron.
       - name: Build server
@@ -42,23 +49,15 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
-      # Linux only for now. The fixture and smoke suites had never run on Windows
-      # (the unit step failed first and masked them); when they finally did, 16
-      # fixture tests failed for unrelated reasons -- cherry-pick conflicts,
-      # worktrees, signing and the gh-stub. Typecheck and the unit suite still
-      # run on Windows, which is what covers the Windows-specific code paths.
-      # Tracked in #3.
       - name: Fixture tests
-        if: runner.os == 'Linux'
         run: npm run test:fixture
 
       - name: Smoke tests
-        if: runner.os == 'Linux'
         run: npm run test:smoke
 
       - name: Upload smoke artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: smoke-${{ matrix.os }}
           path: test/smoke/out/

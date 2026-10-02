@@ -11,6 +11,7 @@
 import { rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ErrorExplanation, GitErrorInfo } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import { exec } from '../exec';
 import { FIX_ACTIONS } from './fixActions';
 import type { GitClient } from '../git/git';
@@ -20,7 +21,9 @@ import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
+import { scrubSecrets } from '@shared/secrets';
 import { buildErrorExplainPrompt, ERROR_EXPLAIN_SCHEMA, ERROR_EXPLAIN_SYSTEM_PROMPT, type ErrorExplainRemote } from './prompts';
 import { checkLockFileGuard, extractRemoteHost, scrubAndTail, validateErrorExplanation } from './error-explain-core';
 
@@ -28,24 +31,22 @@ const REFLOG_LINES = 10;
 const MAX_REMOTES = 10;
 
 export class ErrorExplainService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while an explanation request is in flight; used by the update install gate alongside the other AI services. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   async explainError(repoPath: string | null, error: GitErrorInfo, retryable: boolean): Promise<ErrorExplanation> {
-    const { backend, settings } = await createBackend(this.store, this.tools);
-    const controller = new AbortController();
-    this.controller = controller;
+    const { backend, settings } = await createBackend(this.store, this.tools, 'errorExplain');
+    const controller = this.jobs.start();
     try {
       const hasRepo = repoPath !== null;
       const status = repoPath ? await getStatus(this.git, repoPath).catch(() => null) : null;
@@ -66,7 +67,7 @@ export class ErrorExplainService {
 
       const prompt = buildErrorExplainPrompt({
         code: error.code,
-        command: error.command,
+        command: scrubSecrets(error.command),
         exitCode: error.exitCode,
         stderrTail: scrubAndTail(error.stderr),
         stdoutTail: scrubAndTail(error.stdout),
@@ -88,7 +89,7 @@ export class ErrorExplainService {
         system: ERROR_EXPLAIN_SYSTEM_PROMPT,
         prompt,
         schema: ERROR_EXPLAIN_SCHEMA as unknown as Record<string, unknown>,
-        model: settings.model,
+        model: modelFor(settings, 'errorExplain'),
         effort: settings.effort === 'max' ? 'high' : settings.effort,
         signal: controller.signal,
       });
@@ -97,7 +98,7 @@ export class ErrorExplainService {
       log.info(`AI error explanation for code "${error.code}" via ${backend.name}/${explanation.model}: ${explanation.fixes.length} fix(es) kept`);
       return explanation;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 

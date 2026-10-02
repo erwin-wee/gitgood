@@ -1,0 +1,16 @@
+{
+  "name": "shortcut-reset-conflict",
+  "repoKind": "none",
+  "steps": [
+    {
+      "js": "(async () => { const { actions, store } = window.__gitgood; const wait = async (fn) => { for (let i = 0; i < 100; i++) { const value = fn(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } throw new Error('Shortcut reset did not settle'); }; await actions.updateSettings({ shortcuts: { push: 'CmdOrCtrl+Alt+P', find: 'CmdOrCtrl+P' } }); await actions.handleMenuAction('keyboard-shortcuts'); const reset = await wait(() => document.querySelector('[aria-label=\"Reset shortcut for Push\"]')); reset.click(); const confirm = await wait(() => document.querySelector('[role=dialog] .callout button.primary')); const before = store.get().settings.shortcuts; const unchangedBeforeConsent = before.push === 'CmdOrCtrl+Alt+P' && before.find === 'CmdOrCtrl+P'; confirm.click(); await wait(() => store.get().settings.shortcuts.find === null); const after = store.get().settings.shortcuts; return JSON.stringify({ unchangedBeforeConsent, pushReset: !Object.hasOwn(after, 'push'), findUnbound: after.find === null }); })()",
+      "dump": "result.json"
+    },
+    { "shot": "resolved.png" }
+  ],
+  "expect": [
+    { "dump": "result.json", "jsonPath": "unchangedBeforeConsent", "equals": true },
+    { "dump": "result.json", "jsonPath": "pushReset", "equals": true },
+    { "dump": "result.json", "jsonPath": "findUnbound", "equals": true }
+  ]
+}

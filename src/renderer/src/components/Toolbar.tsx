@@ -3,7 +3,7 @@ import type { Branch, PrTriage, PullRequest, RepositoryInfo, TriageNextAction, T
 import { compareStrings, formatRelativeTime } from '@shared/util';
 import { invoke, isMac } from '../api';
 import * as actions from '../state/actions';
-import { openDialog, setPopover, store, useAppStore } from '../state/store';
+import { openDialog, setPopover, store, useAppStore, useAiEnabled } from '../state/store';
 import { Avatar, Badge, Button, FilterInput, Icon, RelativeTime, Spinner, openContextMenu, useFilter, type MenuItem } from './ui';
 import { PHONE_QUERY, PhoneBackButton, useMediaQuery } from './Mobile';
 
@@ -20,7 +20,8 @@ export function Toolbar(): React.JSX.Element {
   const prsList = useAppStore((s) => s.prs.list);
   const triageCache = useAppStore((s) => s.triage.byNumber);
   const ghLogin = useAppStore((s) => s.tools?.ghAccount?.login ?? null);
-  const triageEnabled = settings?.ai.provider !== 'disabled' && !!repo?.github;
+  const aiOn = useAiEnabled();
+  const triageEnabled = aiOn && !!repo?.github;
   const waitingOnYouCount = useMemo(() => (triageEnabled ? actions.waitingOnYouPrs(prsList, triageCache, ghLogin).length : 0), [triageEnabled, prsList, triageCache, ghLogin]);
   const phone = useMediaQuery(PHONE_QUERY);
   const phonePane = useAppStore((s) => s.phonePane);
@@ -137,7 +138,7 @@ export function Toolbar(): React.JSX.Element {
             <Spinner /> AI resolving…
           </span>
         ) : null}
-        {settings?.ai.provider !== 'disabled' && repo && status?.hasConflicts ? (
+        {aiOn && repo && status?.hasConflicts ? (
           <Button variant="ghost" size="sm" icon="sparkle" className="sparkle" onClick={() => openDialog({ kind: 'conflicts' })} title="Resolve conflicts with AI">
             Resolve conflicts
           </Button>
@@ -204,24 +205,36 @@ function RepositoryPopover(): React.JSX.Element {
   const topLevel = useMemo(() => repos.filter((r) => !r.worktreeOf && !r.parentRepoId && (matchedIds.has(r.id) || childrenOf(r.id).length > 0)), [repos, matchedIds, query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const groups = useMemo(() => {
+    const byName = (a: RepositoryInfo, b: RepositoryInfo) => compareStrings(a.alias ?? a.name, b.alias ?? b.name);
+    const pinned: RepositoryInfo[] = [];
+    const custom: Record<string, RepositoryInfo[]> = {};
     const github: Record<string, RepositoryInfo[]> = {};
     const other: RepositoryInfo[] = [];
     for (const r of topLevel) {
-      if (r.github) (github[r.github.owner] ??= []).push(r);
+      if (r.pinned) pinned.push(r);
+      else if (r.group) (custom[r.group] ??= []).push(r);
+      else if (r.github) (github[r.github.owner] ??= []).push(r);
       else other.push(r);
     }
-    const ownerNames = Object.keys(github).sort(compareStrings);
-    return { ownerNames, github, other };
+    for (const list of Object.values(custom)) list.sort(byName);
+    return { pinned: pinned.sort(byName), customNames: Object.keys(custom).sort(compareStrings), custom, ownerNames: Object.keys(github).sort(compareStrings), github, other };
   }, [topLevel]);
 
   const contextMenu = (e: React.MouseEvent, repo: RepositoryInfo) => {
     const items: MenuItem[] = [
+      // Only the local desktop app can open more windows (its preload is the one that exposes `getPathForFile`).
+      ...(window.gitgoodBridge.getPathForFile ? [{ label: 'Open in New Window', onClick: () => { store.set({ popover: null }); void actions.openRepositoryInNewWindow(repo); }, disabled: repo.missing }, { type: 'separator' as const }] : []),
       { label: 'Open in external editor', onClick: () => void actions.openRepository(repo).then(() => actions.openInEditor()), disabled: repo.missing },
       { label: 'Open in terminal', onClick: () => void actions.openRepository(repo).then(() => actions.openInShell()), disabled: repo.missing },
       { label: 'Show in folder', onClick: () => void actions.openRepository(repo).then(() => actions.showInFolder()), disabled: repo.missing },
       { type: 'separator' },
       { label: 'Copy repository path', onClick: () => void actions.copyToClipboard(repo.path, 'Path copied') },
       { label: repo.alias ? 'Change alias…' : 'Create alias…', onClick: () => { store.set({ popover: null }); void actions.openRepository(repo).then(() => openDialog({ kind: 'repo-settings', tab: 'alias' })); } },
+      { label: repo.pinned ? 'Unpin from top' : 'Pin to top', disabled: !!repo.worktreeOf || !!repo.parentRepoId, onClick: () => void actions.setRepoPrefs(repo, { pinned: !repo.pinned }) },
+      { label: 'Move to group…', disabled: !!repo.worktreeOf || !!repo.parentRepoId, onClick: () => { store.set({ popover: null }); void actions.openRepository(repo).then(() => openDialog({ kind: 'repo-settings', tab: 'alias' })); } },
+      ...(repo.group ? [{ label: `Remove from “${repo.group}”`, onClick: () => void actions.setRepoPrefs(repo, { group: null }) }] : []),
+      { label: repo.aiDisabled ? 'Enable AI for this repository' : 'Disable AI for this repository', disabled: !!repo.worktreeOf, onClick: () => void actions.setRepoAiDisabled(repo, !repo.aiDisabled) },
+      { label: repo.githubAccount ? `GitHub account: @${repo.githubAccount.login}…` : 'GitHub account…', disabled: !repo.github || !!repo.worktreeOf || repo.missing, onClick: () => { store.set({ popover: null }); void actions.openRepository(repo).then(() => openDialog({ kind: 'repo-settings', tab: 'account' })); } },
       { type: 'separator' },
       repo.worktreeOf
         ? { label: 'Manage worktrees…', onClick: () => { store.set({ popover: null }); void actions.openRepository(repos.find((r) => r.id === repo.worktreeOf) ?? repo).then(() => openDialog({ kind: 'worktrees' })); } }
@@ -280,6 +293,18 @@ function RepositoryPopover(): React.JSX.Element {
       </div>
       <div className="popover-list">
         {topLevel.length === 0 ? <div className="list-empty">{repos.length === 0 ? 'No repositories yet. Add or clone one to get started.' : 'No matching repositories.'}</div> : null}
+        {groups.pinned.length ? (
+          <>
+            <div className="list-group-header">Pinned</div>
+            {groups.pinned.map(rowWithChildren)}
+          </>
+        ) : null}
+        {groups.customNames.map((name) => (
+          <React.Fragment key={`group:${name}`}>
+            <div className="list-group-header">{name}</div>
+            {groups.custom[name].map(rowWithChildren)}
+          </React.Fragment>
+        ))}
         {groups.ownerNames.map((owner) => (
           <React.Fragment key={owner}>
             <div className="list-group-header">{owner}</div>
@@ -307,12 +332,17 @@ function RepositoryPopover(): React.JSX.Element {
 
 const branchKeys = (b: Branch) => [b.name, b.lastCommitSubject, b.lastCommitAuthor];
 
+/** Branch-list marker for the current branch's stack: the current branch says what it is stacked on, the branches below it say they belong to the stack. */
+const stackNote = (b: Branch, parents: string[]): string | null =>
+  b.kind !== 'local' ? null : b.isCurrent && parents.length ? `stacked on ${parents[parents.length - 1]}` : parents.includes(b.name) ? 'in current stack' : null;
+
 function BranchPopover(): React.JSX.Element {
   usePopoverClose();
   const repo = useAppStore((s) => s.currentRepo);
   const branches = useAppStore((s) => s.branches);
   const defaultBranch = useAppStore((s) => s.defaultBranch);
   const prs = useAppStore((s) => s.prs);
+  const stack = useAppStore((s) => s.stack);
   const [tab, setTab] = useState<'branches' | 'prs'>('branches');
   const [query, setQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -349,6 +379,7 @@ function BranchPopover(): React.JSX.Element {
         { label: 'Squash and merge into current branch…', onClick: () => openDialog({ kind: 'merge', squash: true, preselect: b.name }), disabled: b.isCurrent },
         { label: 'Rebase current branch onto…', onClick: () => openDialog({ kind: 'rebase', preselect: b.name }), disabled: b.isCurrent },
         { label: 'Compare…', onClick: () => openDialog({ kind: 'compare' }) },
+        ...(b.isCurrent && stack.parents.length ? [{ label: `Push stack (${stack.parents.length + 1} branches)…`, onClick: () => actions.pushStack() }] : []),
         { type: 'separator' },
         { label: 'Create worktree for this branch…', icon: 'worktree', onClick: () => { store.set({ popover: null }); openDialog({ kind: 'add-worktree', startBranch: b.name }); } },
         { type: 'separator' },
@@ -360,7 +391,7 @@ function BranchPopover(): React.JSX.Element {
       ];
       openContextMenu(e, items);
     },
-    [repo],
+    [repo, stack.parents],
   );
 
   const row = (b: Branch) => (
@@ -368,7 +399,7 @@ function BranchPopover(): React.JSX.Element {
       <Icon name={b.kind === 'remote' ? 'globe' : 'branch'} />
       <span className="row-main">
         <span className="truncate">{b.name}</span>
-        <span className="row-sub truncate">{b.lastCommitSubject}</span>
+        <span className="row-sub truncate">{[stackNote(b, stack.parents), b.lastCommitSubject].filter(Boolean).join(' · ')}</span>
       </span>
       {b.isCurrent ? <Icon name="check" /> : null}
       <span className="row-meta">
@@ -536,7 +567,7 @@ function TriageLine({ pr, cache, login }: { pr: PullRequest; cache: Record<numbe
 function PullRequestList({ prs, loading, error, query, setQuery }: { prs: PullRequest[]; loading: boolean; error: string | null; query: string; setQuery: (q: string) => void }): React.JSX.Element {
   const filtered = useFilter(prs, query, prKeys);
   const current = useAppStore((s) => s.status?.branch.name ?? null);
-  const aiEnabled = useAppStore((s) => s.settings?.ai.provider !== 'disabled');
+  const aiEnabled = useAiEnabled();
   const triage = useAppStore((s) => s.triage);
   const login = useAppStore((s) => s.tools?.ghAccount?.login ?? null);
   const online = useOnline();

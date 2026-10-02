@@ -7,6 +7,11 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+if (process.platform !== 'linux') {
+  console.error('npm run install:service installs a systemd user service (Linux only). On macOS/Windows use File → Run GitGood server in the background… in the packaged app, or run "npm run start:server".');
+  process.exit(1);
+}
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entry = join(root, 'out', 'server', 'index.mjs');
 if (!existsSync(entry)) {

@@ -85,7 +85,7 @@ describe.skipIf(!hasGitSync() || isWindows)('session-start.sh', () => {
     if (withExport) {
       const dir = join(root, '.git', 'gitgood', 'review');
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, 'latest.json'), serializeExport(buildExportJson(run(root), null, 'linux')), 'utf8');
+      await writeFile(join(dir, 'latest.json'), serializeExport(buildExportJson(run(root), null, 'linux', 'tok123')), 'utf8');
     }
     return root;
   }

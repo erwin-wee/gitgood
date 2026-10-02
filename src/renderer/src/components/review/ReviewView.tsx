@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import type { ReviewFinding, ReviewRun, ReviewSeverity } from '@shared/types';
 import { isMac } from '../../api';
 import * as actions from '../../state/actions';
-import { useAppStore, type PrReviewRun } from '../../state/store';
+import { useAppStore, type PrReviewRun, useAiEnabled } from '../../state/store';
 import { onListKeyDown } from '../../lib/listKeys';
 import { PHONE_QUERY, useMediaQuery } from '../Mobile';
 import { CommitFileRow } from '../ChangesTab';
@@ -38,7 +38,7 @@ export function ReviewView(): React.JSX.Element {
   const run = review.run;
   const repo = useAppStore((s) => s.currentRepo);
   // Subscribed so turning the AI provider off hides the Fix with agent action immediately.
-  useAppStore((s) => s.settings?.ai.provider);
+  useAiEnabled();
   const findings = useMemo(() => liveFindings(run), [run]);
   const countByPath = useMemo(() => {
     const map = new Map<string, { n: number; worst: ReviewSeverity }>();

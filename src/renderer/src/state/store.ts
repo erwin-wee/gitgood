@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
 import type { AiResolveProgressEvent, AiReviewProgressEvent, AppSettings, BlameResult, Branch, Commit, CommitDetails, CommitFile, ConflictResolutionResult, ErrorExplanation, ExplainFollowUp, ExplainTarget, Explanation, FileDiff, GitErrorInfo, HistoryQuery, InboxState, LfsStatus, NlPlan, NlStep, PathHistoryEntry, PostResolveCheckResult, PrTriage, ProgressEvent, PullRequest, RebaseApplyProgress, RebasePlan, RebasePreflight, Remote, RepositoryInfo, RepositoryStatus, RepoWork, ReviewPlan, ReviewRun, ReviewRunTarget, ReviewTarget, SplitApplyProgress, SplitPlan, SplitPreflight, Stash, StaleBranch, Submodule, Tag, ToolsState, UpdateState, WorktreeReviewTarget, Worktree } from '@shared/types';
+import { aiEnabled } from '@shared/ai-model';
 import { EMPTY_HISTORY_QUERY } from '@shared/types';
+import type { BranchStack } from '@shared/types';
 
 /** A `ReviewRun` known to target a pull request or a branch (never the pre-commit `worktree` target), which is all `ai.review.start`/`ai.review.get` for a `ReviewTarget` ever produce. */
 export type PrReviewRun = ReviewRun & { target: Exclude<ReviewRunTarget, WorktreeReviewTarget> };
@@ -13,7 +15,7 @@ export type View = 'changes' | 'history' | 'stashes' | 'health';
 export type PhonePane = 'list' | 'detail' | 'file';
 export type Popover = 'repos' | 'branches' | 'history-filter' | null;
 export type SettingsTab = 'accounts' | 'integrations' | 'git' | 'appearance' | 'prompts' | 'ai' | 'advanced';
-export type RepoSettingsTab = 'remote' | 'ignored' | 'identity' | 'alias';
+export type RepoSettingsTab = 'remote' | 'ignored' | 'identity' | 'account' | 'alias';
 
 export interface Toast {
   id: number;
@@ -27,7 +29,7 @@ export interface Toast {
 export type DialogState =
   | { kind: 'clone'; url?: string }
   | { kind: 'new-repo' }
-  | { kind: 'add-repo' }
+  | { kind: 'add-repo'; path?: string }
   | { kind: 'new-branch'; startPoint?: string | null; startPointLabel?: string; initialName?: string }
   | { kind: 'rename-branch'; branch: string }
   | { kind: 'delete-branch'; branch: Branch }
@@ -79,6 +81,8 @@ export type DialogState =
   | { kind: 'release-notes'; fromTag: string | null }
   | { kind: 'split-plan' }
   | { kind: 'tidy-branch' }
+  | { kind: 'reflog' }
+  | { kind: 'bisect-start'; bad: string; badLabel: string }
   | { kind: 'trust-repo-check'; repoPath: string; command: string; onDecision: (trusted: boolean) => void }
   | { kind: 'resolution-popover'; path: string; blockId: number }
   | { kind: 'command-palette' };
@@ -93,6 +97,8 @@ export interface ChangesState {
   showCoAuthors: boolean;
   amend: boolean;
   committing: boolean;
+  /** One-shot `--no-verify` for the next commit; reset after every commit. */
+  noVerify: boolean;
 }
 
 export interface StashesViewState {
@@ -118,6 +124,8 @@ export interface HistoryState {
   queryError: string | null;
   /** True once the current search has been loading for more than 5s (suggests narrowing with `path:`). */
   slowSearch: boolean;
+  /** The loaded commits were listed in graph (`--date-order`) order, so the lane graph can be drawn: set from the `historyGraph` setting when the list was last (re)loaded, and only while no filter/path narrows it. */
+  graph: boolean;
   selectedShas: string[];
   details: CommitDetails | null;
   detailsLoading: boolean;
@@ -412,6 +420,8 @@ export interface AppState {
   statusLoading: boolean;
   branches: Branch[];
   defaultBranch: string | null;
+  /** The current branch's stack of branches below it (see getStackParents). */
+  stack: BranchStack;
   stashes: Stash[];
   tags: Tag[];
   remotes: Remote[];
@@ -488,11 +498,12 @@ export const initialChanges: ChangesState = {
   showCoAuthors: false,
   amend: false,
   committing: false,
+  noVerify: false,
 };
 
 export const initialStashesView: StashesViewState = { loading: false, selectedSha: null, files: [], filesLoading: false, selectedFile: null };
 
-export const initialHistory: HistoryState = { commits: [], hasMore: false, loading: false, search: '', query: EMPTY_HISTORY_QUERY, freeText: '', queryError: null, slowSearch: false, selectedShas: [], details: null, detailsLoading: false, selectedFile: null, matchingFiles: null, dragging: null, path: null, pathHistory: null, error: null, detailsError: null, stale: false };
+export const initialHistory: HistoryState = { commits: [], hasMore: false, loading: false, search: '', query: EMPTY_HISTORY_QUERY, freeText: '', queryError: null, slowSearch: false, graph: false, selectedShas: [], details: null, detailsLoading: false, selectedFile: null, matchingFiles: null, dragging: null, path: null, pathHistory: null, error: null, detailsError: null, stale: false };
 
 export const initialDiff: DiffState = { key: null, diff: null, loading: false, error: null, selectedLines: null, blameOn: false, blame: null, blameLoading: false, activeBlameId: null, highlightTerm: null, revealLine: null };
 
@@ -507,6 +518,7 @@ const initialState: AppState = {
   statusLoading: false,
   branches: [],
   defaultBranch: null,
+  stack: { parents: [], canUpdateRefs: false },
   stashes: [],
   tags: [],
   remotes: [],
@@ -590,6 +602,11 @@ export const store = new Store();
 
 export function useAppStore<R>(selector: (s: AppState) => R): R {
   return useSyncExternalStore(store.subscribe, () => selector(store.get()), () => selector(store.get()));
+}
+
+/** Whether AI actions should be offered: a provider is on and the current repository has not opted out. Non-reactive callers use `aiEnabled(store.get().settings, store.get().currentRepo)`. */
+export function useAiEnabled(): boolean {
+  return useAppStore((s) => aiEnabled(s.settings, s.currentRepo));
 }
 
 export function patchChanges(patch: Partial<ChangesState> | ((c: ChangesState) => Partial<ChangesState>)): void {

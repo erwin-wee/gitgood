@@ -10,6 +10,7 @@
 - [x] 2.2 Implement the import validator (schema version, types, unknown keys → warnings) and preview counts; verify unit tests for valid, newer-schema and malformed files
 - [x] 2.3 Implement merge and replace semantics with confirmation flag, backups (retain 5) and missing-repository handling plus other-platform path skipping; verify unit tests on `AppSettings` and a temp user-data directory
 - [ ] 2.4 Add the save dialog method in the main process; verify it returns a path in a smoke run
+  - 2026-10-01: `app.chooseSavePath` exists (`ElectronHost.chooseSavePath` → `dialog.showSaveDialog`, used by the Export dialog) but a native save dialog cannot be driven in the offscreen smoke run, so the stated verification is still outstanding.
 
 ## 3. Gist sync
 

@@ -69,7 +69,7 @@ export async function answerPaletteQuestion(): Promise<void> {
 }
 
 export function cancelPaletteRequest(): void {
-  void invoke('ai.cancel');
+  void invoke('ai.cancel', 'nlPalette');
   patchNlPalette({ loading: false });
 }
 

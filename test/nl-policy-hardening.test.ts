@@ -47,6 +47,66 @@ describe('nlPolicy hardening: inspect arguments, dangerous flags and denylist', 
   });
 });
 
+describe('nlPolicy hardening: inspect families allow only listed options', () => {
+  // Abbreviations (git accepts unambiguous prefixes of long options) and unlisted options are refused with a reason.
+  for (const argv of [
+    ['log', '--outp=/abs'],
+    ['log', '--out=/tmp/x'],
+    ['diff', '--outp=/tmp/x'],
+    ['diff', '--ext'],
+    ['diff', '--textc'],
+    ['show', 'HEAD', '--outp=/tmp/x'],
+    ['status', '--ignore-submodules'],
+    ['status', '--porcelain=v3'],
+    ['rev-parse', '--git-path', 'hooks'],
+    ['rev-parse', '--sq-quote', 'x'],
+    ['stash', 'list', '--outp=/tmp/x'],
+    ['reflog', 'show', '--outp=/tmp/x'],
+    ['reflog', '--outp=/tmp/x'],
+    ['log', '--show-signature'],
+    ['log', '--max-count=abc'],
+    ['log', '-n'],
+  ]) {
+    it(`refuses: ${argv.join(' ')}`, () => {
+      const step = plan(argv);
+      expect(step.executable, JSON.stringify(step)).toBe(false);
+      expect(step.refusalReason).toBeTruthy();
+    });
+  }
+
+  for (const argv of [
+    ['log', '--oneline', '-n', '5'],
+    ['log', '--oneline', '-n5'],
+    ['log', '-3', '--graph', '--decorate', '--all'],
+    ['log', '--author=bob', '--since=2.weeks', '--format=%h %s'],
+    ['diff', '--stat'],
+    ['diff', '--cached', '--name-only'],
+    ['diff', '--stat=120', 'main..feat', '--', 'src/a.ts'],
+    ['show', 'abc1234', '--name-only'],
+    ['show', 'HEAD', '--stat', '--format='],
+    ['status', '--short'],
+    ['status', '-sb'],
+    ['status', '--porcelain=v2', '--branch'],
+    ['rev-parse', '--abbrev-ref', 'HEAD'],
+    ['rev-parse', '--short', 'HEAD'],
+    ['stash', 'list', '--oneline'],
+    ['reflog', 'show', '-n', '10'],
+    ['reflog'],
+  ]) {
+    it(`still allows: ${argv.join(' ')}`, () => {
+      const step = plan(argv);
+      expect({ ok: step.executable, reason: step.refusalReason }, JSON.stringify(step)).toEqual({ ok: true, reason: null });
+    });
+  }
+
+  it('runs diff-producing commands without external diff or textconv programs', () => {
+    for (const argv of [['log', '-p'], ['show', 'HEAD'], ['diff'], ['stash', 'list', '-p'], ['reflog', 'show', '-p']]) {
+      const mapped = plan(argv).mappedArgs[0] as string[];
+      expect(mapped, argv.join(' ')).toEqual(expect.arrayContaining(['--no-ext-diff', '--no-textconv']));
+    }
+  });
+});
+
 describe('nlPolicy hardening: "git branch" only lists', () => {
   // `branch` maps to the tryRun sentinel, whose readOnly flag only unsets
   // GIT_OPTIONAL_LOCKS, and the palette runs "safe" steps with no confirmation

@@ -78,7 +78,7 @@ export function selectTopBlobs(blobs: RawBlob[], limit: number): RawBlob[] {
 export function scanLargestBlobs(git: GitClient, tools: ToolLocator, repoPath: string, limit: number, signal?: AbortSignal): Promise<RawBlob[]> {
   return new Promise((resolve, reject) => {
     void (async () => {
-      await tools.ensureLocated();
+      await tools.ensure('git');
       let gitPath: string;
       try {
         gitPath = tools.gitPath();

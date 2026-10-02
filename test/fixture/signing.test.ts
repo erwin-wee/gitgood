@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -73,6 +73,7 @@ describe.skipIf(!hasGitSync())('signing config read/write', () => {
 describe.skipIf(!hasGitSync() || !hasGpgSync())('real GPG signing', () => {
   let repo: TestRepo | undefined;
   let gpgEnv: NodeJS.ProcessEnv | undefined;
+  let gnupgTmp: string | undefined;
 
   afterEach(async () => {
     if (gpgEnv) {
@@ -83,14 +84,21 @@ describe.skipIf(!hasGitSync() || !hasGpgSync())('real GPG signing', () => {
       }
       gpgEnv = undefined;
     }
+    if (gnupgTmp) rmSync(gnupgTmp, { recursive: true, force: true });
+    gnupgTmp = undefined;
     await repo?.dispose();
     repo = undefined;
   });
 
   it('signs a commit with a throwaway empty-passphrase key and verifies %G? as good', async () => {
     repo = await createRepo({ commits: [{ message: 'init', files: { 'a.txt': '1\n' } }] });
-    const gnupgHome = join(repo.root, 'gnupghome');
-    await mkdir(gnupgHome, { recursive: true, mode: 0o700 });
+    // gpg-agent's socket lives in GNUPGHOME, and macOS caps socket paths at ~104
+    // bytes -- its per-user tmpdir is already too long -- so use a short dir there.
+    // Windows' gpg is Git's MSYS build, which reads GNUPGHOME as a POSIX path.
+    const shortHome = process.platform === 'win32' ? join(repo.root, 'gnupghome') : mkdtempSync('/tmp/gg-gpg-');
+    await mkdir(shortHome, { recursive: true, mode: 0o700 });
+    gnupgTmp = shortHome;
+    const gnupgHome = process.platform === 'win32' ? shortHome.replace(/^([A-Za-z]):/, (_m, d: string) => `/${d.toLowerCase()}`).replace(/\\/g, '/') : shortHome;
     gpgEnv = { ...repo.env, GNUPGHOME: gnupgHome };
     delete gpgEnv.GPG_TTY;
 

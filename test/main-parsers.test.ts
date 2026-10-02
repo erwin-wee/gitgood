@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePorcelainV2 } from '../src/main/git/status';
+import { parsePorcelainV2, parseStatusIndicator } from '../src/main/git/status';
 import { historyQueryArgs, mapSignatureStatus, parseLog, parseNameStatusZ, parseNumstatZ, pathspecArgs } from '../src/main/git/log';
 import { EMPTY_HISTORY_QUERY } from '../src/shared/types';
 import { classifyGitError, TransferProgressParser } from '../src/main/git/git';
@@ -43,6 +43,22 @@ describe('porcelain v2 status parsing', () => {
     expect(detached.branch.detached).toBe(true);
     const gone = parsePorcelainV2('# branch.oid abc\0# branch.head f\0# branch.upstream origin/f\0');
     expect(gone.branch.upstreamGone).toBe(true);
+  });
+});
+
+describe('status indicator parsing', () => {
+  it('reads ahead/behind and a dirty tree from porcelain v2 output', () => {
+    const out = ['# branch.oid 671acd7', '# branch.head main', '# branch.upstream origin/main', '# branch.ab +2 -3', '? scratch.js'].join('\0') + '\0';
+    expect(parseStatusIndicator(out)).toEqual({ ahead: 2, behind: 3, hasChanges: true });
+  });
+
+  it('is clean when only headers are present, and 0/0 without an upstream', () => {
+    expect(parseStatusIndicator('# branch.oid abc\0# branch.head main\0')).toEqual({ ahead: 0, behind: 0, hasChanges: false });
+  });
+
+  it('counts a rename pair and a conflict as changes', () => {
+    expect(parseStatusIndicator('# branch.ab +0 -0\x002 R. N... 100644 100644 100644 abc def R100 b.ts\0a.ts\0').hasChanges).toBe(true);
+    expect(parseStatusIndicator('# branch.ab +0 -0\0u UU N... 100644 100644 100644 100644 a b c app.ts\0').hasChanges).toBe(true);
   });
 });
 

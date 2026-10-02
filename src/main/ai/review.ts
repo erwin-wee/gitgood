@@ -1,14 +1,17 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DiffOptions } from '@shared/ipc';
 import type { AiReviewProgressEvent, CommitFile, DiffHunk, FileDiff, GitHubRepoRef, PostReviewOptions, PullRequest, ReviewFileEntry, ReviewFinding, ReviewPlan, ReviewRun, ReviewRunTarget, ReviewStartOptions, ReviewTarget, ReviewVerdict, WorkingFile, WorktreeReviewOptions, WorktreeReviewTarget } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
 import type { ParsedDiff } from '@shared/diff/parse';
 import { parseUnifiedDiffs } from '@shared/diff/parse';
 import { languageFromPath } from '@shared/util';
 import { isUnborn } from '../git/commit';
 import { buildTextDiff, getPatchForFiles, getRangeFileDiff, looksBinary, readBlobText, readWorktree, toFsPath } from '../git/diff';
+import { readRepoFile, writeRepoFile } from '../repo/paths';
 import { EMPTY_TREE_SHA, GitError, type GitClient } from '../git/git';
 import { getGitDir, getStatus } from '../git/status';
 import type { GhClient } from '../gh/gh';
@@ -18,6 +21,7 @@ import type { RepositoryManager } from '../repo/manager';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { EXPORT_DIR_SEGMENTS, LATEST_JSON, RUNS_DIR, buildExportJson, exportFileNames, renderExportMarkdown, serializeExport, type ExportPlatform, type ReviewExport } from './review-export';
 import { buildPrecommitFilePrompt, buildPrecommitSummaryPrompt, buildReviewFilePrompt, buildReviewSummaryPrompt, PRECOMMIT_SUMMARY_SCHEMA, PRECOMMIT_SUMMARY_SYSTEM_PROMPT, precommitReviewSystemPrompt, REVIEW_FILE_SCHEMA, REVIEW_SUMMARY_SCHEMA, REVIEW_SUMMARY_SYSTEM_PROMPT, reviewSystemPrompt, type PrecommitPromptContext, type ReviewPromptContext } from './prompts';
@@ -87,19 +91,18 @@ function newRunId(): string {
  * diff, persists runs per head SHA, and posts reviews to GitHub on request.
  */
 export class ReviewService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
   private diffCache = new Map<string, DiffSet>();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient, private readonly gh: GhClient, private readonly repos: RepositoryManager, private readonly userDataDir: string) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a review run is in flight; used by the update install gate to refuse installing mid-review. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   // ---------- storage ----------
@@ -136,6 +139,29 @@ export class ReviewService {
 
   private static exportPlatform(): ExportPlatform {
     return process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux';
+  }
+
+  /** Rerun secrets minted for exported runs, by run id: memory only, so a restart invalidates every link already written to disk. */
+  private readonly rerunTokens = new Map<string, { repoPath: string; token: string }>();
+
+  /** The random per-run token embedded in the export's `gitgood://review/rerun` link; stable across rewrites of the same run until consumed. */
+  private rerunToken(run: ReviewRun): string {
+    let entry = this.rerunTokens.get(run.id);
+    if (!entry) {
+      entry = { repoPath: run.repoPath, token: randomBytes(16).toString('hex') };
+      this.rerunTokens.set(run.id, entry);
+    }
+    return entry.token;
+  }
+
+  /** True once for a token minted for `repoPath`'s export; the token is spent either way a caller uses it, so a leaked link cannot be replayed. */
+  consumeRerunToken(repoPath: string, token: string): boolean {
+    for (const [runId, entry] of this.rerunTokens) {
+      if (entry.token !== token || entry.repoPath !== repoPath) continue;
+      this.rerunTokens.delete(runId);
+      return true;
+    }
+    return false;
   }
 
   private async readExport(file: string): Promise<ReviewExport | null> {
@@ -196,8 +222,9 @@ export class ReviewService {
     const names = exportFileNames(run.id);
     const previousRunId = await this.previousExportId(runsDir, run);
     const platform = ReviewService.exportPlatform();
-    const json = serializeExport(buildExportJson(run, previousRunId, platform));
-    const md = renderExportMarkdown(run, previousRunId, platform);
+    const rerunToken = this.rerunToken(run);
+    const json = serializeExport(buildExportJson(run, previousRunId, platform, rerunToken));
+    const md = renderExportMarkdown(run, previousRunId, platform, rerunToken);
     await this.writeExportFile(join(dir, ...names.json.split('/')), json);
     await this.writeExportFile(join(dir, ...names.md.split('/')), md);
     // Dismissing a finding on an older run re-exports it; that must not make it
@@ -381,7 +408,7 @@ export class ReviewService {
       const lines = changedLineCount(hunks);
       const hash = hunks.length ? hashHunks(hunks) : null;
       if (only && !only.includes(file.path)) return { file, status: 'skipped', reason: 'not selected', hash };
-      const reason = skipReason(file, lines, generated) ?? (hunks.length === 0 ? 'no text changes' : null);
+      const reason = skipReason(file, lines, generated, hunks) ?? (hunks.length === 0 ? 'no text changes' : null);
       if (reason) return { file, status: 'skipped', reason, hash };
       reviewable++;
       if (reviewable > maxFiles) return { file, status: 'skipped', reason: `over the ${maxFiles}-file limit`, hash };
@@ -404,7 +431,7 @@ export class ReviewService {
       target: resolved.target,
       files: entries,
       changedLines,
-      model: settings.model,
+      model: modelFor(settings, 'review'),
       provider: settings.provider,
       effort: settings.effort,
       strictness: settings.reviewStrictness,
@@ -434,17 +461,12 @@ export class ReviewService {
     const parts: string[] = [];
     let budget = MAX_GUIDELINE_CHARS;
     for (const c of candidates) {
-      const p = join(repoPath, ...c.split('/'));
-      if (!existsSync(p) || budget <= 0) continue;
-      try {
-        const text = (await readFile(p, 'utf8')).trim();
-        if (!text) continue;
-        const slice = text.slice(0, budget);
-        budget -= slice.length;
-        parts.push(`## ${c}\n${slice}`);
-      } catch {
-        /* unreadable */
-      }
+      if (budget <= 0) break;
+      const text = (await readRepoFile(repoPath, c))?.toString('utf8').trim();
+      if (!text) continue;
+      const slice = text.slice(0, budget);
+      budget -= slice.length;
+      parts.push(`## ${c}\n${slice}`);
     }
     return parts.length ? parts.join('\n\n') : null;
   }
@@ -496,17 +518,15 @@ export class ReviewService {
   }
 
   async start(repoPath: string, input: ReviewTarget, opts: ReviewStartOptions, report: (e: AiReviewProgressEvent) => void): Promise<ReviewRun> {
-    this.controller?.abort();
-    const controller = new AbortController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     // `finally`, not a tail assignment: anything that throws on the way (AI
     // disabled, an unknown base branch, gh failing) would otherwise leave the
-    // controller set, so `isActive()` stays true for the rest of the process
+    // job listed, so `isActive()` stays true for the rest of the process
     // and blocks installing an update forever.
     try {
       return await this.runReview(repoPath, input, opts, report, controller);
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 
@@ -515,7 +535,7 @@ export class ReviewService {
     const runId = newRunId();
     const emit: Reporter = (e) => report({ ...e, repoPath, runId });
 
-    const { backend, settings } = await createBackend(this.store, this.tools);
+    const { backend, settings } = await createBackend(this.store, this.tools, 'review');
     emit({ phase: 'preparing', path: null, index: 0, total: 0, message: 'Reading the diff…' });
     const resolved = await this.resolveTarget(repoPath, input);
     const set = await this.diffSet(repoPath, resolved, signal);
@@ -528,7 +548,7 @@ export class ReviewService {
       target: resolved.target,
       startedAt: new Date().toISOString(),
       finishedAt: null,
-      model: settings.model,
+      model: modelFor(settings, 'review'),
       provider: backend.name,
       effort: settings.effort,
       strictness: settings.reviewStrictness,
@@ -579,9 +599,9 @@ export class ReviewService {
         const excerpt = await this.contextExcerpt(repoPath, resolved, path, parsed);
         const response = await backend.complete({
           system,
-          prompt: buildReviewFilePrompt({ context, path, oldPath: entry.file.oldPath, status: entry.file.status, language: languageFromPath(path), annotatedDiff: annotateHunks(parsed.hunks), contextExcerpt: excerpt, truncated: false }),
+          ...buildReviewFilePrompt({ context, path, oldPath: entry.file.oldPath, status: entry.file.status, language: languageFromPath(path), annotatedDiff: annotateHunks(parsed.hunks), contextExcerpt: excerpt, truncated: false }),
           schema: REVIEW_FILE_SCHEMA as unknown as Record<string, unknown>,
-          model: settings.model,
+          model: modelFor(settings, 'review'),
           effort: settings.effort,
           signal,
         });
@@ -643,7 +663,7 @@ export class ReviewService {
             run.droppedInvalid,
           ),
           schema: REVIEW_SUMMARY_SCHEMA as unknown as Record<string, unknown>,
-          model: settings.model,
+          model: modelFor(settings, 'review'),
           effort: settings.effort === 'max' ? 'high' : settings.effort,
           signal,
         });
@@ -670,7 +690,7 @@ export class ReviewService {
     run.finishedAt = new Date().toISOString();
     await this.saveRun(run);
     emit({ phase: run.cancelled ? 'cancelled' : run.error ? 'error' : 'done', path: null, index: total, total, message: run.cancelled ? 'Review cancelled' : run.error ?? 'Review complete' });
-    log.info(`AI review ${runId} (${targetKey(run.target)}): ${run.findings.length} finding(s), ${run.droppedInvalid} dropped, ${run.files.filter((f) => f.status === 'reviewed').length}/${run.files.length} files via ${backend.name}/${settings.model}`);
+    log.info(`AI review ${runId} (${targetKey(run.target)}): ${run.findings.length} finding(s), ${run.droppedInvalid} dropped, ${run.files.filter((f) => f.status === 'reviewed').length}/${run.files.length} files via ${backend.name}/${modelFor(settings, 'review')}`);
     return run;
   }
 
@@ -748,13 +768,11 @@ export class ReviewService {
   }
 
   async startWorktree(repoPath: string, opts: WorktreeReviewOptions, report: (e: AiReviewProgressEvent) => void): Promise<ReviewRun> {
-    this.controller?.abort();
-    const controller = new AbortController();
-    this.controller = controller;
+    const controller = this.jobs.start();
     try {
       return await this.runWorktreeReview(repoPath, opts, report, controller);
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 
@@ -763,7 +781,7 @@ export class ReviewService {
     const runId = newRunId();
     const emit: Reporter = (e) => report({ ...e, repoPath, runId });
 
-    const { backend, settings } = await createBackend(this.store, this.tools);
+    const { backend, settings } = await createBackend(this.store, this.tools, 'review');
     emit({ phase: 'preparing', path: null, index: 0, total: 0, message: 'Reading the diff…' });
 
     const status = await getStatus(this.git, repoPath);
@@ -807,7 +825,7 @@ export class ReviewService {
     for (const entry of entries) {
       if (entry.status !== 'pending') continue;
       const hunks = diffs.get(entry.file.path)?.hunks ?? [];
-      const reason = skipReason(entry.file, changedLineCount(hunks), generated) ?? (hunks.length === 0 ? 'no text changes' : null);
+      const reason = skipReason(entry.file, changedLineCount(hunks), generated, hunks) ?? (hunks.length === 0 ? 'no text changes' : null);
       if (reason) {
         entry.status = 'skipped';
         entry.reason = reason;
@@ -826,7 +844,7 @@ export class ReviewService {
       target: { kind: 'worktree', paths: [...opts.files], partialPaths, indexSha },
       startedAt: new Date().toISOString(),
       finishedAt: null,
-      model: settings.model,
+      model: modelFor(settings, 'review'),
       provider: backend.name,
       effort: settings.effort,
       strictness: settings.reviewStrictness,
@@ -865,9 +883,9 @@ export class ReviewService {
         const excerpt = await this.worktreeExcerpt(repoPath, path, parsed);
         const response = await backend.complete({
           system,
-          prompt: buildPrecommitFilePrompt({ context, path, oldPath: entry.file.oldPath, status: entry.file.status, language: languageFromPath(path), annotatedDiff: annotateHunks(parsed.hunks), contextExcerpt: excerpt, partial: partialPaths.includes(path), truncated: false }),
+          ...buildPrecommitFilePrompt({ context, path, oldPath: entry.file.oldPath, status: entry.file.status, language: languageFromPath(path), annotatedDiff: annotateHunks(parsed.hunks), contextExcerpt: excerpt, partial: partialPaths.includes(path), truncated: false }),
           schema: REVIEW_FILE_SCHEMA as unknown as Record<string, unknown>,
-          model: settings.model,
+          model: modelFor(settings, 'review'),
           effort: settings.effort,
           signal,
         });
@@ -929,7 +947,7 @@ export class ReviewService {
             run.droppedInvalid,
           ),
           schema: PRECOMMIT_SUMMARY_SCHEMA as unknown as Record<string, unknown>,
-          model: settings.model,
+          model: modelFor(settings, 'review'),
           effort: settings.effort === 'max' ? 'high' : settings.effort,
           signal,
         });
@@ -958,7 +976,7 @@ export class ReviewService {
     run.finishedAt = new Date().toISOString();
     await this.saveRun(run);
     emit({ phase: run.cancelled ? 'cancelled' : run.error ? 'error' : 'done', path: null, index: total, total, message: run.cancelled ? 'Review cancelled' : run.error ?? 'Review complete' });
-    log.info(`AI pre-commit review ${runId}: ${run.findings.length} finding(s), ${run.droppedInvalid} dropped, ${run.files.filter((f) => f.status === 'reviewed').length}/${run.files.length} files via ${backend.name}/${settings.model}`);
+    log.info(`AI pre-commit review ${runId}: ${run.findings.length} finding(s), ${run.droppedInvalid} dropped, ${run.files.filter((f) => f.status === 'reviewed').length}/${run.files.length} files via ${backend.name}/${modelFor(settings, 'review')}`);
     return run;
   }
 
@@ -990,10 +1008,11 @@ export class ReviewService {
     if (recordedHash === null || currentHash === null || currentHash !== recordedHash) {
       throw new AiError('The file changed since the review ran. Re-review before applying.', 'other');
     }
-    const fsPath = toFsPath(repoPath, finding.path);
-    const content = await readFile(fsPath, 'utf8');
+    toFsPath(repoPath, finding.path);
+    const content = (await readRepoFile(repoPath, finding.path))?.toString('utf8');
+    if (content === undefined) throw new AiError('This file is a symbolic link or outside the repository; edit it manually.', 'other');
     const next = replaceLinesInContent(content, finding.line, finding.endLine ?? finding.line, finding.suggestion);
-    await writeFile(fsPath, next, 'utf8');
+    await writeRepoFile(repoPath, finding.path, next);
     if (entry) entry.hash = await this.blobHash(repoPath, finding.path);
     await this.saveRun(run);
   }

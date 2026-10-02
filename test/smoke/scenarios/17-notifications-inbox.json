@@ -20,7 +20,7 @@
       "dump": "state.json"
     },
     {
-      "js": "(async () => { window.__gitgood.actions.toggleInboxPanel(); await new Promise((r) => setTimeout(r, 300)); const groups = Array.from(document.querySelectorAll('.inbox-panel .list-group-header')).map((el) => el.textContent); const chips = Array.from(document.querySelectorAll('.inbox-panel .badge')).map((el) => el.textContent); return JSON.stringify({ open: window.__gitgood.store.get().inboxUi.open, groups, chips }); })()",
+      "js": "(async () => { window.__gitgood.actions.toggleInboxPanel(); for (let i = 0; i < 40 && !document.querySelector('.inbox-panel .list-group-header'); i++) await new Promise((r) => setTimeout(r, 50)); const groups = Array.from(document.querySelectorAll('.inbox-panel .list-group-header')).map((el) => el.textContent); const chips = Array.from(document.querySelectorAll('.inbox-panel .badge')).map((el) => el.textContent); return JSON.stringify({ open: window.__gitgood.store.get().inboxUi.open, groups, chips }); })()",
       "dump": "panel.json"
     },
     { "shot": "bell-and-panel.png" },

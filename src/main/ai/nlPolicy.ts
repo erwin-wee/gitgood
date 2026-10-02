@@ -225,6 +225,116 @@ function firstUnknownFlag(flags: string[], allowed: readonly string[]): string |
   return flags.find((f) => !allowed.includes(f)) ?? null;
 }
 
+/**
+ * Per-command option allowlist for the inspect families. The palette runs these
+ * with no confirmation, so an option is accepted only when listed here with its
+ * exact spelling -- git also accepts unambiguous abbreviations of long options
+ * (`--outp=/abs`), which a denylist cannot enumerate.
+ */
+interface OptionSpec {
+  /** Exact option name -> null (takes no value) or a value rule. `optional`: bare flag allowed; `sep`: value may be the next token. */
+  flags: Record<string, null | { re: RegExp; optional?: boolean; sep?: boolean }>;
+  /** Whole-token spellings such as `-n5` or `-3`. */
+  tokens?: RegExp[];
+}
+
+const NUM = /^\d+$/;
+const ANY = /^.*$/;
+const SAFE_WORD = /^[\w.:%+ ,/-]+$/;
+const NO_EXTERNAL_DIFF = ['--no-ext-diff', '--no-textconv'];
+
+const noValue = (...names: string[]): Record<string, null> => Object.fromEntries(names.map((n) => [n, null]));
+
+const DIFF_OPTIONS: OptionSpec = {
+  flags: {
+    ...noValue('-p', '--patch', '-s', '--no-patch', '--raw', '--numstat', '--shortstat', '--summary', '--name-only', '--name-status', '--check', '--no-color', '--minimal', '--patience', '--histogram', '--no-renames', '-w', '--ignore-all-space', '-b', '--ignore-space-change', '--ignore-space-at-eol', '--ignore-blank-lines', '--cached', '--staged', '--no-ext-diff', '--no-textconv', '--full-index', '--binary', '--exit-code', '--quiet', '--compact-summary', '-R', '-a', '--text', '-M'),
+    '--stat': { re: /^\d+(,\d+){0,2}$/, optional: true },
+    '--color': { re: SAFE_WORD, optional: true },
+    '--find-renames': { re: /^\d+%?$/, optional: true },
+    '--unified': { re: NUM },
+    '--diff-filter': { re: /^[A-Za-z*]+$/ },
+    '--word-diff': { re: /^(color|plain|porcelain|none)$/, optional: true },
+  },
+  tokens: [/^-[UM]\d+%?$/, /^-[SG].+$/],
+};
+
+const SHOW_OPTIONS: OptionSpec = {
+  flags: {
+    ...DIFF_OPTIONS.flags,
+    ...noValue('--oneline', '--abbrev-commit', '--no-abbrev-commit', '--no-decorate'),
+    '--format': { re: ANY },
+    '--pretty': { re: ANY, optional: true },
+    '--abbrev': { re: NUM, optional: true },
+    '--date': { re: SAFE_WORD },
+    '--decorate': { re: /^(short|full|auto|no)$/, optional: true },
+  },
+  tokens: DIFF_OPTIONS.tokens,
+};
+
+const LOG_OPTIONS: OptionSpec = {
+  flags: {
+    ...SHOW_OPTIONS.flags,
+    ...noValue('--graph', '--all', '--branches', '--tags', '--remotes', '--first-parent', '--merges', '--no-merges', '--reverse', '--follow', '--topo-order', '--date-order', '--author-date-order', '--left-right', '--cherry-pick', '--cherry-mark', '--ancestry-path', '--simplify-by-decoration', '--source', '--parents', '--all-match', '--invert-grep', '-i', '--regexp-ignore-case', '-E', '--extended-regexp', '-F', '--fixed-strings', '-g', '--walk-reflogs'),
+    '-n': { re: NUM, sep: true },
+    '--max-count': { re: NUM, sep: true },
+    '--skip': { re: NUM },
+    '--since': { re: ANY }, '--until': { re: ANY }, '--after': { re: ANY }, '--before': { re: ANY },
+    '--author': { re: ANY }, '--committer': { re: ANY }, '--grep': { re: ANY },
+  },
+  tokens: [...(DIFF_OPTIONS.tokens ?? []), /^-n\d+$/, /^-\d+$/],
+};
+
+const STATUS_OPTIONS: OptionSpec = {
+  flags: {
+    ...noValue('-s', '--short', '-b', '--branch', '-sb', '--long', '--show-stash', '--ahead-behind', '--no-ahead-behind', '-z', '--renames', '--no-renames'),
+    '--porcelain': { re: /^v[12]$/, optional: true },
+    '--untracked-files': { re: /^(no|normal|all)$/, optional: true },
+    '--ignored': { re: /^(traditional|matching|no)$/, optional: true },
+  },
+  tokens: [/^-u(no|normal|all)?$/],
+};
+
+const REV_PARSE_OPTIONS: OptionSpec = {
+  flags: {
+    ...noValue('--verify', '-q', '--quiet', '--show-toplevel', '--is-inside-work-tree', '--is-bare-repository', '--is-shallow-repository', '--show-prefix', '--show-cdup', '--symbolic-full-name', '--symbolic', '--branches', '--tags', '--remotes', '--all'),
+    '--short': { re: NUM, optional: true },
+    '--abbrev-ref': { re: /^(strict|loose)$/, optional: true },
+  },
+};
+
+const INSPECT_OPTIONS: Record<string, OptionSpec> = { status: STATUS_OPTIONS, log: LOG_OPTIONS, show: SHOW_OPTIONS, diff: DIFF_OPTIONS, 'rev-parse': REV_PARSE_OPTIONS };
+
+/** The first option token in `argv` (before any `--`) that `spec` does not allow, or null. */
+function firstDisallowedOption(argv: string[], spec: OptionSpec): string | null {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') return null;
+    if (!a.startsWith('-') || spec.tokens?.some((re) => re.test(a))) continue;
+    const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+    const name = eq < 0 ? a : a.slice(0, eq);
+    let value = eq < 0 ? undefined : a.slice(eq + 1);
+    if (!Object.hasOwn(spec.flags, name)) return a;
+    const rule = spec.flags[name];
+    if (rule === null) {
+      if (value !== undefined) return a;
+      continue;
+    }
+    if (value === undefined) {
+      if (rule.optional) continue;
+      if (!rule.sep || argv[i + 1] === undefined) return a;
+      value = argv[++i];
+    }
+    if (!rule.re.test(value)) return a;
+  }
+  return null;
+}
+
+function inspectResult(label: string, args: string[], spec: OptionSpec, mapped: string[]): MatchResult {
+  const bad = firstDisallowedOption(args, spec);
+  if (bad) return { family: 'inspect', risk: 'safe', mappedAction: null, mappedArgs: [], refusalReason: `The option "${bad}" is not in the allowed set for "git ${label}".` };
+  return { family: 'inspect', risk: 'safe', mappedAction: 'git.tryRun', mappedArgs: [mapped] };
+}
+
 // ---- inspect --------------------------------------------------------------
 
 const INSPECT_COMMANDS = new Set(['status', 'log', 'show', 'diff', 'rev-parse']);
@@ -253,7 +363,9 @@ function matchInspect(cmd: string, rest: string[]): MatchResult | null {
   // Inspect commands read only: refuse anything that could reach outside the repository.
   if (rest.some(hasUnsafePathToken)) return null;
   if (INSPECT_COMMANDS.has(cmd)) {
-    return { family: 'inspect', risk: 'safe', mappedAction: 'git.tryRun', mappedArgs: [[cmd, ...rest]] };
+    // Diff-producing commands never run a configured external diff/textconv program, whatever the repo's config says.
+    const diffs = cmd === 'log' || cmd === 'show' || cmd === 'diff';
+    return inspectResult(cmd, rest, INSPECT_OPTIONS[cmd], [cmd, ...(diffs ? NO_EXTERNAL_DIFF : []), ...rest]);
   }
   if (cmd === 'branch') {
     // `git branch` reaches git verbatim via the tryRun sentinel, and `readOnly`
@@ -270,10 +382,11 @@ function matchInspect(cmd: string, rest: string[]): MatchResult | null {
     return { family: 'inspect', risk: 'safe', mappedAction: 'git.tryRun', mappedArgs: [['branch', ...rest]] };
   }
   if (cmd === 'stash' && rest[0] === 'list') {
-    return { family: 'inspect', risk: 'safe', mappedAction: 'git.tryRun', mappedArgs: [['stash', 'list', ...rest.slice(1)]] };
+    return inspectResult('stash list', rest.slice(1), LOG_OPTIONS, ['stash', 'list', ...NO_EXTERNAL_DIFF, ...rest.slice(1)]);
   }
   if (cmd === 'reflog' && (rest.length === 0 || rest[0] === 'show')) {
-    return { family: 'inspect', risk: 'safe', mappedAction: 'git.tryRun', mappedArgs: [['reflog', ...rest]] };
+    const args = rest.slice(rest[0] === 'show' ? 1 : 0);
+    return inspectResult('reflog', args, LOG_OPTIONS, ['reflog', 'show', ...NO_EXTERNAL_DIFF, ...args]);
   }
   return null;
 }

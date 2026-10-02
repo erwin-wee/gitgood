@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { scrubSecrets } from '@shared/secrets';
 
 let logDir: string | null = null;
 let logFile: string | null = null;
@@ -9,7 +10,7 @@ export function initLogger(dir: string): void {
   logDir = dir;
   logFile = join(dir, 'gitgood.log');
   try {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch {
     /* ignore */
   }
@@ -20,7 +21,7 @@ export function getLogPath(): string {
 }
 
 function write(level: string, message: string): void {
-  const line = `${new Date().toISOString()} [${level}] ${message}\n`;
+  const line = `${new Date().toISOString()} [${level}] ${scrubSecrets(message)}\n`;
   if (process.env.NODE_ENV !== 'production' || level !== 'info') {
     if (level === 'error') console.error(line.trimEnd());
     else if (level === 'warn') console.warn(line.trimEnd());
@@ -31,7 +32,7 @@ function write(level: string, message: string): void {
     if (existsSync(logFile) && statSync(logFile).size > MAX_BYTES) {
       renameSync(logFile, join(logDir, 'gitgood.old.log'));
     }
-    appendFileSync(logFile, line);
+    appendFileSync(logFile, line, { mode: 0o600 });
   } catch {
     /* ignore */
   }

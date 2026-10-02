@@ -1,5 +1,6 @@
 import type { ManualResolutionExample } from '@shared/types';
 import { hasConflictMarkers, parseConflicts } from '@shared/diff/conflicts';
+import { secretFileReason } from '@shared/secrets';
 
 const MAX_EXAMPLES = 3;
 const MAX_TOTAL_BYTES = 12_000;
@@ -23,9 +24,10 @@ function byteLength(s: string): number {
  * of surrounding context on each side, for both the original (marked) and
  * resolved text, so the model sees the reconciliation pattern without the
  * whole file. Returns null when `original` has no parseable conflict blocks
- * (nothing useful to show as an example).
+ * (nothing useful to show as an example), or when the file looks like a secrets file.
  */
 export function trimManualResolution(raw: RawManualResolution): ManualResolutionExample | null {
+  if (secretFileReason(raw.path)) return null;
   if (!hasConflictMarkers(raw.original)) return null;
   const parsed = parseConflicts(raw.original);
   if (!parsed.blocks.length) return null;

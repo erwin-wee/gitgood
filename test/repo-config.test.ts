@@ -7,21 +7,27 @@ import { resolveCheckCommand } from '../src/main/ai/check-runner';
 
 describe('parseRepoConfig', () => {
   it('reads a valid postResolveCheck command', () => {
-    expect(parseRepoConfig({ postResolveCheck: 'npm run typecheck' })).toEqual({ postResolveCheck: 'npm run typecheck' });
+    expect(parseRepoConfig({ postResolveCheck: 'npm run typecheck' })).toEqual({ postResolveCheck: 'npm run typecheck', ai: true });
   });
 
   it('treats a missing field as no command', () => {
-    expect(parseRepoConfig({})).toEqual({ postResolveCheck: null });
+    expect(parseRepoConfig({})).toEqual({ postResolveCheck: null, ai: true });
   });
 
   it('treats a blank command as no command', () => {
-    expect(parseRepoConfig({ postResolveCheck: '   ' })).toEqual({ postResolveCheck: null });
+    expect(parseRepoConfig({ postResolveCheck: '   ' })).toEqual({ postResolveCheck: null, ai: true });
+  });
+
+  it('reads "ai": false as an opt-out and anything else as enabled', () => {
+    expect(parseRepoConfig({ ai: false }).ai).toBe(false);
+    expect(parseRepoConfig({ ai: 'no' }).ai).toBe(true);
+    expect(parseRepoConfig({}).ai).toBe(true);
   });
 
   it('treats malformed input as no command', () => {
-    expect(parseRepoConfig(null)).toEqual({ postResolveCheck: null });
-    expect(parseRepoConfig('not an object')).toEqual({ postResolveCheck: null });
-    expect(parseRepoConfig({ postResolveCheck: 42 })).toEqual({ postResolveCheck: null });
+    expect(parseRepoConfig(null)).toEqual({ postResolveCheck: null, ai: true });
+    expect(parseRepoConfig('not an object')).toEqual({ postResolveCheck: null, ai: true });
+    expect(parseRepoConfig({ postResolveCheck: 42 })).toEqual({ postResolveCheck: null, ai: true });
   });
 });
 
@@ -36,19 +42,19 @@ describe('readRepoConfig (fixture)', () => {
     dir = mkdtempSync(join(tmpdir(), 'gitgood-repo-config-'));
     mkdirSync(join(dir, '.gitgood'));
     writeFileSync(join(dir, '.gitgood', 'config.json'), JSON.stringify({ postResolveCheck: 'npm run typecheck' }));
-    expect(await readRepoConfig(dir)).toEqual({ postResolveCheck: 'npm run typecheck' });
+    expect(await readRepoConfig(dir)).toEqual({ postResolveCheck: 'npm run typecheck', ai: true });
   });
 
   it('returns no command when the file is absent', async () => {
     dir = mkdtempSync(join(tmpdir(), 'gitgood-repo-config-'));
-    expect(await readRepoConfig(dir)).toEqual({ postResolveCheck: null });
+    expect(await readRepoConfig(dir)).toEqual({ postResolveCheck: null, ai: true });
   });
 
   it('returns no command when the file is malformed JSON, without throwing', async () => {
     dir = mkdtempSync(join(tmpdir(), 'gitgood-repo-config-'));
     mkdirSync(join(dir, '.gitgood'));
     writeFileSync(join(dir, '.gitgood', 'config.json'), '{ not json');
-    expect(await readRepoConfig(dir)).toEqual({ postResolveCheck: null });
+    expect(await readRepoConfig(dir)).toEqual({ postResolveCheck: null, ai: true });
   });
 
   it('the trust gate refuses a command read from an untrusted repository, even though the file declares one', async () => {

@@ -27,6 +27,14 @@ function unescapedMetaCharsRemain(escaped: string): boolean {
 }
 
 describe('cmdEscapeArgument', () => {
+  it('survives the second parse a batch file gives its arguments when it expands %*', () => {
+    const schema = JSON.stringify({ description: 'a & b | c' });
+    const escaped = cmdEscapeArgument(schema, true);
+    expect(unescapedMetaCharsRemain(escaped)).toBe(false);
+    expect(unescapedMetaCharsRemain(cmdUnescape(escaped))).toBe(false);
+    expect(cmdUnescape(cmdUnescape(escaped))).toBe(`"${schema.replace(/"/g, '\\"')}"`);
+  });
+
   it('leaves no metacharacter for cmd.exe to act on', () => {
     for (const arg of ['plain', 'has space', 'a&b', 'a|b', 'a>b', 'a<b', 'p(1)', '100%', 'a^b', 'say"hi', '{"k":"v"}']) {
       expect(unescapedMetaCharsRemain(cmdEscapeArgument(arg)), `${arg} -> ${cmdEscapeArgument(arg)}`).toBe(false);
@@ -71,7 +79,7 @@ describe('buildWindowsCmdInvocation', () => {
     const { file, args } = buildWindowsCmdInvocation('C:\\npm\\claude.cmd', ['-p', '--json-schema', '{"a":"b"}'], 'C:\\Windows\\system32\\cmd.exe');
     expect(file).toBe('C:\\Windows\\system32\\cmd.exe');
     expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
-    const inner = ['C:\\npm\\claude.cmd', '-p', '--json-schema', '{"a":"b"}'].map(cmdEscapeArgument).join(' ');
+    const inner = [cmdEscapeArgument('C:\\npm\\claude.cmd'), ...['-p', '--json-schema', '{"a":"b"}'].map((a) => cmdEscapeArgument(a, true))].join(' ');
     // Wrapped so /S's stripping (first char + last quote char in the whole
     // string) removes exactly the wrapper, leaving every per-argument quote
     // pair -- all of them `^`-escaped -- untouched.

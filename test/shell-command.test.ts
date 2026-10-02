@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildCommandScript, canRunCommandIn, keepOpenPosix, quotingFor, shellCommandInvocation } from '../src/main/integrations/shell-command';
+import { buildCommandScript, canRunCommandIn, keepOpenPosix, shellCommandInvocation } from '../src/main/integrations/shell-command';
+import { quotingFor } from '../src/shared/agent-presets';
 
 const CMD = 'claude "Read the file /home/dev/my app/.git/gitgood/review/latest.md and fix every finding it lists. Do not commit."';
 const CWD = '/home/dev/my app';

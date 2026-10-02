@@ -71,6 +71,16 @@ export function unquote(quoted: string): string {
   return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
+/** Paths from a Git diff header, including C-quoted UTF-8/control characters. */
+export function pathsFromDiffHeader(line: string): { oldPath: string; newPath: string } | null {
+  const m = /^diff --git (?:"(a\/(?:[^"\\]|\\.)*)"|(a\/\S.*?)) (?:"(b\/(?:[^"\\]|\\.)*)"|(b\/.*))$/.exec(line);
+  if (!m) return null;
+  const a = m[1] ? unquote('"' + m[1] + '"') : m[2];
+  const b = m[3] ? unquote('"' + m[3] + '"') : m[4];
+  return a && b ? { oldPath: a.slice(2), newPath: b.slice(2) } : null;
+}
+
+
 /**
  * Parses `git diff` output. Handles one or more file sections and returns them
  * in order; most callers only diff a single path and use parseUnifiedDiff.

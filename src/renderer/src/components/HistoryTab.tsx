@@ -1,9 +1,12 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import type { Commit, CommitSignature, HistoryQuery, SignatureStatus } from '@shared/types';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { markBisect, startBisectFrom } from '../state/reflog';
+import { aiEnabled as aiOn } from '@shared/ai-model';
+import { extendGraph, type Graph, type GraphRow } from '@shared/graph';
+import type { Commit, CommitSignature, HistoryQuery, OperationKind, SignatureStatus } from '@shared/types';
 import { isMac } from '../api';
 import * as actions from '../state/actions';
 import { historyFilterActive, historyReorderDisabled } from '../state/actions';
-import { openDialog, patchHistory, setPopover, store, useAppStore } from '../state/store';
+import { openDialog, patchHistory, setPopover, store, useAppStore, useAiEnabled } from '../state/store';
 import { CommitFileRow } from './ChangesTab';
 import { onListKeyDown } from '../lib/listKeys';
 import { Avatar, Badge, Button, Callout, Checkbox, FilterInput, Icon, RelativeTime, Spinner, TextField, openContextMenu, type IconName, type MenuItem } from './ui';
@@ -11,6 +14,72 @@ import { useWindowedRows } from '../lib/windowing';
 
 const COMMIT_ROW_ESTIMATES = { row: 60 };
 const commitRowKind = (): string => 'row';
+
+const FILES_WIDTH_KEY = 'gitgood.commitFilesWidth';
+const FILES_WIDTH_MIN = 160;
+const FILES_WIDTH_MAX = 640;
+const FILES_WIDTH_DEFAULT = 280;
+const FILES_WIDTH_STEP = 16;
+
+function loadFilesWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(FILES_WIDTH_KEY));
+    return Number.isFinite(n) && n >= FILES_WIDTH_MIN && n <= FILES_WIDTH_MAX ? n : FILES_WIDTH_DEFAULT;
+  } catch {
+    return FILES_WIDTH_DEFAULT;
+  }
+}
+
+/** Drag handle on the right edge of the commit's changed-files pane. The width is written straight to the DOM while dragging and committed (state + localStorage) on release; arrow keys resize too. The `.commit-files` CSS min/max-width keep it usable in narrow windows, and phone/tablet-portrait layouts hide the handle and override the width. */
+function FilesResizer({ width, onCommit }: { width: number; onCommit: (width: number) => void }): React.JSX.Element {
+  const [active, setActive] = useState(false);
+  const clamp = (w: number, pane: HTMLElement): number => {
+    const available = pane.parentElement?.clientWidth ?? FILES_WIDTH_MAX;
+    return Math.round(Math.max(FILES_WIDTH_MIN, Math.min(FILES_WIDTH_MAX, available * 0.6, w)));
+  };
+  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const pane = e.currentTarget.parentElement;
+    if (!pane) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = width;
+    let next = width;
+    setActive(true);
+    const move = (ev: MouseEvent): void => {
+      next = clamp(startWidth + ev.clientX - startX, pane);
+      pane.style.setProperty('--commit-files-width', `${next}px`);
+    };
+    const up = (): void => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      setActive(false);
+      onCommit(next);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const pane = e.currentTarget.parentElement;
+    const delta = e.key === 'ArrowLeft' ? -FILES_WIDTH_STEP : e.key === 'ArrowRight' ? FILES_WIDTH_STEP : 0;
+    if (!pane || !delta) return;
+    e.preventDefault();
+    onCommit(clamp(width + (e.shiftKey ? delta * 4 : delta), pane));
+  };
+  return (
+    <div
+      className={`commit-files-resizer ${active ? 'active' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize changed files pane"
+      aria-valuemin={FILES_WIDTH_MIN}
+      aria-valuemax={FILES_WIDTH_MAX}
+      aria-valuenow={width}
+      tabIndex={0}
+      onMouseDown={onMouseDown}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
 
 const SIGNATURE_BADGES: Partial<Record<SignatureStatus, { icon: IconName; className: string; label: (signer: string | null) => string }>> = {
   good: { icon: 'check-circle', className: 'sig-good', label: (signer) => `Good signature${signer ? ` from ${signer}` : ''}` },
@@ -31,12 +100,29 @@ function SignatureBadge({ signature }: { signature: CommitSignature | null }): R
   return <Icon name={badge.icon} size={12} className={badge.className} title={badge.label(signature.signer)} />;
 }
 
+/** Bisect entries: start (this commit is good / bad) when idle, otherwise mark this commit while a bisect runs. */
+function bisectMenuItems(commit: Commit, operation: OperationKind): MenuItem[] {
+  if (operation === 'bisect') {
+    return [
+      { label: 'Bisect: mark as good', icon: 'check-circle', onClick: () => void markBisect('good', commit.sha) },
+      { label: 'Bisect: mark as bad', icon: 'x-circle', onClick: () => void markBisect('bad', commit.sha) },
+      { label: 'Bisect: skip', icon: 'skip', onClick: () => void markBisect('skip', commit.sha) },
+    ];
+  }
+  const label = `${commit.shortSha} ${commit.summary}`;
+  const title = operation === 'none' ? undefined : 'Finish the operation in progress first';
+  return [
+    { label: 'Bisect: this commit is good (bad = HEAD)', icon: 'check-circle', disabled: operation !== 'none', title, onClick: () => startBisectFrom(commit.sha, label, 'good') },
+    { label: 'Bisect: this commit is bad…', icon: 'x-circle', disabled: operation !== 'none', title, onClick: () => startBisectFrom(commit.sha, label, 'bad') },
+  ];
+}
+
 function commitMenu(commit: Commit, selected: string[]): MenuItem[] {
   const s = store.get();
   const repo = s.currentRepo;
   const isHead = s.status?.branch.sha === commit.sha;
   const tags = commit.refs.filter((r) => r.startsWith('tag: ')).map((r) => r.slice(5));
-  const aiEnabled = (s.settings?.ai.provider ?? 'disabled') !== 'disabled';
+  const aiEnabled = aiOn(s.settings, s.currentRepo);
   if (selected.length > 1 && selected.includes(commit.sha)) {
     const target = s.history.commits.filter((c) => selected.includes(c.sha)).pop()!;
     const tidyReason = aiEnabled ? actions.tidyBranchDisabledReason(selected) : 'AI features are turned off';
@@ -62,6 +148,8 @@ function commitMenu(commit: Commit, selected: string[]): MenuItem[] {
     { label: 'Checkout commit', onClick: () => void actions.checkoutCommit(commit.sha) },
     { label: 'Drop commit…', danger: true, onClick: () => openDialog({ kind: 'confirm', title: 'Drop commit?', message: `"${commit.summary}" will be removed from the branch history. Commits after it are rewritten.`, confirmLabel: 'Drop commit', danger: true, onConfirm: () => void actions.dropCommit(commit.sha) }) },
     { type: 'separator' },
+    ...bisectMenuItems(commit, s.status?.operation.kind ?? 'none'),
+    { type: 'separator' },
     { label: 'Copy SHA', onClick: () => void actions.copyToClipboard(commit.sha, 'SHA copied') },
     ...(tags.length ? [{ label: 'Copy tag names', onClick: () => void actions.copyToClipboard(tags.join('\n'), 'Tags copied') }] : []),
     { label: 'View on GitHub', icon: 'external', onClick: () => repo?.github && void actions.openExternal(`${repo.github.url}/commit/${commit.sha}`), disabled: !repo?.github },
@@ -84,6 +172,10 @@ export function HistoryTab(): React.JSX.Element {
   const win = useWindowedRows(listEl, { count: history.commits.length, kindOf: commitRowKind, keyOf: commitKey, estimates: COMMIT_ROW_ESTIMATES, resetKey: history.path ?? '' });
   const filterActive = historyFilterActive(history);
   const reorderDisabled = historyReorderDisabled(history);
+  // Lanes are extended incrementally per loaded page (see extendGraph); `history.graph` is false while a filter/path narrows the list.
+  const graphRef = useRef<Graph | null>(null);
+  const graph = useMemo(() => (graphRef.current = history.graph ? extendGraph(graphRef.current, history.commits) : null), [history.graph, history.commits]);
+  const graphLanes = graph ? Math.min(graph.width, GRAPH_MAX_LANES) : 0;
 
   useEffect(() => {
     const el = sentinel.current;
@@ -121,7 +213,7 @@ export function HistoryTab(): React.JSX.Element {
   const rows: React.ReactNode[] = [];
   for (let i = win.start; i < win.end; i++) {
     const c = history.commits[i];
-    rows.push(<CommitRow key={c.sha} rowRef={win.rowRef(i)} commit={c} selected={history.selectedShas.includes(c.sha)} inactive={!focused} unpushed={unpushedCount !== null && i < unpushedCount} dragOver={dragOver === c.sha} draggable={!reorderDisabled} verifySignatures={verifySignatures} onDragOver={onRowDragOver} onDragLeave={onRowDragLeave} onDragEnd={onRowDragEnd} onDrop={onDrop} />);
+    rows.push(<CommitRow key={c.sha} rowRef={win.rowRef(i)} commit={c} selected={history.selectedShas.includes(c.sha)} inactive={!focused} unpushed={unpushedCount !== null && i < unpushedCount} dragOver={dragOver === c.sha} draggable={!reorderDisabled} verifySignatures={verifySignatures} graph={graph ? graph.rows[i] : null} graphLanes={graphLanes} onDragOver={onRowDragOver} onDragLeave={onRowDragLeave} onDragEnd={onRowDragEnd} onDrop={onDrop} />);
   }
 
   return (
@@ -252,7 +344,7 @@ export function HistoryTab(): React.JSX.Element {
   );
 }
 
-const CommitRow = memo(function CommitRow({ commit: c, selected, inactive, unpushed, dragOver, draggable, verifySignatures, rowRef, onDragOver, onDragLeave, onDragEnd, onDrop }: { commit: Commit; selected: boolean; inactive: boolean; unpushed: boolean; dragOver: boolean; draggable: boolean; verifySignatures: boolean; rowRef: (el: HTMLElement | null) => void; onDragOver: (sha: string, e: React.DragEvent) => void; onDragLeave: (sha: string) => void; onDragEnd: () => void; onDrop: (sha: string) => void }): React.JSX.Element {
+const CommitRow = memo(function CommitRow({ commit: c, selected, inactive, unpushed, dragOver, draggable, verifySignatures, graph, graphLanes, rowRef, onDragOver, onDragLeave, onDragEnd, onDrop }: { commit: Commit; selected: boolean; inactive: boolean; unpushed: boolean; dragOver: boolean; draggable: boolean; verifySignatures: boolean; graph: GraphRow | null; graphLanes: number; rowRef: (el: HTMLElement | null) => void; onDragOver: (sha: string, e: React.DragEvent) => void; onDragLeave: (sha: string) => void; onDragEnd: () => void; onDrop: (sha: string) => void }): React.JSX.Element {
   const tags = c.refs.filter((r) => r.startsWith('tag: ')).map((r) => r.slice(5));
   const branchesRefs = c.refs.filter((r) => !r.startsWith('tag: ') && r !== 'HEAD');
   return (
@@ -287,6 +379,7 @@ const CommitRow = memo(function CommitRow({ commit: c, selected, inactive, unpus
         if (!e.currentTarget.title) e.currentTarget.title = `${c.shortSha} · ${c.author.name} · ${new Date(c.author.date).toLocaleString()}`;
       }}
     >
+      {graph ? <GraphGutter row={graph} lanes={graphLanes} /> : null}
       <Avatar email={c.author.email} name={c.author.name} size={24} />
       <span className="row-main">
         <span className="commit-primary">
@@ -329,9 +422,32 @@ const CommitRow = memo(function CommitRow({ commit: c, selected, inactive, unpus
   );
 });
 
+const GRAPH_MAX_LANES = 10;
+const GRAPH_LANE_W = 12;
+/** Must match `.commit-row`'s fixed desktop height (components.css); the gutter is hidden on phone layouts, where rows grow. */
+const GRAPH_ROW_H = 60;
+
+/** One row's slice of the commit graph: line segments in lane colours plus the commit's node. Lanes past GRAPH_MAX_LANES are squeezed into the last column. */
+const GraphGutter = memo(function GraphGutter({ row, lanes }: { row: GraphRow; lanes: number }): React.JSX.Element {
+  const mid = GRAPH_ROW_H / 2;
+  const x = (lane: number) => Math.min(lane, lanes - 1) * GRAPH_LANE_W + GRAPH_LANE_W / 2;
+  return (
+    <svg className="commit-graph" width={lanes * GRAPH_LANE_W} height={GRAPH_ROW_H} aria-hidden="true">
+      {row.segments.map((s, i) => {
+        const x1 = x(s.from);
+        const x2 = x(s.to);
+        const d = s.kind === 'through' ? `M${x1} 0V${GRAPH_ROW_H}` : s.kind === 'up' ? `M${x1} 0C${x1} ${mid / 2} ${x2} ${mid / 2} ${x2} ${mid}` : `M${x1} ${mid}C${x1} ${mid * 1.5} ${x2} ${mid * 1.5} ${x2} ${GRAPH_ROW_H}`;
+        return <path key={i} d={d} className={`graph-c${s.color}`} />;
+      })}
+      <circle cx={x(row.column)} cy={mid} r={4} className={`graph-c${row.color}`} />
+    </svg>
+  );
+});
+
 /** Form-control equivalent of the search box's `key:value` syntax; two-way synced through `history.query` (see setHistoryQuery). */
 function HistoryFilterPopover(): React.JSX.Element {
   const query = useAppStore((s) => s.history.query);
+  const showGraph = useAppStore((s) => s.settings?.historyGraph ?? false);
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -364,6 +480,7 @@ function HistoryFilterPopover(): React.JSX.Element {
           <TextField label="Before" type="date" value={query.before ?? ''} onChange={(e) => update({ before: e.target.value || null })} />
         </div>
         <Checkbox checked={query.allRefs} onChange={(v) => update({ allRefs: v })} label="Search every branch, tag and remote" />
+        <Checkbox checked={showGraph} onChange={(v) => void actions.updateSettings({ historyGraph: v })} label="Show commit graph (hidden while searching or filtering)" />
       </div>
       <div className="popover-footer">
         <Button size="sm" variant="ghost" onClick={() => actions.clearHistoryFilter()}>Clear all</Button>
@@ -379,8 +496,17 @@ export function CommitDetailsPane(): React.JSX.Element {
   const repo = useAppStore((s) => s.currentRepo);
   const status = useAppStore((s) => s.status);
   const verifySignatures = useAppStore((s) => s.settings?.historyVerifySignatures ?? false);
-  const aiEnabled = useAppStore((s) => (s.settings?.ai.provider ?? 'disabled') !== 'disabled');
+  const aiEnabled = useAiEnabled();
   const [expanded, setExpanded] = useState(false);
+  const [filesWidth, setFilesWidth] = useState(loadFilesWidth);
+  const commitFilesWidth = useCallback((width: number): void => {
+    setFilesWidth(width);
+    try {
+      localStorage.setItem(FILES_WIDTH_KEY, String(width));
+    } catch {
+      /* private mode / storage disabled: keep the width for this session only */
+    }
+  }, []);
 
   if (history.selectedShas.length > 1) {
     const selectedCommits = history.commits.filter((c) => history.selectedShas.includes(c.sha));
@@ -469,7 +595,7 @@ export function CommitDetailsPane(): React.JSX.Element {
         ) : null}
       </div>
       <div className="commit-body">
-        <div className="commit-files">
+        <div className="commit-files" style={{ '--commit-files-width': `${filesWidth}px` } as React.CSSProperties}>
           <div className="changes-header">
             <span className="count">
               {visibleFiles.length} {history.matchingFiles ? 'matching' : 'changed'} file{visibleFiles.length === 1 ? '' : 's'}
@@ -500,6 +626,7 @@ export function CommitDetailsPane(): React.JSX.Element {
               />
             ))}
           </div>
+          <FilesResizer width={filesWidth} onCommit={commitFilesWidth} />
         </div>
         <div id="commit-diff-slot" style={{ display: 'flex', flex: 1, minWidth: 0 }} />
       </div>

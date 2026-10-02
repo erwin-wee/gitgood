@@ -1,4 +1,6 @@
 import type { CommitOptions, DiffHunk, SplitApplyProgress, SplitHunk, SplitPlan, SplitPreflight, WorkingFile } from '@shared/types';
+import { modelFor } from '@shared/ai-model';
+import { secretFileReason } from '@shared/secrets';
 import { buildStagePatch, selectHunks } from '@shared/diff/patch';
 import { languageFromPath } from '@shared/util';
 import { createCommit, isUnborn, unstageAll } from '../git/commit';
@@ -9,6 +11,7 @@ import { log } from '../logger';
 import type { Store } from '../store';
 import type { ToolLocator } from '../tools';
 import { AiError } from './backends';
+import { ClientJobs } from '../core/client-context';
 import { createBackend } from './provider';
 import { buildSplitPrompt, SPLIT_SCHEMA, SPLIT_SYSTEM_PROMPT, type SplitPromptHunkInput } from './prompts';
 import { annotateHunks } from './review-core';
@@ -36,18 +39,17 @@ interface ClassifiedIncluded {
  * calls the model.
  */
 export class SplitterService {
-  private controller: AbortController | null = null;
+  private readonly jobs = new ClientJobs();
 
   constructor(private readonly store: Store, private readonly tools: ToolLocator, private readonly git: GitClient) {}
 
   cancel(): void {
-    this.controller?.abort();
-    this.controller = null;
+    this.jobs.cancel();
   }
 
   /** True while a plan proposal is in flight; used by the update-install gate. */
   isActive(): boolean {
-    return this.controller !== null;
+    return this.jobs.isActive();
   }
 
   private async fileHash(repoPath: string, path: string): Promise<string> {
@@ -71,6 +73,11 @@ export class SplitterService {
     for (const path of files) {
       const file = byPath.get(path);
       if (!file) continue;
+      const secret = secretFileReason(path);
+      if (secret) {
+        excluded.push({ path, reason: `${secret}, never sent to AI` });
+        continue;
+      }
       let fileHunks: DiffHunk[] = [];
       let unsplittableReason: string | null = null;
       if (!file.conflict) {
@@ -129,9 +136,8 @@ export class SplitterService {
     const wholeFileOnlyPaths = wholeFileOnly.map((f) => f.path);
     if (hunks.length + wholeFileOnlyPaths.length < 2) throw new AiError('At least two hunks or whole files are needed to split into commits.', 'other');
 
-    const { backend, settings: aiSettings } = await createBackend(this.store, this.tools);
-    const controller = new AbortController();
-    this.controller = controller;
+    const { backend, settings: aiSettings } = await createBackend(this.store, this.tools, 'split');
+    const controller = this.jobs.start();
     try {
       let bytes = 0;
       for (const fileHunks of hunksByFile.values()) bytes += annotateHunks(fileHunks).length;
@@ -141,7 +147,7 @@ export class SplitterService {
         return { id: h.id, path: h.path, header: h.header, language: languageFromPath(h.path), additions: h.additions, deletions: h.deletions, body: bodiesIncluded ? annotateHunks([dh]) : null };
       });
       const prompt = buildSplitPrompt({ branch: status.branch.name, hunks: promptHunks, wholeFileOnly: wholeFileOnly.map((f) => ({ path: f.path, status: f.reason })), bodiesIncluded });
-      const response = await backend.complete({ system: SPLIT_SYSTEM_PROMPT, prompt, schema: SPLIT_SCHEMA as unknown as Record<string, unknown>, model: aiSettings.model, effort: aiSettings.effort, signal: controller.signal });
+      const response = await backend.complete({ system: SPLIT_SYSTEM_PROMPT, prompt, schema: SPLIT_SCHEMA as unknown as Record<string, unknown>, model: modelFor(aiSettings, 'split'), effort: aiSettings.effort, signal: controller.signal });
       const { commits, unassigned, warnings } = validateSplitResponse(response.json, hunks, wholeFileOnlyPaths);
 
       const startSha = (await this.git.stdout(repoPath, ['rev-parse', 'HEAD'], { readOnly: true })).trim();
@@ -152,7 +158,7 @@ export class SplitterService {
       log.info(`AI split plan ${plan.id}: ${commits.length} commit(s) from ${hunks.length} hunk(s)/${wholeFileOnlyPaths.length} whole file(s) via ${backend.name}/${response.model}`);
       return plan;
     } finally {
-      if (this.controller === controller) this.controller = null;
+      this.jobs.end(controller);
     }
   }
 

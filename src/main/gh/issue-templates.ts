@@ -8,9 +8,10 @@
  * exist on disk is impure and lives in `discoverIssueTemplates`, which is the
  * only part of this module that touches the filesystem.
  */
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IssueTemplate } from '@shared/types';
+import { readRepoFile } from '../repo/paths';
 
 /** Parses one issue template file's front matter and body. Pure. */
 export function parseIssueTemplate(content: string, filename: string): IssueTemplate {
@@ -69,21 +70,13 @@ export async function discoverIssueTemplates(repoPath: string): Promise<IssueTem
     const files = entries.filter((e) => e.isFile() && /\.(md|markdown|ya?ml)$/i.test(e.name) && !/^config\.ya?ml$/i.test(e.name)).map((e) => e.name);
     const templates: IssueTemplate[] = [];
     for (const file of files) {
-      try {
-        const content = await readFile(join(dir, file), 'utf8');
-        templates.push(parseIssueTemplate(content, file));
-      } catch {
-        /* skip unreadable file */
-      }
+      const content = (await readRepoFile(repoPath, `.github/ISSUE_TEMPLATE/${file}`))?.toString('utf8');
+      if (content !== undefined) templates.push(parseIssueTemplate(content, file));
     }
     return templates;
   } catch {
     // No directory; fall back to the legacy single-file template.
-    try {
-      const content = await readFile(join(repoPath, '.github', 'ISSUE_TEMPLATE.md'), 'utf8');
-      return [parseIssueTemplate(content, 'ISSUE_TEMPLATE.md')];
-    } catch {
-      return [];
-    }
+    const content = (await readRepoFile(repoPath, '.github/ISSUE_TEMPLATE.md'))?.toString('utf8');
+    return content === undefined ? [] : [parseIssueTemplate(content, 'ISSUE_TEMPLATE.md')];
   }
 }

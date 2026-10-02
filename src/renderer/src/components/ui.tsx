@@ -375,6 +375,8 @@ export function Dialog({ title, onClose, children, footer, width, icon, dismissi
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && dismissible) {
+        // The server folder picker opens over its asking dialog: only the topmost dialog takes Escape.
+        if (ref.current?.closest('.dialog-backdrop') !== [...document.querySelectorAll('.dialog-backdrop')].at(-1)) return;
         e.stopPropagation();
         onClose();
         return;

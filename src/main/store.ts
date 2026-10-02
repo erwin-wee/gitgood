@@ -15,22 +15,35 @@ interface Persisted<T> {
   value: T;
 }
 
+/** A missing file is the normal first-run case. A file that fails to parse is moved aside as `<file>.corrupt-<ts>` so the next write cannot silently destroy it. */
 function readJson<T>(file: string, fallback: T): T {
+  let text: string;
   try {
-    if (!existsSync(file)) return fallback;
-    const text = readFileSync(file, 'utf8');
+    text = readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log.error(`Failed to read ${file}`, err);
+    return fallback;
+  }
+  try {
     return { ...fallback, ...(JSON.parse(text) as T) };
   } catch (err) {
-    log.error(`Failed to read ${file}`, err);
+    const preserved = `${file}.corrupt-${Date.now()}`;
+    try {
+      renameSync(file, preserved);
+      log.error(`${file} is not valid JSON; kept as ${preserved} and starting from defaults`, err);
+    } catch (renameErr) {
+      log.error(`${file} is not valid JSON and could not be preserved`, renameErr);
+    }
     return fallback;
   }
 }
 
+/** Files here hold repo paths and (on the plaintext fallback) the API key, so they are owner-only; the temp file is created with the mode so it is never briefly readable. POSIX only, ignored on Windows. */
 function writeJson(file: string, value: unknown): void {
   const dir = join(file, '..');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2));
+  writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
   renameSync(tmp, file);
 }
 
@@ -89,6 +102,7 @@ const EMPTY_SETTINGS_SYNC: SettingsSyncState = { gistId: null, lastSyncedAt: nul
 
 interface SecretsFile {
   anthropicApiKey: string | null;
+  openaiApiKey: string | null;
 }
 
 /** Cached notifications inbox: the items shown while offline/before the first poll, and enough of the server's conditional-request state to resume without re-fetching everything. Titles of private repositories live here (see Options → Advanced's "Clear inbox cache"). */
@@ -132,8 +146,9 @@ export class Store {
         excludedRepositoryPaths: [],
       }),
     };
-    this.secrets = { file: join(this.dir, 'secrets.json'), value: readJson<SecretsFile>(join(this.dir, 'secrets.json'), { anthropicApiKey: null }) };
+    this.secrets = { file: join(this.dir, 'secrets.json'), value: readJson<SecretsFile>(join(this.dir, 'secrets.json'), { anthropicApiKey: null, openaiApiKey: null }) };
     this.settings.value.ai.hasApiKey = this.getApiKey() !== null;
+    this.settings.value.ai.hasOpenaiApiKey = this.getOpenaiApiKey() !== null;
     this.inbox = { file: join(this.dir, 'inbox.json'), value: readJson<InboxCacheFile>(join(this.dir, 'inbox.json'), EMPTY_INBOX_CACHE) };
   }
 
@@ -143,7 +158,7 @@ export class Store {
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
     const next: AppSettings = { ...this.settings.value, ...patch };
-    if (patch.ai) next.ai = { ...this.settings.value.ai, ...patch.ai, hasApiKey: this.getApiKey() !== null };
+    if (patch.ai) next.ai = { ...this.settings.value.ai, ...patch.ai, hasApiKey: this.getApiKey() !== null, hasOpenaiApiKey: this.getOpenaiApiKey() !== null };
     this.settings.value = next;
     writeJson(this.settings.file, next);
     for (const l of this.listeners) l(next);
@@ -229,7 +244,11 @@ export class Store {
   }
 
   getApiKey(): string | null {
-    const stored = this.secrets.value.anthropicApiKey;
+    return this.readSecret('anthropicApiKey');
+  }
+
+  private readSecret(field: keyof SecretsFile): string | null {
+    const stored = this.secrets.value[field];
     if (!stored) return null;
     try {
       if (stored.startsWith('enc:')) return this.platform.decryptSecret(stored.slice(4));
@@ -260,19 +279,32 @@ export class Store {
   }
 
   setApiKey(key: string | null): void {
+    this.storeSecret('anthropicApiKey', 'hasApiKey', key);
+  }
+
+  /** API key for the OpenAI-compatible provider; stored and encrypted exactly like the Anthropic key and never exported. */
+  getOpenaiApiKey(): string | null {
+    return this.readSecret('openaiApiKey');
+  }
+
+  setOpenaiApiKey(key: string | null): void {
+    this.storeSecret('openaiApiKey', 'hasOpenaiApiKey', key);
+  }
+
+  private storeSecret(field: keyof SecretsFile, flag: 'hasApiKey' | 'hasOpenaiApiKey', key: string | null): void {
     let stored: string | null = null;
     if (key) {
       const encrypted = this.platform.encryptSecret(key);
       if (encrypted) {
         stored = `enc:${encrypted}`;
       } else {
-        log.warn('OS encryption unavailable; storing API key with restricted file permissions only');
+        log.warn('OS encryption unavailable; storing API key in plaintext in secrets.json (owner-only file permissions)');
         stored = key;
       }
     }
-    this.secrets.value = { anthropicApiKey: stored };
+    this.secrets.value = { ...this.secrets.value, [field]: stored };
     writeJson(this.secrets.file, this.secrets.value);
-    this.settings.value = { ...this.settings.value, ai: { ...this.settings.value.ai, hasApiKey: stored !== null } };
+    this.settings.value = { ...this.settings.value, ai: { ...this.settings.value.ai, [flag]: stored !== null } };
     writeJson(this.settings.file, this.settings.value);
     for (const l of this.listeners) l(this.settings.value);
   }
@@ -334,6 +366,8 @@ export class Store {
       const { patch: integrationsPatch } = buildIntegrationsPatch(this.settings.value, file.integrations, mode, file.platform, process.platform);
       patch = { ...patch, ...integrationsPatch };
     }
+    // An imported file must not be able to point the stored key at another server: a changed base URL drops the key.
+    if (patch.ai && patch.ai.openaiBaseUrl !== this.settings.value.ai.openaiBaseUrl && this.getOpenaiApiKey() !== null) this.setOpenaiApiKey(null);
     const settings = Object.keys(patch).length ? this.updateSettings(patch) : this.settings.value;
 
     if (sections.includes('repositories') && file.repositories) {
