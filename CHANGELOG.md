@@ -2,6 +2,11 @@
 
 All notable changes to GitGood. Versions follow [semver](https://semver.org); release notes for each version are also on the [Releases page](https://github.com/erwin-wee/gitgood/releases).
 
+## 0.4.2 — 2026-10-19
+
+- Fixed tailnet access refusing every request when the background server starts at boot before `tailscaled` is up: the allowed Tailscale login is now looked up on demand (retried at most every 30 seconds until it succeeds) instead of once at startup.
+- Dev dependencies: vitest 5.0.2.
+
 ## 0.4.1 — 2026-10-02
 
 - Fixed macOS release packaging when signing secrets are not configured: an empty `CSC_LINK` is now removed before running electron-builder.
