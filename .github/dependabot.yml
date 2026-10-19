@@ -4,6 +4,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Types must match the Electron-bundled Node runtime (Electron 44 = Node 24)
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # electron-vite 5 supports vite <=7; revisit when electron-vite 6 is stable
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

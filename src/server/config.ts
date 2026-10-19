@@ -40,11 +40,26 @@ function tailnetOwner(): string | null {
   }
 }
 
+// Resolved lazily: at boot tailscaled may not be up yet, and a startup-time null would refuse every tailnet request until restart.
+// Only a successful lookup is cached; failures are retried at most every 30s (the lookup is a synchronous exec).
+function lazyTailnetOwner(): () => string | null {
+  let owner: string | null = null;
+  let lastTry = 0;
+  return () => {
+    if (owner === null && Date.now() - lastTry > 30_000) {
+      lastTry = Date.now();
+      owner = tailnetOwner();
+    }
+    return owner;
+  };
+}
+
 export function loadServerConfig(): ServerConfig {
   const userData = process.env.GITGOOD_USER_DATA || join(homedir(), '.config', 'gitgood-server');
   const tokenFile = join(userData, 'server-token');
   const existedBefore = existsSync(tokenFile);
   const token = loadOrCreateToken(tokenFile, userData);
+  const owner = lazyTailnetOwner();
   return {
     host: '127.0.0.1',
     port: Number(process.env.GITGOOD_SERVER_PORT) || 4600,
@@ -52,7 +67,9 @@ export function loadServerConfig(): ServerConfig {
     rendererDir: process.env.GITGOOD_RENDERER_DIR || defaultRendererDir(),
     token,
     tokenCreated: !existedBefore,
-    allowedLogin: process.env.GITGOOD_ALLOWED_LOGIN || tailnetOwner(),
+    get allowedLogin() {
+      return process.env.GITGOOD_ALLOWED_LOGIN || owner();
+    },
     // Home is browsable so the folder picker can add repos/watched folders that aren't registered yet.
     extraRoots: [homedir(), ...(process.env.GITGOOD_ALLOWED_ROOTS || '').split(delimiter).filter(Boolean)],
     version: process.env.GITGOOD_VERSION || (typeof __GITGOOD_VERSION__ === 'string' ? __GITGOOD_VERSION__ : '0.0.0'),
